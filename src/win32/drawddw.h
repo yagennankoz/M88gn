@@ -19,7 +19,7 @@ public:
 	WinDrawDDW();
 	~WinDrawDDW();
 
-	bool Init(HWND hwnd, uint w, uint h, GUID*);
+	bool Init(HWND hwnd, uint w, uint h, GUID* g, int mag);
 	bool Resize(uint width, uint height);
 	bool Cleanup();
 	

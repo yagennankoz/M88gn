@@ -17,7 +17,7 @@ public:
 	WinDrawDDS(bool force480 = true);
 	~WinDrawDDS();
 
-	bool Init(HWND hwnd, uint w, uint h, GUID* drv);
+	bool Init(HWND hwnd, uint w, uint h, GUID* drv, int mag);
 	bool Resize(uint w, uint h);
 	bool Cleanup();
 

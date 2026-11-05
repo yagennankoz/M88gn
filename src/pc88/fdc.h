@@ -88,7 +88,7 @@ private:
 	{
 		idlephase, commandphase, executephase, execreadphase, 
 		execwritephase, resultphase, tcphase, timerphase,
-		execscanphase,
+		execscanphase
 	};
 
 	struct Drive
@@ -142,9 +142,13 @@ private:
 	void IOCALL SeekEvent(uint dr);
 	void ReadID();
 	void ReadData(bool deleted, bool scan);
+	void SearchIndex();
 	void ReadDiagnostic();
-	void WriteData(bool deleted);
+	void WriteData();
+	void FlushData(bool deleted);
+	void WritePreamble();
 	void WriteID();
+	void WritePostamble();
 
 	void SetTimer(Phase phase, int ticks);
 	void DelTimer();
@@ -158,9 +162,9 @@ private:
 	void ShiftToIdlePhase();
 	void ShiftToCommandPhase(int);
 	void ShiftToExecutePhase();
-	void ShiftToExecReadPhase(int, uint8* data = 0);
-	void ShiftToExecWritePhase(int);
-	void ShiftToExecScanPhase(int);
+	void ShiftToExecReadPhase(int, bool intr, uint8* data = 0);
+	void ShiftToExecWritePhase(int, bool intr);
+	void ShiftToExecScanPhase(int, bool intr);
 	void ShiftToResultPhase(int);
 	void ShiftToResultPhase7();
 
@@ -178,6 +182,7 @@ private:
 	uint8* buffer;
 	uint8* bufptr;
 	int count;				// Exec*Phase での転送残りバイト
+	int txtime;				// ExecReadPhaseでの残り転送時間
 	uint command;			// 現在処理中のコマンド
 	uint data;				// データレジスタ
 	Phase phase, prevphase;
@@ -193,6 +198,7 @@ private:
 	uint hdue;
 	uint dtl;
 	uint eot;
+	uint gpl;
 	uint seekstate;
 	uint result;
 	

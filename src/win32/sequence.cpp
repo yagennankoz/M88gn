@@ -203,3 +203,12 @@ void Sequencer::Activate(bool a)
 	active = a;
 }
 
+// ---------------------------------------------------------------------------
+//	1CLKé¿çsÇ∑ÇÈ
+//
+void Sequencer::ExecOne()
+{
+	if (!active) {
+		Execute(1, 1, 1);
+	}
+}

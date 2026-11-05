@@ -81,6 +81,7 @@ private:
 	bool InitMemory();
 	bool LoadROM();
 	void PatchROM();
+	void SetRAMPattern(uint8* ram, uint length);
 
 	MemoryManager* mm;
 	int mid;

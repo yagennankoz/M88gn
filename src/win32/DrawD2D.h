@@ -19,7 +19,7 @@ public:
 	WinDrawD2D();
 	~WinDrawD2D();
 
-	bool Init(HWND hwnd, uint w, uint h, GUID*);
+	bool Init(HWND hwnd, uint w, uint h, GUID* g, int mag);
 	bool Resize(uint width, uint height);
 	bool Cleanup();
 	void SetPalette(PALETTEENTRY* pal, int index, int nentries);
@@ -29,7 +29,7 @@ public:
 	bool Unlock();
 
 private:
-	bool CreateD2D();
+	bool CreateD2D(uint w, uint h);
 
 	struct BI256		// BITMAPINFO
 	{
@@ -51,5 +51,8 @@ private:
 	BYTE*	m_image; 	// ‰æ‘œBitmap
 	BI256	m_bmpinfo;
 	HBITMAP	m_hBitmap;
+	int		m_nBitmapW;
+	int		m_nBitmapH;
+	int		m_nMag;
 	int		bpl;
 };

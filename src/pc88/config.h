@@ -86,6 +86,7 @@ public:
 		fddnowait		= 1 << 11,	// FDD ノーウェイト
 		usedsnotify		= 1 << 12,
 		saveposition	= 1 << 13,	// 起動時に前回終了時のウインドウ位置を復元
+		stretchx2		= 1 << 14,	// 画面2倍拡大
 	};
 
 	int flags;

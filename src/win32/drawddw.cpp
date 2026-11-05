@@ -40,7 +40,7 @@ WinDrawDDW::~WinDrawDDW()
 // ---------------------------------------------------------------------------
 //	èâä˙âª
 //
-bool WinDrawDDW::Init(HWND hwindow, uint w, uint h, GUID*)
+bool WinDrawDDW::Init(HWND hwindow, uint w, uint h, GUID* g, int mag)
 {
 	hwnd = hwindow;
 

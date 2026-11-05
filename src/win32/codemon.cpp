@@ -31,7 +31,9 @@ bool CodeMonitor::Init(PC88* pc88)
 		return false;
 	if (!diag.Init(GetBus()))
 		return false;
-	
+
+	pc = pc88;
+
 	SetLines(0x10000);
 	SetUpdateTimer(500);
 	return true;
@@ -115,6 +117,9 @@ void CodeMonitor::UpdateText()
 {
 	char buf[128];
 	int a = GetLine();
+	char cpu;
+	int pc1 = pc->GetCPU1()->GetPC();
+	int pc2 = pc->GetCPU2()->GetPC();
 
 	for (int y=0; y<GetHeight(); y++)
 	{
@@ -130,7 +135,14 @@ void CodeMonitor::UpdateText()
 				ToHex(&ptr, GetBus()->Read8((a+c) & 0xffff));
 			for (; c<4; c++)
 				*ptr++ = ' ', *ptr++ = ' ';
-			Putf("%.4x: %.8s   %s\n", a, buf, buf+8);
+			if (pc1 == a) {
+				cpu = 'M';
+			} else if (pc2 == a) {
+				cpu = 'S';
+			} else {
+				cpu = ' ';
+			}
+			Putf("%c %.4x: %.8s   %s\n", cpu, a, buf, buf+8);
 			a = next;
 		}
 		else

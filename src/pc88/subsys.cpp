@@ -64,7 +64,7 @@ bool SubSystem::InitMemory()
 	if (!rom)
 		return false;
 	memset(dummy, 0xff, pagesize);
-	memset(ram, 0x00, 0x4000);
+	SetRAMPattern(ram, 0x4000);
 	
 	LoadROM();
 	PatchROM();
@@ -118,6 +118,31 @@ void SubSystem::PatchROM()
 	{
 		rom[0xfb] = rom[0xfc] = rom[0xfd] = 0;
 		rom[0x105] = rom[0x106] = rom[0x107] = 0;
+	}
+}
+
+// ----------------------------------------------------------------------------
+//	起動時メモリパターン作成 (FH実機参考)
+//	arg:	ram		RAM エリア
+//			length	RAM エリア長
+//
+void SubSystem::SetRAMPattern(uint8* ram, uint length)
+{
+	if (length > 0)
+	{
+		for (uint i=0; i<length; i++)
+		{
+			bool rev = false;
+			if (i & 0x2000) {
+				rev = !rev;
+			}
+			if (i & 0x800) {
+				rev = !rev;
+			}
+
+			bool odd = (i & 1) ? true : false;
+			ram[i] = (odd ^ rev) ? 0xff : 0x00;
+		}
 	}
 }
 

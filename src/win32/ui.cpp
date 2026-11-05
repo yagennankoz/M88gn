@@ -110,7 +110,7 @@ bool WinUI::InitM88(const char* cmdline)
 	LOG1("%d\tdiskmanager\n", timeGetTime());
 	if (!diskmgr)
 		diskmgr = new DiskManager;
-	if (!diskmgr || !diskmgr->Init())
+	if (!diskmgr || !diskmgr->Init(&core))
 		return false;
 	if (!tapemgr)
 		tapemgr = new TapeManager;
@@ -146,6 +146,7 @@ bool WinUI::InitM88(const char* cmdline)
 	core.Wait(false);
 	active = true;
 	fullscreen = false;
+	exec = true;
 
 	//	設定反映
 	LOG1("%d\tapply cmdline\n", timeGetTime());
@@ -695,6 +696,22 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		LoadSnapshot(wid - IDM_SNAPSHOT_LOAD_0);
 		break;
 
+	case IDM_DBG_RUN:
+		if (exec) {
+			exec = false;
+			core.Wait(true);
+		} else {
+			exec = true;
+			core.Wait(false);
+		}
+		break;
+
+	case IDM_DBG_STEP:
+		if (!exec) {
+			core.ExecOne();
+		}
+		break;
+
 	default:
 		if (IDM_CHANGEDISK_1 <= wid && wid < IDM_CHANGEDISK_1 + 64)
 		{
@@ -774,6 +791,11 @@ LRESULT WinUI::WmClose(HWND hwnd, WPARAM wparam, LPARAM lparam)
 			return 0;
 	}
 	
+	if (!exec) {
+		exec = true;
+		core.Wait(false);
+	}
+
 	// タイマー破棄
 	KillTimer(hwnd, timerid);
 	timerid = 0;
@@ -953,8 +975,18 @@ LRESULT WinUI::M88ApplyConfig(HWND, WPARAM newconfig, LPARAM)
 		// 乱暴ですな。
 		if (memcmp(&config, (PC8801::Config*)newconfig, sizeof(PC8801::Config)))
 		{
+			// ウィンドウモードの二倍拡大が変更された時だけ
+			// ディスプレイモードの変更を呼びたい
+			bool changedisplay = false;
+			if ((config.flag2 ^ ((PC8801::Config*)newconfig)->flag2) & PC8801::Config::stretchx2) {
+				if (!fullscreen) changedisplay = true;
+			}
+
 			config = *((PC8801::Config*)newconfig);
 			ApplyConfig();
+
+			// ディスプレイモード変更要求
+			if (changedisplay) ChangeDisplayType(false);
 		}
 	}
 	return 0;
@@ -1058,7 +1090,7 @@ void WinUI::ChangeDiskImage(HWND hwnd, int drive)
 	filename[0] = 0;
 	
 	ofn.hwndOwner = hwnd;
-	ofn.lpstrFilter = "8801 disk image (*.d88)\0*.d88\0"
+	ofn.lpstrFilter = "Support disk image (*.d88;*.fdx)\0*.d88;*.fdx\0"
 					  "All Files (*.*)\0*.*\0";
 	ofn.lpstrFile = filename;
 	ofn.nMaxFile = MAX_PATH;
@@ -1081,6 +1113,14 @@ void WinUI::ChangeDiskImage(HWND hwnd, int drive)
 			{
 				if (file.GetError() == FileIO::file_not_found)
 				{
+					// 拡張子の制限
+					char ext[_MAX_EXT];
+					_splitpath(filename, NULL, NULL, NULL, ext);
+					if (stricmp(ext, ".d88") != 0 && stricmp(ext, ".fdx") != 0) {
+						::MessageBox(hwnd, "拡張子はd88またはfdxを指定してして下さい", "M88", MB_ICONERROR | MB_OK);
+						return;
+					}
+
 					// ファイルが存在しない
 					createnew = true;
 					if (!newdisk.Show(hinst, hwnd))
@@ -1343,6 +1383,11 @@ void WinUI::OpenTapeImage(const char* filename)
 //
 void WinUI::ResizeWindow(uint width, uint height)
 {
+	if (config.flag2 & Config::stretchx2) {
+		width *= 2;
+		height *= 2;
+	}
+
 	RECT rect;
 	rect.left = 0;	rect.right = width;
 	rect.top  = 0;  rect.bottom = height + statusdisplay.GetHeight();
@@ -1427,7 +1472,9 @@ LRESULT WinUI::M88ChangeDisplay(HWND hwnd, WPARAM, LPARAM)
 	// 画面ドライバの切替え
 	// ドライバが false を返した場合 GDI ドライバが使用されることになる
 	if (!draw.ChangeDisplayMode
-				(fullscreen, (config.flags & PC8801::Config::force480) != 0))
+				(fullscreen,
+				(config.flags & PC8801::Config::force480) != 0,
+				(config.flag2 & PC8801::Config::stretchx2) != 0))
 		fullscreen = false;
 
 	// ウィンドウスタイル関係の変更
@@ -1550,7 +1597,7 @@ LRESULT WinUI::WmDropFiles(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		_splitpath(path, drive, dir, fname, ext);
 	}
 
-	if (strcmpi(ext, ".d88") == 0) {
+	if (strcmpi(ext, ".d88") == 0 || strcmpi(ext, ".fdx") == 0) {
 		OpenDiskImage(path);
 
 		// 正常にマウントできたらリセット

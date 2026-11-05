@@ -45,13 +45,13 @@ WinDrawDDS::~WinDrawDDS()
 // ---------------------------------------------------------------------------
 //	èâä˙âª
 //
-bool WinDrawDDS::Init(HWND hwindow, uint w, uint h, GUID* drv)
+bool WinDrawDDS::Init(HWND hwindow, uint w, uint h, GUID* drv, int mag)
 {
 	HRESULT hr;
 	hwnd = hwindow;
 
-	width = w;
-	height = h;
+	width = 640;
+	height = 400;
 
 	memset(palentry, 0, sizeof(palentry));
 

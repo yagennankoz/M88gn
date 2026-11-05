@@ -10,6 +10,7 @@
 #include "file.h"
 #include "fdu.h"
 #include "critsect.h"
+#include "schedule.h"
 
 namespace D88
 {
@@ -78,6 +79,9 @@ private:
 	bool readonly;
 	DiskInfo disks[max_disks];
 	char diskname[MAX_PATH];
+
+	// FDXサポート
+	bool AddDiskFDX(const char *title, uint type);
 };
 
 // ---------------------------------------------------------------------------
@@ -93,7 +97,7 @@ public:
 public:
 	DiskManager();
 	~DiskManager();
-	bool Init();
+	bool Init(Scheduler *scheduler);
 
 	bool Mount(uint drive, const char* diskname, bool readonly, int index, bool create);
 	bool Unmount(uint drive);
@@ -125,6 +129,8 @@ private:
 		bool modified[168];
 	};
 
+	Scheduler *scheduler;
+
 	bool ReadDiskImage(FileIO* fio, Drive* drive);
 	bool ReadDiskImageRaw(FileIO* fio, Drive* drive);
 	bool WriteDiskImage(FileIO* fio, Drive* drive);
@@ -136,5 +142,9 @@ private:
 	Drive drive[max_drives];
 
 	CriticalSection cs;
-};
 
+	// FDXサポート
+	bool ReadDiskImageFdx(FileIO* fio, Drive* drive);
+	bool WriteDiskImageFdx(FileIO* fio, Drive* drive);
+	bool WriteTrackImageFdx(FileIO* fio, Drive* drive, int track);
+};

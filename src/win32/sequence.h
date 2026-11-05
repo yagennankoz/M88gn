@@ -39,6 +39,8 @@ public:
 	void SetSpeed(int spd);
 	void SetRefreshTiming(uint rti);
 
+	void ExecOne();
+
 private:
 	void Execute(long clock, long length, long ec);
 	void ExecuteAsynchronus();

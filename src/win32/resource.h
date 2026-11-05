@@ -168,6 +168,7 @@
 #define IDC_SOUND_22K                   1133
 #define IDC_ENV_KEY101                  1134
 #define IDC_ERAM                        1135
+#define IDC_SCREEN_STRETCHX2            1136
 #define IDM_DRIVE_1                     40001
 #define IDM_RESET                       40003
 #define IDM_ABOUTM88                    40004
@@ -260,6 +261,8 @@
 #define IDM_MEM_0_ERAM3                 40228
 #define IDM_4MHZ                        40229
 #define IDM_8MHZ                        40230
+#define IDM_DBG_RUN                     40240
+#define IDM_DBG_STEP                    40241
 
 // Next default values for new objects
 // 

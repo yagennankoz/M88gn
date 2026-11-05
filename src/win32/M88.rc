@@ -96,6 +96,8 @@ BEGIN
     END
     POPUP "D&ebug"
     BEGIN
+        MENUITEM "Run/Stop",                    IDM_DBG_RUN
+        MENUITEM "Step",                        IDM_DBG_STEP
         MENUITEM "Show &FDC Status",            IDM_FDC_STATUS
         MENUITEM "Show &Register",              IDM_WATCHREGISTER
         MENUITEM "Show &OPN Register",          IDM_SOUNDMON
@@ -190,6 +192,7 @@ BEGIN
     VK_F2,          IDM_CAPTURE,            VIRTKEY, ALT, NOINVERT
     VK_INSERT,      IDM_LOGSTART,           VIRTKEY, CONTROL, NOINVERT
     VK_RETURN,      IDM_TOGGLEDISPLAY,      VIRTKEY, ALT, NOINVERT
+    VK_F12,         IDM_DBG_STEP,           VIRTKEY, ALT, NOINVERT
 END
 
 
@@ -393,6 +396,7 @@ BEGIN
     CONTROL         "描画の優先度を下げる(&L)",IDC_SCREEN_LOWPRIORITY,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,75,97,10
     CONTROL         "偶数ラインを表示する(&F)",IDC_SCREEN_FULLLINE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,85,93,10
     CONTROL         "全画面モードで VSync に同期(&S)",IDC_SCREEN_VSYNC,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,95,122,10
+    CONTROL         "ウィンドウモードでサイズを2倍にする(&W)",IDC_SCREEN_STRETCHX2,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,105,165,10
 END
 
 IDD_CONFIG_FUNCTION DIALOGEX 0, 0, 210, 147

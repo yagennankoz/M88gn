@@ -141,6 +141,8 @@ private:
 	DiskManager* diskmgr;
 	TapeManager* tapemgr;
 
+	bool exec;
+
 private:
 	// メッセージ関数
 	LRESULT M88ChangeDisplay(HWND, WPARAM, LPARAM);

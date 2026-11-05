@@ -35,6 +35,7 @@ private:
 	bool DumpImage();
 	
 	Z80Diag diag;
+	PC88* pc;
 };
 
 }

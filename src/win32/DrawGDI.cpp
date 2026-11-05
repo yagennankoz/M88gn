@@ -15,7 +15,13 @@
 //	ç\íz/è¡ñ≈
 //
 WinDrawGDI::WinDrawGDI()
-: hwnd(0), hbitmap(0), updatepal(false), bitmapimage(0), image(0)
+:	hwnd(0),
+	hbitmap(0),
+	updatepal(false),
+	bitmapimage(0),
+	image(0),
+	m_nBitmapW(640),
+	m_nBitmapH(400)
 {
 }
 
@@ -27,9 +33,10 @@ WinDrawGDI::~WinDrawGDI()
 // ---------------------------------------------------------------------------
 //	èâä˙âªèàóù
 //
-bool WinDrawGDI::Init(HWND hwindow, uint w, uint h, GUID*)
+bool WinDrawGDI::Init(HWND hwindow, uint w, uint h, GUID* g, int mag)
 {
 	hwnd = hwindow;
+	m_nMag = mag;
 
 	if (!Resize(w, h))
 		return false;
@@ -47,7 +54,7 @@ bool WinDrawGDI::Resize(uint w, uint h)
 	if (!MakeBitmap())
 		return false;
 
-	memset(image, 0x40, width * height);
+	memset(image, 0x40, m_nBitmapW * m_nBitmapH);
 	status |= Draw::shouldrefresh;
 	return true;
 }
@@ -70,8 +77,8 @@ bool WinDrawGDI::Cleanup()
 bool WinDrawGDI::MakeBitmap()
 {
 	binfo.header.biSize          = sizeof(BITMAPINFOHEADER);
-	binfo.header.biWidth         = width;
-	binfo.header.biHeight        = -(int) height;
+	binfo.header.biWidth         = m_nBitmapW;
+	binfo.header.biHeight        = -(int)m_nBitmapH;
 	binfo.header.biPlanes        = 1;
 	binfo.header.biBitCount      = 8;
 	binfo.header.biCompression   = BI_RGB;
@@ -100,7 +107,7 @@ bool WinDrawGDI::MakeBitmap()
 	if (!hbitmap)
 		return false;
 	
-	bpl = width;
+	bpl = m_nBitmapW;
 	image = bitmapimage;
 	return true;
 }
@@ -130,7 +137,7 @@ void WinDrawGDI::DrawScreen(const RECT& _rect, bool refresh)
 	bool valid = rect.left < rect.right && rect.top < rect.bottom;
 
 	if (refresh || updatepal)
-		SetRect(&rect, 0, 0, width, height), valid = true;
+		SetRect(&rect, 0, 0, m_nBitmapW, m_nBitmapH), valid = true;
 	
 	if (valid)
 	{
@@ -142,11 +149,26 @@ void WinDrawGDI::DrawScreen(const RECT& _rect, bool refresh)
 			updatepal = false;
 			SetDIBColorTable(hmemdc, 0, 0x100, binfo.colors);
 		}
-		
-		BitBlt(hdc, rect.left, rect.top, 
-			        rect.right - rect.left, rect.bottom - rect.top, 
-			   hmemdc, rect.left, rect.top, 
-			   SRCCOPY);
+
+		if (m_nMag > 1) {
+			StretchBlt(
+				hdc,
+				rect.left * m_nMag,
+				rect.top * m_nMag,
+				(rect.right - rect.left) * m_nMag,
+				(rect.bottom - rect.top) * m_nMag,
+				hmemdc,
+				rect.left,
+				rect.top,
+				rect.right - rect.left,
+				rect.bottom - rect.top,
+				SRCCOPY);
+		} else {
+				BitBlt(hdc, rect.left, rect.top, 
+					rect.right - rect.left, rect.bottom - rect.top, 
+					hmemdc, rect.left, rect.top, 
+					SRCCOPY);
+		}
 		
 		SelectObject(hmemdc, oldbitmap);
 		DeleteDC(hmemdc);

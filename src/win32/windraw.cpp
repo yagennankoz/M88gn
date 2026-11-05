@@ -78,6 +78,8 @@ bool WinDraw::Init0(HWND hwindow)
 	palcngbegin = palrgnbegin = 0x100;
 	palcngend = palrgnend = -1;
 
+	bStretchx2 = false;
+
 	return true;
 }
 
@@ -314,7 +316,7 @@ void WinDraw::WindowMoved(int x, int y)
 // ---------------------------------------------------------------------------
 //	画面描画ドライバの変更
 //
-bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480)
+bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480, bool stretchx2)
 {
 	DisplayType type = fullscreen ? DDFull : D2D;
 
@@ -324,7 +326,8 @@ bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480)
 	hmonitor = (*MonitorFromWin)(hwnd, MONITOR_DEFAULTTOPRIMARY);
 	(*DDEnumerateEx)(DDEnumCallback, reinterpret_cast<LPVOID>(this), DDENUM_ATTACHEDSECONDARYDEVICES);
 
-	if (type != drawtype)
+	// 2倍拡大選択時でフルスクリーンでないならドライバを強制的に破棄させる
+	if (type != drawtype || bStretchx2 != stretchx2)
 	{
 		// 今までのドライバを廃棄
 		if (draw)
@@ -339,22 +342,22 @@ bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480)
 		switch (type)
 		{
 		case GDI: default:
-			newdraw = new WinDrawGDI;
+			newdraw = new WinDrawGDI();
 			break;
 		case DDWin:
-			newdraw = new WinDrawDDW;
+			newdraw = new WinDrawDDW();
 			break;
 		case DDFull:
 			newdraw = new WinDrawDDS(force480);
 			break;
 		case D2D:
-			newdraw = new WinDrawD2D;
+			newdraw = new WinDrawD2D();
 			break;
 		}
 		
 		bool result = true;
 		
-		if (!newdraw || !newdraw->Init(hwnd, width, height, &gmonitor))
+		if (!newdraw || !newdraw->Init(hwnd, width, height, &gmonitor, stretchx2 ? 2 : 1))
 		{
 			// 初期化に失敗した場合 GDI ドライバで再挑戦
 			delete newdraw;
@@ -364,10 +367,10 @@ bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480)
 			else
 				statusdisplay.Show(120, 3000, "GDI ドライバを使用します");
 
-			newdraw = new WinDrawGDI, type = GDI;
+			newdraw = new WinDrawGDI(), type = GDI;
 			result = false;
 
-			if (!newdraw || !newdraw->Init(hwnd, width, height, 0))
+			if (!newdraw || !newdraw->Init(hwnd, width, height, 0, stretchx2 ? 2 : 1))
 				newdraw = 0, drawtype = None;
 		}
 		
@@ -393,6 +396,7 @@ bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480)
 		if (type == DDFull)		ShowCursor(false);
 		if (drawtype == DDFull)	ShowCursor(true);
 		drawtype = type;
+		bStretchx2 = stretchx2;
 
 		refresh = 2;
 		

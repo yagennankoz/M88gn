@@ -303,6 +303,10 @@ bool ConfigScreen::Clicked(HWND hdlg, HWND hwctl, UINT id)
 	case IDC_SCREEN_VSYNC:
 		config.flag2 ^= Config::synctovsync;
 		return true;
+
+	case IDC_SCREEN_STRETCHX2:
+		config.flag2 ^= Config::stretchx2;
+		return true;
 	}
 	return false;
 }
@@ -326,6 +330,7 @@ void ConfigScreen::Update(HWND hdlg)
 		  || (config.speed != 1000);
 	CheckDlgButton(hdlg, IDC_SCREEN_VSYNC, BSTATE(config.flag2 & Config::synctovsync));
 	EnableWindow(GetDlgItem(hdlg, IDC_SCREEN_VSYNC), BSTATE(!f));
+	CheckDlgButton(hdlg, IDC_SCREEN_STRETCHX2, BSTATE(config.flag2 & Config::stretchx2));
 }
 
 

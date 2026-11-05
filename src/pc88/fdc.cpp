@@ -25,14 +25,13 @@ using namespace PC8801;
 //	構築/消滅
 //
 FDC::FDC(const ID& id)
-: Device(id) 
+	: Device(id)
 {
 	buffer = 0;
 	timerhandle = 0;
 	litdrive = 0;
 	seektime = 0;
-	for (int i=0; i<num_drives; i++)
-	{
+	for (int i = 0; i < num_drives; i++) {
 		drive[i].cyrinder = 0;
 		drive[i].result = 0;
 		drive[i].hd = 0;
@@ -55,16 +54,20 @@ bool FDC::Init(DiskManager* dm, Scheduler* s, IOBus* b, int ip, int sp)
 	bus = b;
 	pintr = ip;
 	pfdstat = sp;
-	
+
 	showstatus = 0;
 	seekstate = 0;
 	fdstat = 0;
 	diskwait = true;
-	
-	if (!buffer)
+
+	if (!buffer) {
 		buffer = new uint8[0x4000];
-	if (!buffer) 
+	}
+
+	if (!buffer) {
 		return false;
+	}
+
 	memset(buffer, 0, 0x4000);
 
 	LOG0("FDC LOG\n");
@@ -80,7 +83,6 @@ void FDC::ApplyConfig(const Config* cfg)
 	diskwait = !(cfg->flag2 & Config::fddnowait);
 	showstatus = (cfg->flags & Config::showfdcstatus) != 0;
 }
-
 
 // ---------------------------------------------------------------------------
 //	ドライブ制御
@@ -99,21 +101,22 @@ void IOCALL FDC::DriveControl(uint, uint data)
 {
 	int hdprev;
 	LOG1("Drive control (%.2x) ", data);
-	
-	for (int d=0; d<2; d++)
-	{
+
+	for (int d = 0; d < 2; d++) {
 		hdprev = drive[d].hd;
 		drive[d].hd = data & (1 << d) ? 0x80 : 0x00;
 		drive[d].dd = data & (4 << d) ? 0 : 1;
-		if (hdprev != drive[d].hd)
-		{
+
+		if (hdprev != drive[d].hd) {
 			int bit = 4 << d;
 			fdstat = (fdstat & ~bit) | (drive[d].hd ? bit : 0);
 			statusdisplay.FDAccess(d, drive[d].hd != 0, false);
 		}
 		LOG2("<2%c%c>", drive[d].hd ? 'H' : 'D', drive[d].dd ? ' ' : 'D');
 	}
-	if (pfdstat >= 0) bus->Out(pfdstat, fdstat);
+	if (pfdstat >= 0) {
+		bus->Out(pfdstat, fdstat);
+	}
 	LOG0(">\n");
 }
 
@@ -137,11 +140,13 @@ void IOCALL FDC::Reset(uint, uint)
 	Intr(false);
 	scheduler->DelEvent(this);
 	DriveControl(0, 0);
-	for (int d=0; d<2; d++)
+	for (int d = 0; d < 2; d++) {
 		statusdisplay.FDAccess(d, drive[d].hd != 0, false);
+	}
 	fdstat &= ~3;
-	if (pfdstat)
+	if (pfdstat) {
 		bus->Out(pfdstat, fdstat);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -168,68 +173,66 @@ uint IOCALL FDC::Status(uint)
 void IOCALL FDC::SetData(uint, uint d)
 {
 	// 受け取れる状況かチェック
-	if ((status & (S_RQM | S_DIO)) == S_RQM)
-	{
+	if ((status & (S_RQM | S_DIO)) == S_RQM) {
 		data = d;
 		status &= ~S_RQM;
 		Intr(false);
-		
+
 		switch (phase)
 		{
-		// コマンドを受け取る
-		case idlephase:
-			LOG1("\n[%.2x] ", data);
-			command = data;
-			(this->*CommandTable[command & 31])();
-			break;
-		
-		// コマンドのパラメータを受け取る
-		case commandphase:
-			*bufptr++ = data;
-			if (--count)
-				status |= S_RQM;
-			else
+			// コマンドを受け取る
+			case idlephase:
+				LOG1("\n[%.2x] ", data);
+				command = data;
 				(this->*CommandTable[command & 31])();
-			break;
+				break;
 
-		// E-Phase (転送中)
-		case execwritephase:
-			*bufptr++ = data;
-			if (--count)
-			{
-				status |= S_RQM, Intr(true);
-			}
-			else
-			{
-				status &= ~S_NDM;
-				(this->*CommandTable[command & 31]) ();
-			}
-			break;
-
-		// E-Phase (比較中)
-		case execscanphase:
-			if (data != 0xff)
-			{
-				if (((command & 31) == 0x11 && *bufptr != data)
-				 || ((command & 31) == 0x19 && *bufptr > data)
-				 || ((command & 31) == 0x1d && *bufptr < data))
-				{
-					// 条件に合わない
-					result &= ~ST2_SH;
+				// コマンドのパラメータを受け取る
+			case commandphase:
+				*bufptr++ = data;
+				if (--count) {
+					status |= S_RQM;
+				} else {
+					(this->*CommandTable[command & 31])();
 				}
-			}
-			bufptr++;
+				break;
 
-			if (--count)
-			{
-				status |= S_RQM, Intr(true);
-			}
-			else
-			{
-				status &= ~S_NDM;
-				CmdScanEqual();
-			}
-			break;
+				// E-Phase (転送中)
+			case execwritephase:
+				*bufptr++ = data;
+				if (--count) {
+					if (!diskwait) {
+						status |= S_RQM;
+						Intr(true);
+					}
+				} else {
+					status &= ~S_NDM;
+					(this->*CommandTable[command & 31]) ();
+				}
+				break;
+
+				// E-Phase (比較中)
+			case execscanphase:
+				if (data != 0xff) {
+					if (((command & 31) == 0x11 && *bufptr != data)
+						|| ((command & 31) == 0x19 && *bufptr > data)
+						|| ((command & 31) == 0x1d && *bufptr < data)) {
+						// 条件に合わない
+						result &= ~ST2_SH;
+					}
+				}
+				bufptr++;
+
+				if (--count) {
+					if (!diskwait) {
+						status |= S_RQM;
+						Intr(true);
+					}
+				} else {
+					status &= ~S_NDM;
+					CmdScanEqual();
+				}
+				break;
 		}
 	}
 }
@@ -241,42 +244,36 @@ void IOCALL FDC::SetData(uint, uint d)
 //
 uint IOCALL FDC::GetData(uint)
 {
-	if ((status & (S_RQM | S_DIO)) == (S_RQM | S_DIO))
-	{
+	if ((status & (S_RQM | S_DIO)) == (S_RQM | S_DIO)) {
 		Intr(false);
 		status &= ~S_RQM;
-		
+
 		switch (phase)
 		{
-		// リゾルト・フェイズ
-		case resultphase:
-			data = *bufptr++;
-			LOG1(" %.2x", data);
-			if (--count)
-				status |= S_RQM;
-			else
-			{
-				LOG0(" }\n");
-				ShiftToIdlePhase();
-			}
-			break;
+			// リゾルト・フェイズ
+			case resultphase:
+				data = *bufptr++;
+				LOG1(" %.2x", data);
+				if (--count) {
+					status |= S_RQM;
+				} else {
+					LOG0(" }\n");
+					ShiftToIdlePhase();
+				}
+				break;
 
-		// E-Phase(転送中)
-		case execreadphase:
-//			LOG1("ex= %d\n", scheduler->GetTime());
-//			LOG0("*");
-			data = *bufptr++;
-			if (--count)
-			{
-				status |= S_RQM, Intr(true);
-			}
-			else
-			{
-				LOG0("\n");
-				status &= ~S_NDM;
-				(this->*CommandTable[command & 31]) ();
-			}
-			break;
+				// E-Phase(転送中)
+			case execreadphase:
+				data = *bufptr++;
+				if (--count) {
+					if (!diskwait) {
+						status |= S_RQM, Intr(true);
+					}
+				} else {
+					status &= ~S_NDM;
+					(this->*CommandTable[command & 31]) ();
+				}
+				break;
 		}
 	}
 	return data;
@@ -287,8 +284,7 @@ uint IOCALL FDC::GetData(uint)
 //
 uint IOCALL FDC::TC(uint)
 {
-	if (accepttc)
-	{
+	if (accepttc) {
 		LOG0(" <TC>");
 		prevphase = phase;
 		phase = tcphase;
@@ -307,7 +303,7 @@ void FDC::ShiftToIdlePhase()
 	status = S_RQM;
 	accepttc = false;
 	statusdisplay.FDAccess(litdrive, drive[litdrive].hd != 0, false);
-	
+
 	fdstat &= ~(1 << litdrive);
 	if (pfdstat >= 0) bus->Out(pfdstat, fdstat);
 
@@ -322,10 +318,12 @@ void FDC::ShiftToCommandPhase(int nbytes)
 	phase = commandphase;
 	status = S_RQM | S_CB;
 	accepttc = false;
-	
+
 	bufptr = buffer, count = nbytes;
 	litdrive = hdu & 1;
-	LOG1("FD %d On\n", litdrive);
+	LOG4("(MT=%d, MF=%d, SK=%d) FD=%d ON\n",
+		(command >> 7) & 1, (command >> 6) & 1, (command >> 5) & 1,
+		litdrive);
 	statusdisplay.FDAccess(litdrive, drive[litdrive].hd != 0, true);
 
 	fdstat |= 1 << litdrive;
@@ -339,47 +337,61 @@ void FDC::ShiftToExecutePhase()
 {
 	phase = executephase;
 	(this->*CommandTable[command & 31]) ();
-}	
+}
 
 // ---------------------------------------------------------------------------
 //	E-PHASE (FDC->CPU)
 //
-void FDC::ShiftToExecReadPhase(int nbytes, uint8* data)
+void FDC::ShiftToExecReadPhase(int nbytes, bool intr, uint8* data)
 {
 	phase = execreadphase;
-	status = S_RQM | S_DIO | S_NDM | S_CB;
+	status = S_DIO | S_NDM | S_CB;
 	accepttc = true;
-	Intr(true);
-	
+
 	bufptr = data ? data : buffer;
 	count = nbytes;
+
+	if (intr) {
+		status |= S_RQM;
+		Intr(true);
+	}
 }
 
 // ---------------------------------------------------------------------------
 //	E-PHASE (CPU->FDC)
 //
-void FDC::ShiftToExecWritePhase(int nbytes)
+void FDC::ShiftToExecWritePhase(int nbytes, bool intr)
 {
 	phase = execwritephase;
-	status = S_RQM | S_NDM | S_CB;
+	status = S_NDM | S_CB;
 	accepttc = true;
-	Intr(true);
-	
-	bufptr = buffer, count = nbytes;
+
+	bufptr = buffer;
+	count = nbytes;
+
+	if (intr) {
+		status |= S_RQM;
+		Intr(true);
+	}
 }
 
 // ---------------------------------------------------------------------------
 //	E-PHASE (CPU->FDC, COMPARE)
 //
-void FDC::ShiftToExecScanPhase(int nbytes)
+void FDC::ShiftToExecScanPhase(int nbytes, bool intr)
 {
 	phase = execscanphase;
-	status = S_RQM | S_NDM | S_CB;
+	status = S_NDM | S_CB;
 	accepttc = true;
-	Intr(true);
 	result = ST2_SH;
-	
-	bufptr = buffer, count = nbytes;
+
+	bufptr = buffer;
+	count = nbytes;
+
+	if (intr) {
+		status |= S_RQM;
+		Intr(true);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -390,7 +402,7 @@ void FDC::ShiftToResultPhase(int nbytes)
 	phase = resultphase;
 	status = S_RQM | S_CB | S_DIO;
 	accepttc = false;
-	
+
 	bufptr = buffer, count = nbytes;
 	LOG0("\t{");
 }
@@ -401,7 +413,7 @@ void FDC::ShiftToResultPhase(int nbytes)
 void FDC::ShiftToResultPhase7()
 {
 	buffer[0] = (result & 0xf8) | (hdue & 7);
-	buffer[1] = uint8(result >>  8);
+	buffer[1] = uint8(result >> 8);
 	buffer[2] = uint8(result >> 16);
 	buffer[3] = idr.c;
 	buffer[4] = idr.h;
@@ -416,33 +428,26 @@ void FDC::ShiftToResultPhase7()
 //
 bool FDC::IDIncrement()
 {
-//	LOG0("IDInc");
-	if ((command & 19) == 17)
-	{
+	if ((command & 19) == 17) {
 		// Scan*Equal
-		if ((dtl & 0xff) == 0x02)
+		if ((dtl & 0xff) == 0x02) {
 			idr.r++;
+		}
 	}
-	
-	if (idr.r++ != eot)
-	{
-//		LOG0("[1]\n");
+
+	if (idr.r++ != eot) {
 		return true;
 	}
+
 	idr.r = 1;
-	if (command & 0x80)
-	{
+	if (command & 0x80) {
 		hdu ^= 4;
 		idr.h ^= 1;
-//		LOG1("[2:%d]", hdu);
-		if (idr.h & 1)
-		{
-//			LOG0("\n");
+		if (idr.h & 1) {
 			return true;
 		}
 	}
 	idr.c++;
-//	LOG0("[3]\n");
 	return false;
 }
 
@@ -453,16 +458,18 @@ bool FDC::IDIncrement()
 void FDC::SetTimer(Phase p, int ticks)
 {
 	t_phase = p;
-	if (!diskwait)
+	if (!diskwait) {
 		ticks = (ticks + 127) / 128;
+	}
 	timerhandle = scheduler->AddEvent
 		(ticks, this, STATIC_CAST(TimeFunc, &FDC::PhaseTimer), p);
 }
 
 void FDC::DelTimer()
 {
-	if (timerhandle)
+	if (timerhandle) {
 		scheduler->DelEvent(timerhandle);
+	}
 	timerhandle = 0;
 }
 
@@ -477,22 +484,22 @@ void IOCALL FDC::PhaseTimer(uint p)
 
 const FDC::CommandFunc FDC::CommandTable[32] =
 {
-	&CmdInvalid,			&CmdInvalid,		// 0
-	&CmdReadDiagnostic,		&CmdSpecify,
-	&CmdSenceDeviceStatus,	&CmdWriteData,		// 4
-	&CmdReadData,			&CmdRecalibrate,
-	&CmdSenceIntStatus,		&CmdWriteData,		// 8
-	&CmdReadID,				&CmdInvalid,
-	&CmdReadData,			&CmdWriteID,		// c
-	&CmdInvalid,			&CmdSeek,
-	&CmdInvalid,			&CmdScanEqual,		// 10
-	&CmdInvalid,			&CmdInvalid,
-	&CmdInvalid,			&CmdInvalid,		// 14
-	&CmdInvalid,			&CmdInvalid,
-	&CmdInvalid,			&CmdScanEqual,		// 18
-	&CmdInvalid,			&CmdInvalid,
-	&CmdInvalid,			&CmdScanEqual,		// 1c
-	&CmdInvalid,			&CmdInvalid,
+	&CmdInvalid, &CmdInvalid,				// 0
+	&CmdReadDiagnostic, &CmdSpecify,
+	&CmdSenceDeviceStatus, &CmdWriteData,	// 4
+	&CmdReadData, &CmdRecalibrate,
+	&CmdSenceIntStatus, &CmdWriteData,		// 8
+	&CmdReadID, &CmdInvalid,
+	&CmdReadData, &CmdWriteID,				// c
+	&CmdInvalid, &CmdSeek,
+	&CmdInvalid, &CmdScanEqual,				// 10
+	&CmdInvalid, &CmdInvalid,
+	&CmdInvalid, &CmdInvalid,				// 14
+	&CmdInvalid, &CmdInvalid,
+	&CmdInvalid, &CmdScanEqual,				// 18
+	&CmdInvalid, &CmdInvalid,
+	&CmdInvalid, &CmdScanEqual,				// 1c
+	&CmdInvalid, &CmdInvalid,
 };
 
 // ---------------------------------------------------------------------------
@@ -500,49 +507,88 @@ const FDC::CommandFunc FDC::CommandTable[32] =
 //
 void FDC::CmdReadData()
 {
-//	static int t0;
 	switch (phase)
 	{
-	case idlephase:
-		LOG0((command & 31) == 12 ? "ReadDeletedData" : "ReadData ");
-		ShiftToCommandPhase(8);		// パラメータは 8 個
-		return;
+		case idlephase:
+			LOG0((command & 31) == 12 ? "ReadDeletedData" : "ReadData ");
+			ShiftToCommandPhase(8);		// パラメータは 8 個
+			return;
 
-	case commandphase:
-		GetSectorParameters();
-		SetTimer(executephase, 250 << Min(7, idr.n));
-		return;
-	
-	case executephase:
-		ReadData((command & 31) == 12, false);
-//		t0 = scheduler->GetTime();
-		return;
+		case commandphase:
+			GetSectorParameters();
 
-	case execreadphase:
-//		LOG1("ex= %d\n", scheduler->GetTime()-t0);
-		if (result)
-		{
+		case executephase:
+			ReadData((command & 31) == 12, false);
+			return;
+
+		case execreadphase:
+			if (diskwait && count > 0) {
+				// データ転送リクエスト
+				if (!(status & S_RQM)) {
+					// 初回に終了時間に変換
+					if (bufptr == buffer) {
+						txtime += scheduler->GetTime();
+					}
+
+					status |= S_RQM;
+					Intr(true);
+				}
+
+				// 止まらないように継続する(LOST ERRORはTODO)
+				if (count >= 2) {
+					int ticks = 3;
+					if (count == 2) {
+						// 最後の残り時間
+						ticks = txtime - scheduler->GetTime();
+						txtime = 0;
+					} else {
+						// 平均転送時間
+						ticks = (txtime - scheduler->GetTime()) / count;
+					}
+					ticks = Max(1, ticks);
+					ticks = Min(4, ticks);
+					SetTimer(execreadphase, ticks);
+				}
+				return;
+			}
+
+			if (!IDIncrement()) {
+				SetTimer(timerphase, 20);
+				return;
+			}
+
+			SetTimer(executephase, 3);
+			return;
+
+		case tcphase:
+			DelTimer();
+
+			// 割り込み中なら解除
+			if (status & S_RQM) {
+				status &= ~S_RQM;
+				Intr(false);
+			}
+
+			if (diskwait && count > 0) {
+				// 途中打ち切りなら残り時間経過後に再突入
+				if (txtime) {
+					int ticks = txtime - scheduler->GetTime();
+					txtime = 0;
+					if (ticks > 0) {
+						SetTimer(tcphase, ticks);
+						return;
+					}
+				}
+			}
+
+			LOG1("\tTC at 0x%x byte\n", bufptr - buffer);
 			ShiftToResultPhase7();
 			return;
-		}
-		if (!IDIncrement())
-		{
-			SetTimer(timerphase, 20);
+
+		case timerphase:
+			result = ST0_AT | ST1_EN;
+			ShiftToResultPhase7();
 			return;
-		}
-		SetTimer(executephase, 250 << Min(7, idr.n));
-		return;
-
-	case tcphase:
-		DelTimer();
-		LOG1("\tTC at 0x%x byte\n", bufptr - buffer);
-		ShiftToResultPhase7();
-		return;
-
-	case timerphase:
-		result = ST0_AT | ST1_EN;
-		ShiftToResultPhase7();
-		return;
 	}
 }
 
@@ -553,65 +599,105 @@ void FDC::CmdScanEqual()
 {
 	switch (phase)
 	{
-	case idlephase:
-		LOG0("Scan");
-		if ((command & 31) == 0x19)
-			LOG0("LowOr");
-		else if ((command & 31) == 0x1d)
-			LOG0("HighOr");
-		LOG0("Equal");
-		ShiftToCommandPhase(9);
-		return;
-	
-	case commandphase:
-		GetSectorParameters();
-		dtl = dtl | 0x100;		// STP パラメータ．DTL として無効な値を代入する．
-		SetTimer(executephase, 200);
-		return;
+		case idlephase:
+			LOG0("Scan");
+			if ((command & 31) == 0x19)
+				LOG0("LowOr");
+			else if ((command & 31) == 0x1d)
+				LOG0("HighOr");
+			LOG0("Equal");
+			ShiftToCommandPhase(9);
+			return;
 
-	case executephase:
-		ReadData(false, true);
-		return;
-	
-	case execscanphase:
-		// Scan Data
-		if (result)
-		{
+		case commandphase:
+			GetSectorParameters();
+			dtl = dtl | 0x100;		// STP パラメータ．DTL として無効な値を代入する．
+
+		case executephase:
+			ReadData(false, true);
+			return;
+
+		case execscanphase:
+			if (diskwait && count > 0) {
+				// データ転送リクエスト
+				if (!(status & S_RQM)) {
+					// 初回に終了時間に変換
+					if (bufptr == buffer) {
+						txtime += scheduler->GetTime();
+					}
+
+					status |= S_RQM;
+					Intr(true);
+				}
+
+				// 止まらないように継続する(LOST ERRORはTODO)
+				if (count >= 2) {
+					int ticks = 3;
+					if (count == 2) {
+						// 最後の残り時間
+						ticks = txtime - scheduler->GetTime();
+						txtime = 0;
+					} else {
+						// 平均転送時間
+						ticks = (txtime - scheduler->GetTime()) / count;
+					}
+					ticks = Max(1, ticks);
+					ticks = Min(4, ticks);
+					SetTimer(execscanphase, ticks);
+				}
+				return;
+			}
+
+			if (!IDIncrement()) {
+				SetTimer(timerphase, 20);
+				return;
+			}
+
+			SetTimer(executephase, 3);
+			return;
+
+		case tcphase:
+			DelTimer();
+
+			// 割り込み中なら解除
+			if (status & S_RQM) {
+				status &= ~S_RQM;
+				Intr(false);
+			}
+
+			if (diskwait && count > 0) {
+				// 途中打ち切りなら残り時間経過後に再突入
+				if (txtime) {
+					int ticks = txtime - scheduler->GetTime();
+					txtime = 0;
+					if (ticks > 0) {
+						SetTimer(tcphase, ticks);
+						return;
+					}
+				}
+			}
+
+			LOG1("\tTC at 0x%x byte\n", bufptr - buffer);
 			ShiftToResultPhase7();
 			return;
-		}
-		phase = executephase;
-		if (!IDIncrement())
-		{
-			SetTimer(timerphase, 20);
-			return;
-		}
-		SetTimer(executephase, 100);
-		return;
 
-	case tcphase:
-		DelTimer();
-		LOG1("\tTC at 0x%x byte\n", bufptr - buffer);
-		ShiftToResultPhase7();
-		return;
-	
-	case timerphase:
-		// 終了，みつかんなかった～
-		result = ST1_EN | ST2_SN;
-		ShiftToResultPhase7();
-		return;
+		case timerphase:
+			// 終了，みつかんなかった～
+			result = ST1_EN | ST2_SN;
+			ShiftToResultPhase7();
+			return;
 	}
 }
 
-
-
-
 void FDC::ReadData(bool deleted, bool scan)
 {
-	LOG4("\tRead %.2x %.2x %.2x %.2x\n", idr.c, idr.h, idr.r, idr.n);
-	if (showstatus)
-		statusdisplay.Show(85, 0, "%s (%d) %.2x %.2x %.2x %.2x", scan ? "Scan" : "Read", hdu & 3, idr.c, idr.h, idr.r, idr.n);
-	
+	LOG5("\tRead(%.2x) %.2x %.2x %.2x %.2x\n", command, idr.c, idr.h, idr.r, idr.n);
+	if (showstatus) {
+		statusdisplay.Show(
+			85, 0, "%s DRV %d C %.2x H %.2x R %.2x N %.2x",
+			scan ? "Scan" : "Read", hdu & 3, idr.c, idr.h, idr.r, idr.n);
+	}
+
 	CriticalSection::Lock lock(diskmgr->GetCS());
 	result = CheckCondition(false);
 	if (result & ST1_MA)
@@ -621,8 +707,8 @@ void FDC::ReadData(bool deleted, bool scan)
 		LOG0("Disk not mounted: Retry\n");
 		return;
 	}
-	if (result)
-	{
+
+	if (result) {
 		ShiftToResultPhase7();
 		return;
 	}
@@ -630,30 +716,51 @@ void FDC::ReadData(bool deleted, bool scan)
 	uint dr = hdu & 3;
 	uint flags = ((hdu >> 2) & 1) | (command & 0x40) | (drive[dr].hd & 0x80);
 
-	result = diskmgr->GetFDU(dr)->ReadSector(flags, idr, buffer);
+	int size;
+	int stime = 0;
+	result = diskmgr->GetFDU(dr)->ReadSector(flags, idr, buffer, &size, &stime, &txtime);
+	if (!diskwait) {
+		stime = 0;
+		txtime = 0;
+	}
 
-	if (deleted)
+	if (deleted) {
 		result ^= ST2_CM;
-	
-	if ((result & ~ST2_CM) && !(result & ST2_DD))
-	{
+	}
+
+	// データエラー以外
+	if ((result & ~ST2_CM) && !(result & ST2_DD)) {
 		ShiftToResultPhase7();
 		return;
 	}
-	if ((result & ST2_CM) && (command & 0x20))	// SKIP 
-	{
-		SetTimer(timerphase, 1000);
+
+	// 0バイト転送でスキップさせる
+	if ((result & ST2_CM) && (command & 0x20)) {
+		ShiftToExecReadPhase(0, false);
+		SetTimer(execreadphase, Max(stime + txtime, 3));
+
 		return;
 	}
-	int xbyte = idr.n ? (0x80 << Min(8, idr.n)) : (Min(dtl, 0x80));
-	
-	if (!scan)
-		ShiftToExecReadPhase(xbyte);
-	else
-		ShiftToExecScanPhase(xbyte);
-	return;
-}
 
+	int xbyte = idr.n ? (0x80 << Min(7, idr.n)) : (Min(dtl, 0x80));
+	if (!scan) {
+		ShiftToExecReadPhase(xbyte, !diskwait);
+	} else {
+		ShiftToExecScanPhase(xbyte, !diskwait);
+	}
+
+	if (diskwait) {
+		if (!scan) {
+			SetTimer(execreadphase, Max(stime, 3));
+		} else {
+			SetTimer(execscanphase, Max(stime, 3));
+		}
+
+		if (size != xbyte) {
+			txtime = (txtime * xbyte) / size;
+		}
+	}
+}
 
 // ---------------------------------------------------------------------------
 //	Seek
@@ -662,17 +769,16 @@ void FDC::CmdSeek()
 {
 	switch (phase)
 	{
-	case idlephase:
-		LOG0("Seek ");
-		ShiftToCommandPhase(2);
-		break;
-	
-	case commandphase:
-		LOG2("(%.2x %.2x)\n", buffer[0], buffer[1]);
-		Seek(buffer[0], buffer[1]);
-		
-		ShiftToIdlePhase();
-		break;
+		case idlephase:
+			LOG0("Seek ");
+			ShiftToCommandPhase(2);
+			return;
+
+		case commandphase:
+			LOG2("(%.2x %.2x)\n", buffer[0], buffer[1]);
+			Seek(buffer[0], buffer[1]);
+			ShiftToIdlePhase();
+			return;
 	}
 }
 
@@ -683,17 +789,17 @@ void FDC::CmdRecalibrate()
 {
 	switch (phase)
 	{
-	case idlephase:
-		LOG0("Recalibrate ");
-		ShiftToCommandPhase(1);
-		break;
-	
-	case commandphase:
-		LOG1("(%.2x)\n", buffer[0]);
+		case idlephase:
+			LOG0("Recalibrate ");
+			ShiftToCommandPhase(1);
+			return;
 
-		Seek(buffer[0] & 3, 0);
-		ShiftToIdlePhase();
-		break;
+		case commandphase:
+			LOG1("(%.2x)\n", buffer[0]);
+
+			Seek(buffer[0] & 3, 0);
+			ShiftToIdlePhase();
+			return;
 	}
 }
 
@@ -706,16 +812,13 @@ void FDC::Seek(uint dr, uint cy)
 
 	cy <<= drive[dr].dd;
 	int seekcount = Abs(cy - drive[dr].cyrinder);
-	if (GetDeviceStatus(dr) & 0x80)
-	{
+	if (GetDeviceStatus(dr) & 0x80) {
 		// FAULT
 		LOG1("\tSeek on unconnected drive (%d)\n", dr);
 		drive[dr].result = (dr & 3) | ST0_SE | ST0_NR | ST0_AT;
 		Intr(true);
 		int_requested = true;
-	}
-	else
-	{
+	} else {
 		LOG3("Seek: %d -> %d (%d)\n", drive[dr].cyrinder, cy, seekcount);
 		drive[dr].cyrinder = cy;
 		seektime = seekcount && diskwait ? (400 * Abs(seekcount) + 500) : 10;
@@ -723,10 +826,11 @@ void FDC::Seek(uint dr, uint cy)
 			(seektime, this, STATIC_CAST(TimeFunc, &FDC::SeekEvent), dr);
 		seekstate |= 1 << dr;
 
-		if (seektime > 10)
-		{
+		if (seektime > 10) {
 			fdstat = (fdstat & ~(1 << dr)) | 0x10;
-			if (pfdstat >= 0) bus->Out(pfdstat, fdstat);
+			if (pfdstat >= 0) {
+				bus->Out(pfdstat, fdstat);
+			}
 		}
 	}
 }
@@ -736,21 +840,18 @@ void IOCALL FDC::SeekEvent(uint dr)
 	LOG1("\tSeek (%d) ", dr);
 	CriticalSection::Lock lock(diskmgr->GetCS());
 
-	if (seektime > 1000)
-	{
+	if (seektime > 1000) {
 		fdstat &= ~0x10;
-		if (pfdstat >= 0) bus->Out(pfdstat, fdstat);
+		if (pfdstat >= 0) {
+			bus->Out(pfdstat, fdstat);
+		}
 	}
 
 	seektime = 0;
-	if (dr > num_drives || !diskmgr->GetFDU(dr)->Seek(drive[dr].cyrinder))
-	{
+	if (dr > num_drives || !diskmgr->GetFDU(dr)->Seek(drive[dr].cyrinder)) {
 		drive[dr].result = (dr & 3) | ST0_SE;
 		LOG0("success.\n");
-//		statusdisplay.Show(1000, 0, "0:%.2d 1:%.2d", drive[0].cyrinder, drive[1].cyrinder);
-	}
-	else
-	{
+	} else {
 		drive[dr].result = (dr & 3) | ST0_SE | ST0_NR | ST0_AT;
 		LOG0("failed.\n");
 	}
@@ -767,15 +868,15 @@ void FDC::CmdSpecify()
 {
 	switch (phase)
 	{
-	case idlephase:
-		LOG0("Specify ");
-		ShiftToCommandPhase(2);
-		break;
+		case idlephase:
+			LOG0("Specify ");
+			ShiftToCommandPhase(2);
+			return;
 
-	case commandphase:
-		LOG2("(%.2x %.2x)\n", buffer[0], buffer[1]);
-		ShiftToIdlePhase();
-		break;
+		case commandphase:
+			LOG2("(%.2x %.2x)\n", buffer[0], buffer[1]);
+			ShiftToIdlePhase();
+			return;
 	}
 }
 
@@ -794,16 +895,13 @@ void FDC::CmdInvalid()
 //
 void FDC::CmdSenceIntStatus()
 {
-	if (int_requested)
-	{
+	if (int_requested) {
 		LOG0("SenceIntStatus ");
 		int_requested = false;
-		
+
 		int i;
-		for (i=0; i<4; i++)
-		{
-			if (drive[i].result)
-			{
+		for (i = 0; i < 4; i++) {
+			if (drive[i].result) {
 				buffer[0] = uint8(drive[i].result);
 				buffer[1] = uint8(drive[i].cyrinder >> drive[i].dd);
 				drive[i].result = 0;
@@ -811,14 +909,12 @@ void FDC::CmdSenceIntStatus()
 				break;
 			}
 		}
-		for (; i<4; i++)
-		{
+
+		for (; i < 4; i++) {
 			if (drive[i].result)
 				int_requested = true;
 		}
-	}
-	else
-	{
+	} else {
 		LOG0("Invalid(SenceIntStatus)\n");
 		buffer[0] = uint8(ST0_IC);
 		ShiftToResultPhase(1);
@@ -832,27 +928,31 @@ void FDC::CmdSenceDeviceStatus()
 {
 	switch (phase)
 	{
-	case idlephase:
-		LOG0("SenceDeviceStatus ");
-		ShiftToCommandPhase(1);
-		return;
+		case idlephase:
+			LOG0("SenceDeviceStatus ");
+			ShiftToCommandPhase(1);
+			return;
 
-	case commandphase:
-		LOG1("(%.2x) ", buffer[0]);
-		buffer[0] = GetDeviceStatus(buffer[0] & 3);
-		ShiftToResultPhase(1);
-		return;
+		case commandphase:
+			LOG1("(%.2x) ", buffer[0]);
+			buffer[0] = GetDeviceStatus(buffer[0] & 3);
+			ShiftToResultPhase(1);
+			return;
 	}
 }
 
+// ---------------------------------------------------------------------------
+//	GetDeviceStatus
+//
 uint FDC::GetDeviceStatus(uint dr)
 {
 	CriticalSection::Lock lock(diskmgr->GetCS());
 	hdu = (hdu & ~3) | (dr & 3);
-	if (dr < num_drives)
+	if (dr < num_drives) {
 		return diskmgr->GetFDU(dr)->SenceDeviceStatus() | dr;
-	else
+	} else {
 		return 0x80 | dr;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -862,105 +962,165 @@ void FDC::CmdWriteData()
 {
 	switch (phase)
 	{
-	case idlephase:
-		LOG0((command & 31) == 9 ? "WriteDeletedData" : "WriteData ");
-		ShiftToCommandPhase(8);
-		return;
-	
-	case commandphase:
-		GetSectorParameters();
-		SetTimer(executephase, 200);
-		return;
+		case idlephase:
+			LOG0((command & 31) == 9 ? "WriteDeletedData" : "WriteData ");
+			ShiftToCommandPhase(8);
+			return;
 
-	case executephase:
-		// FindID
-		{
-			CriticalSection::Lock lock(diskmgr->GetCS());
-			result = CheckCondition(true);
-			if (result & ST1_MA)
-			{
-				LOG0("Disk not mounted: Retry\n");
-				SetTimer(executephase, 10000);	// retry
+		case commandphase:
+			GetSectorParameters();
+
+		case executephase:
+			WriteData();
+			return;
+
+		case execwritephase:
+			if (diskwait && count > 0) {
+				// データ転送リクエスト
+				if (!(status & S_RQM)) {
+					// 初回に終了時間に変換
+					if (bufptr == buffer) {
+						txtime += scheduler->GetTime();
+					}
+
+					status |= S_RQM;
+					Intr(true);
+				}
+
+				// 止まらないように継続する(LOST ERRORはTODO)
+				if (count >= 2) {
+					int ticks = 3;
+					if (count == 2) {
+						// 最後の残り時間
+						ticks = txtime - scheduler->GetTime();
+						txtime = 0;
+					} else {
+						// 平均転送時間
+						ticks = (txtime - scheduler->GetTime()) / count;
+					}
+					ticks = Max(1, ticks);
+					ticks = Min(4, ticks);
+					SetTimer(execwritephase, ticks);
+				}
 				return;
 			}
-			if (!result)
-			{
-				uint dr = hdu & 3;
-				result = diskmgr->GetFDU(dr)->FindID
-					(((hdu >> 2) & 1) | (command & 0x40) | (drive[dr].hd & 0x80), idr);
-			}
-			if (result)
-			{
-				ShiftToResultPhase7();
+
+			// データ書き込み
+			FlushData((command & 31) == 9);
+
+			if (!IDIncrement()) {
+				SetTimer(timerphase, 20);
 				return;
 			}
-			int xbyte = 0x80 << Min(8, idr.n);
-			if (!idr.n)
-			{
-				xbyte = Min(dtl, 0x80);
-				memset(buffer + xbyte, 0, 0x80 - xbyte);
+
+			SetTimer(executephase, 3);
+			return;
+
+		case tcphase:
+			DelTimer();
+
+			// 割り込み中なら解除
+			if (status & S_RQM) {
+				status &= ~S_RQM;
+				Intr(false);
 			}
-			ShiftToExecWritePhase(xbyte);
-		}
-		return;
-	
-	case execwritephase:
-		WriteData((command & 31) == 9);
-		if (result)
-		{
+
+			if (diskwait && count > 0) {
+				// 途中打ち切りなら残り時間経過後に再突入
+				if (txtime) {
+					int ticks = txtime - scheduler->GetTime();
+					txtime = 0;
+					if (ticks > 0) {
+						SetTimer(tcphase, ticks);
+						return;
+					}
+				}
+			}
+
+			LOG1("\tTC at 0x%x byte\n", bufptr - buffer);
+			if (prevphase == execwritephase && count > 0) {
+				// 転送中？
+				LOG0("flush");
+				memset(bufptr, 0, count);
+				FlushData((command & 31) == 9);
+			}
+
 			ShiftToResultPhase7();
 			return;
-		}
-		phase = executephase;
-		if (!IDIncrement())
-		{
-			SetTimer(timerphase, 20);
-			return;
-		}
-		SetTimer(executephase, 500);		// 実際は CRC, GAP の書き込みが終わるまで猶予があるはず
-		return;
 
-	case timerphase:
-		// 次のセクタを処理しない
-		result = ST0_AT | ST1_EN;
-		ShiftToResultPhase7();
-		return;
-	
-	case tcphase:
-		DelTimer();
-		LOG1("\tTC at 0x%x byte\n", bufptr - buffer);
-		if (prevphase == execwritephase)
-		{
-			// 転送中？
-			LOG0("flush");
-			memset(bufptr, 0, count);
-			WriteData((command & 31) == 9);
-		}
-		ShiftToResultPhase7();
-		return;
+		case timerphase:
+			// 次のセクタを処理しない
+			result = ST0_AT | ST1_EN;
+			ShiftToResultPhase7();
+			return;
 	}
 }
 
 // ---------------------------------------------------------------------------
-//	WriteID Execution
+//	WriteData Execution
 //
-void FDC::WriteData(bool deleted)
+void FDC::WriteData()
 {
-	LOG4("\twrite %.2x %.2x %.2x %.2x\n", idr.c, idr.h, idr.r, idr.n);
+	LOG5("\tWrite(%.2x) %.2x %.2x %.2x %.2x\n", command, idr.c, idr.h, idr.r, idr.n);
 	if (showstatus)
 		statusdisplay.Show(85, 0, "Write (%d) %.2x %.2x %.2x %.2x", hdu & 3, idr.c, idr.h, idr.r, idr.n);
-	
+
 	CriticalSection::Lock lock(diskmgr->GetCS());
-	if (result = CheckCondition(true))
+	result = CheckCondition(true);
+	if (result & ST1_MA) {
+		// ディスクが無い場合，100ms 後に再挑戦
+		SetTimer(executephase, 10000);
+		LOG0("Disk not mounted: Retry\n");
+		return;
+	}
+
+	if (result) {
+		ShiftToResultPhase7();
+		return;
+	}
+
+	uint dr = hdu & 3;
+	uint flags = ((hdu >> 2) & 1) | (command & 0x40) | (drive[dr].hd & 0x80);
+	int stime = 0;
+
+	int xbyte = 0x80 << Min(7, idr.n);
+	if (!idr.n)
+	{
+		xbyte = Min(dtl, 0x80);
+		memset(buffer + xbyte, 0, 0x80 - xbyte);
+	}
+
+	result = diskmgr->GetFDU(dr)->FindID(flags, idr, xbyte, &stime, &txtime);
+	if (!diskwait) {
+		stime = 0;
+		txtime = 0;
+	}
+
+	if (result)
 	{
 		ShiftToResultPhase7();
 		return;
 	}
-	
+
+	ShiftToExecWritePhase(xbyte, !diskwait);
+	if (diskwait) {
+		SetTimer(execwritephase, Max(stime, 3));
+	}
+}
+
+// ---------------------------------------------------------------------------
+//	FlushData
+//
+void FDC::FlushData(bool deleted)
+{
+	CriticalSection::Lock lock(diskmgr->GetCS());
+	if (result = CheckCondition(true)) {
+		return;
+	}
+
 	uint dr = hdu & 3;
 	uint flags = ((hdu >> 2) & 1) | (command & 0x40) | (drive[dr].hd & 0x80);
 	result = diskmgr->GetFDU(dr)->WriteSector(flags, idr, buffer, deleted);
-	return;
 }
 
 // ---------------------------------------------------------------------------
@@ -970,28 +1130,22 @@ void FDC::CmdReadID()
 {
 	switch (phase)
 	{
-	case idlephase:
-		LOG0("ReadID ");
-		ShiftToCommandPhase(1);
-		return;
-	
-	case commandphase:
-		LOG1("(%.2x)", buffer[0]);
-		hdu = buffer[0];
-		
-	case executephase:
-		if (CheckCondition(false) & ST1_MA)
-		{
-			LOG0("Disk not mounted: Retry\n");
-			SetTimer(executephase, 10000);
+		case idlephase:
+			LOG0("ReadID ");
+			ShiftToCommandPhase(1);
 			return;
-		}
-		SetTimer(timerphase, 50);
-		return;
 
-	case timerphase:
-		ReadID();
-		return;
+		case commandphase:
+			LOG1("(%.2x)", buffer[0]);
+			hdu = buffer[0];
+
+		case executephase:
+			ReadID();
+			return;
+
+		case timerphase:
+			ShiftToResultPhase7();
+			return;
 	}
 }
 
@@ -1002,97 +1156,38 @@ void FDC::ReadID()
 {
 	CriticalSection::Lock lock(diskmgr->GetCS());
 	result = CheckCondition(false);
-	if (!result)
-	{
-		uint dr = hdu & 3;
-		uint flags = ((hdu >> 2) & 1) | (command & 0x40) | (drive[dr].hd & 0x80);
-		result = diskmgr->GetFDU(dr)->ReadID(flags, &idr);
-		if (showstatus)
-			statusdisplay.Show(85, 0, "ReadID (%d:%.2x) %.2x %.2x %.2x %.2x",
-							   dr, flags, idr.c, idr.h, idr.r, idr.n);
-	}
-	ShiftToResultPhase7();
-}
-
-
-// ---------------------------------------------------------------------------
-//	WriteID
-//
-void FDC::CmdWriteID()
-{
-	switch (phase)
-	{
-	case idlephase:
-		LOG0("WriteID ");
-		ShiftToCommandPhase(5);
-		return;
-	
-	case commandphase:
-		LOG5("(%.2x %.2x %.2x %.2x %.2x)", 
-			buffer[0], buffer[1], buffer[2], buffer[3], buffer[4]);
-		
-		wid.idr = 0;
-		hdu     = buffer[0];
-		wid.n   = buffer[1];
-		eot     = buffer[2];
-		wid.gpl = buffer[3];
-		wid.d   = buffer[4];
-
-		if (!eot)
-		{
-			buffer = bufptr;
-			SetTimer(timerphase, 10000);
-			return;
-		}
-		ShiftToExecWritePhase(4 * eot);
-		return;
-
-	case tcphase:
-	case execwritephase:
-		accepttc = false;
-		SetTimer(timerphase, 40000);
-		return;
-
-	case timerphase:
-		wid.idr = (IDR*) buffer;
-		wid.sc = (bufptr - buffer) / 4;
-		LOG1("sc:%d ", wid.sc);
-		
-		WriteID();
+	if (result & ST1_MA) {
+		// ディスクが無い場合，100ms 後に再挑戦
+		SetTimer(executephase, 10000);
+		LOG0("Disk not mounted: Retry\n");
 		return;
 	}
-}
 
-// ---------------------------------------------------------------------------
-//	WriteID Execution
-//
-void FDC::WriteID()
-{
-#if defined(LOGNAME) && defined(_DEBUG)
-	LOG2("\tWriteID  sc:%.2x N:%.2x\n", wid.sc, wid.n);
-	for (int i=0; i<wid.sc; i++)
-	{
-		LOG4("\t%.2x %.2x %.2x %.2x\n", 
-			wid.idr[i].c, wid.idr[i].h, wid.idr[i].r, wid.idr[i].n); 
-	}
-#endif
-	
-	CriticalSection::Lock lock(diskmgr->GetCS());
-	
-	if (result = CheckCondition(true))
-	{
+	if (result) {
 		ShiftToResultPhase7();
 		return;
 	}
 
 	uint dr = hdu & 3;
 	uint flags = ((hdu >> 2) & 1) | (command & 0x40) | (drive[dr].hd & 0x80);
-	result = diskmgr->GetFDU(dr)->WriteID(flags, &wid);
-	if (showstatus)
-		statusdisplay.Show(85, 0, "WriteID dr:%d tr:%d sec:%.2d N:%.2x", 
-			dr, (drive[dr].cyrinder >> drive[dr].dd) * 2 + ((hdu>>2) & 1), wid.sc, wid.n);
 
-	idr.n = wid.n;
+	if (showstatus) {
+		statusdisplay.Show(85, 0,
+			"ReadID DRV %d FLAG %.2x C %.2x H %.2x R %.2x N %.2x",
+			dr, flags, idr.c, idr.h, idr.r, idr.n);
+	}
+
+	int stime = 0;
+	result = diskmgr->GetFDU(dr)->ReadID(flags, &idr, &stime);
+	if (!diskwait) {
+		stime = 0;
+	}
+
+	if (diskwait) {
+		SetTimer(timerphase, Max(stime, 3));
+		return;
+	}
+
 	ShiftToResultPhase7();
 }
 
@@ -1103,106 +1198,342 @@ void FDC::CmdReadDiagnostic()
 {
 	switch (phase)
 	{
-		int ct;
-	case idlephase:
-		LOG0("ReadDiagnostic ");
-		ShiftToCommandPhase(8);		// パラメータは 8 個
-		readdiagptr = 0;
-		return;
+		case idlephase:
+			LOG0("ReadDiagnostic ");
+			ShiftToCommandPhase(8);		// パラメータは 8 個
+			readdiagptr = 0;
+			return;
 
-	case commandphase:
-		GetSectorParameters();
-		SetTimer(executephase, 100);
-		return;
-	
-	case executephase:
-		ReadDiagnostic();
-		if (result & ST0_AT)
-		{
+		case commandphase:
+			GetSectorParameters();
+			SearchIndex();
+			return;
+
+		case executephase:
+			ReadDiagnostic();
+			return;
+
+		case execreadphase:
+			if (diskwait && count > 0) {
+				// データ転送リクエスト
+				if (!(status & S_RQM)) {
+					// 初回に終了時間に変換
+					if (bufptr == buffer) {
+						txtime += scheduler->GetTime();
+					}
+
+					status |= S_RQM;
+					Intr(true);
+				}
+
+				// 止まらないように継続する(LOST ERRORはTODO)
+				if (count >= 2) {
+					int ticks = 3;
+					if (count == 2) {
+						// 最後の残り時間
+						ticks = txtime - scheduler->GetTime();
+						txtime = 0;
+					} else {
+						// 平均転送時間
+						ticks = (txtime - scheduler->GetTime()) / count;
+					}
+					ticks = Max(1, ticks);
+					ticks = Min(4, ticks);
+					SetTimer(execreadphase, ticks);
+				}
+				return;
+			}
+
+			if (!IDIncrement()) {
+				SetTimer(timerphase, 3);
+				return;
+			}
+
+			SetTimer(executephase, 3);
+			return;
+
+		case tcphase:
+			DelTimer();
+
+			// 割り込み中なら解除
+			if (status & S_RQM) {
+				status &= ~S_RQM;
+				Intr(false);
+			}
+
+			if (diskwait && count > 0) {
+				// 途中打ち切りなら残り時間経過後に再突入
+				if (txtime) {
+					int ticks = txtime - scheduler->GetTime();
+					txtime = 0;
+					if (ticks > 0) {
+						SetTimer(tcphase, ticks);
+						return;
+					}
+				}
+			}
+
+			LOG1("\tTC at 0x%x byte\n", bufptr - buffer);
 			ShiftToResultPhase7();
 			return;
-		}
-		xbyte = idr.n ? 0x80 << Min(8, idr.n) : Min(dtl, 0x80);
-		ct = Min(readdiaglim - readdiagptr, xbyte);
-		readdiagcount = ct;
-		ShiftToExecReadPhase(ct, readdiagptr);
-		readdiagptr += ct, xbyte -= ct;
-		if (readdiagptr >= readdiaglim)
-			readdiagptr = buffer;
-		return;
 
-	case execreadphase:
-		if (xbyte > 0)
-		{
-			ct = Min(readdiaglim - readdiagptr, xbyte);
-			readdiagcount += ct;
-			ShiftToExecReadPhase(ct, readdiagptr);
-			readdiagptr += ct, xbyte -= ct;
-			if (readdiagptr >= readdiaglim)
-				readdiagptr = buffer;
+		case timerphase:
+			result = ST0_AT | ST1_EN;
+			ShiftToResultPhase7();
 			return;
-		}
-		if (!IDIncrement())
-		{
-			SetTimer(timerphase, 20);
-			return;
-		}
-		SetTimer(executephase, 100);
-		return;
+	}
+}
 
-	case tcphase:
-		DelTimer();
-		LOG1("\tTC at 0x%x byte\n", readdiagcount - count);
-		ShiftToResultPhase7();
+void FDC::SearchIndex()
+{
+	CriticalSection::Lock lock(diskmgr->GetCS());
+	result = CheckCondition(false);
+	if (result & ST1_MA) {
+		// ディスクが無い場合，100ms 後に再挑戦
+		SetTimer(executephase, 10000);
+		LOG0("Disk not mounted: Retry\n");
 		return;
+	}
 
-	case timerphase:
-		result = ST0_AT | ST1_EN;
+	if (result) {
 		ShiftToResultPhase7();
 		return;
 	}
+
+	uint dr = hdu & 3;
+	uint flags = ((hdu >> 2) & 1) | (command & 0x40) | (drive[dr].hd & 0x80);
+	int stime = 0;
+	result = diskmgr->GetFDU(dr)->SearchIndex(flags, &stime);
+	if (!diskwait) {
+		stime = 0;
+	}
+
+	if (result) {
+		ShiftToResultPhase7();
+	}
+
+	SetTimer(executephase, Max(stime, 3));
 }
 
 void FDC::ReadDiagnostic()
 {
-	LOG0("\tReadDiag ");
-	if (!readdiagptr)
-	{
-		CriticalSection::Lock lock(diskmgr->GetCS());
-		result = CheckCondition(false);
-		if (result)
-		{
-			ShiftToResultPhase7();
-			return;
-		}
+	LOG0("\tReadDiagnostic ");
 
-		if (result & ST1_MA)
-		{
-			// ディスクが無い場合，100ms 後に再挑戦
-			LOG0("Disk not mounted: Retry\n");
-			SetTimer(executephase, 10000);
-			return;
-		}
-		
-		uint dr = hdu & 3;
-		uint flags = ((hdu >> 2) & 1) | (command & 0x40) | (drive[dr].hd & 0x80);
-		uint size;
-		int tr = (drive[dr].cyrinder >> drive[dr].dd) * 2 + ((hdu>>2) & 1);
-		statusdisplay.Show(84, showstatus ? 1000 : 2000, 
-			"ReadDiagnostic (Dr%d Tr%d)", dr, tr);
+	CriticalSection::Lock lock(diskmgr->GetCS());
+	uint dr = hdu & 3;
+	uint flags = ((hdu >> 2) & 1) | (command & 0x40) | (drive[dr].hd & 0x80);
+	uint size = 128 << Min(idr.n, 7);
 
-		result = diskmgr->GetFDU(dr)->MakeDiagData(flags, buffer, &size);
-		if (result)
-		{
-			ShiftToResultPhase7();
-			return;
-		}
-		readdiaglim = buffer + size;
-		LOG1("[0x%.4x]", size);
+	int tr = (drive[dr].cyrinder >> drive[dr].dd) * 2 + ((hdu >> 2) & 1);
+	if (showstatus) {
+		statusdisplay.Show(84, showstatus ? 1000 : 2000,
+			"ReadDiagnostic DRV %d C %.2x H %.2x (T %d)",
+			dr, (drive[dr].cyrinder >> drive[dr].dd), ((hdu >> 2) & 1), tr);
 	}
-	result = diskmgr->GetFDU(hdu & 3)->ReadDiag(buffer, &readdiagptr, idr);
-	LOG2(" (ptr=0x%.4x re=%d)\n", readdiagptr - buffer, result);
-	return;
+
+	int stime = 0;
+	result = diskmgr->GetFDU(dr)->ReadDiag(flags, buffer, &size, idr, &stime, &txtime);
+	if (!diskwait) {
+		stime = 0;
+		txtime = 0;
+	}
+
+	if (result & ST0_AT) {
+		ShiftToResultPhase7();
+		return;
+	}
+
+	xbyte = idr.n ? 0x80 << Min(7, idr.n) : Min(dtl, 0x80);
+	ShiftToExecReadPhase(xbyte, !diskwait);
+
+	if (diskwait) {
+		SetTimer(execreadphase, Max(stime, 3));
+
+		if (size != xbyte) {
+			txtime = (txtime * xbyte) / size;
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+//	WriteID
+//
+void FDC::CmdWriteID()
+{
+	switch (phase)
+	{
+		case idlephase:
+			LOG0("WriteID ");
+			ShiftToCommandPhase(5);
+			return;
+
+		case commandphase:
+			LOG5("(%.2x %.2x %.2x %.2x %.2x)\n",
+				buffer[0], buffer[1], buffer[2], buffer[3], buffer[4]);
+
+			// コマンド記録
+			wid.idr = 0;
+			hdu = buffer[0];
+			wid.n = buffer[1];
+			wid.sc = 0;
+			wid.gpl = buffer[3];
+			wid.d = buffer[4];
+			eot = buffer[2];
+
+			// セクタ数が0ならばエラーにしておこう
+			if (!eot) {
+				result = ST0_AT | ST1_EN;
+				ShiftToResultPhase7();
+				return;
+			}
+
+			// プリアンブルを書く
+			WritePreamble();
+			return;
+
+		case executephase:
+			ShiftToExecWritePhase(4, !diskwait);
+			if (!diskwait) {
+				return;
+			}
+
+		case execwritephase:
+			if (wid.sc < eot) {
+				if (diskwait) {
+					if (count > 0) {
+						// 次の1バイト転送のリクエストを上げる
+						int ticks = 3;
+						if (!(status & S_RQM)) {
+							status |= S_RQM;
+							Intr(true);
+						}
+
+						// 止まらないように継続する(LOST ERRORはTODO)
+						if (count > 1) {
+							SetTimer(execwritephase, ticks);
+						}
+						return;
+					}
+				}
+
+				// IDR取得
+				idr.c = buffer[0];
+				idr.h = buffer[1];
+				idr.r = buffer[2];
+				idr.n = buffer[3];
+				wid.idr = &idr;
+
+				// IDを書く
+				WriteID();
+			} else {
+				// ポストアンブルを書く
+				WritePostamble();
+			}
+			return;
+
+		case tcphase:
+			DelTimer();
+			LOG1("\tTC at 0x%x byte\n", bufptr - buffer);
+
+			// ポストアンブルを書く
+			WritePostamble();
+			return;
+
+		case timerphase:
+			ShiftToResultPhase7();
+			return;
+	}
+}
+// ---------------------------------------------------------------------------
+//	WritePreamble Execution
+//
+void FDC::WritePreamble()
+{
+	CriticalSection::Lock lock(diskmgr->GetCS());
+	result = CheckCondition(true);
+	if (result) {
+		ShiftToResultPhase7();
+		return;
+	}
+
+	uint dr = hdu & 3;
+	uint flags = ((hdu >> 2) & 1) | (command & 0x40) | (drive[dr].hd & 0x80);
+
+	// インデックスホール待ち
+	int stime = 0;
+	result = diskmgr->GetFDU(dr)->SearchIndex(flags, &stime);
+	if (!diskwait) {
+		stime = 0;
+	}
+
+	if (result) {
+		ShiftToResultPhase7();
+	}
+
+	// プリアンブル書き込み
+	result = diskmgr->GetFDU(dr)->WritePreamble(flags, &txtime);
+	if (!diskwait) {
+		txtime = 0;
+	}
+
+	if (result) {
+		ShiftToResultPhase7();
+	}
+
+	SetTimer(executephase, Max((stime + txtime), 3));
+}
+
+// ---------------------------------------------------------------------------
+//	WriteID Execution
+//
+void FDC::WriteID()
+{
+	CriticalSection::Lock lock(diskmgr->GetCS());
+	uint dr = hdu & 3;
+	uint flags = ((hdu >> 2) & 1) | (command & 0x40) | (drive[dr].hd & 0x80);
+
+	LOG4("\tID %.2x %.2x %.2x %.2x\n", idr.c, idr.h, idr.r, idr.n);
+	if (showstatus) {
+		statusdisplay.Show(85, 0, "WriteID dr:%d tr:%.2d sc:%.2d (%.2x %.2x %.2x %.2x)",
+			dr, (drive[dr].cyrinder >> drive[dr].dd) * 2 + ((hdu >> 2) & 1), wid.sc, idr.c, idr.h, idr.r, idr.n);
+	}
+
+	result = diskmgr->GetFDU(dr)->WriteID(flags, &wid, &txtime);
+	if (result) {
+		ShiftToResultPhase7();
+	}
+
+	if (!diskwait) {
+		txtime = 0;
+	}
+
+	// 次のセクタ
+	wid.sc++;
+
+	// 書き終わってから再度実行フェーズ
+	SetTimer(executephase, Max(txtime, 3));
+}
+
+// ---------------------------------------------------------------------------
+//	WritePostamble Execution
+//
+void FDC::WritePostamble()
+{
+	// ポストアンブルを書く
+	CriticalSection::Lock lock(diskmgr->GetCS());
+	uint dr = hdu & 3;
+	uint flags = ((hdu >> 2) & 1) | (command & 0x40) | (drive[dr].hd & 0x80);
+	result = diskmgr->GetFDU(dr)->WritePostamble(flags, &txtime);
+	if (result) {
+		ShiftToResultPhase7();
+	}
+
+	if (!diskwait) {
+		txtime = 0;
+	}
+
+	// 書き終わってからタイマーフェーズ
+	SetTimer(timerphase, Max(txtime, 3));
 }
 
 // ---------------------------------------------------------------------------
@@ -1212,14 +1543,14 @@ uint FDC::CheckCondition(bool write)
 {
 	uint dr = hdu & 3;
 	hdue = hdu;
-	if (dr >= num_drives)
-	{
+	if (dr >= num_drives) {
 		return ST0_AT | ST0_NR;
 	}
-	if (!diskmgr->GetFDU(dr)->IsMounted())
-	{
+
+	if (!diskmgr->GetFDU(dr)->IsMounted()) {
 		return ST0_AT | ST1_MA;
 	}
+
 	return 0;
 }
 
@@ -1228,18 +1559,18 @@ uint FDC::CheckCondition(bool write)
 //	
 void FDC::GetSectorParameters()
 {
-	LOG8("(%.2x %.2x %.2x %.2x %.2x %.2x %.2x %.2x)\n", 
-		buffer[0], buffer[1], buffer[2], buffer[3], 
+	LOG8("(%.2x %.2x %.2x %.2x %.2x %.2x %.2x %.2x)\n",
+		buffer[0], buffer[1], buffer[2], buffer[3],
 		buffer[4], buffer[5], buffer[6], buffer[7]);
-	
+
 	hdu = hdue = buffer[0];
 	idr.c = buffer[1];
 	idr.h = buffer[2];
 	idr.r = buffer[3];
 	idr.n = buffer[4];
-	eot   = buffer[5];
-//	gpl   = buffer[6];
-	dtl   = buffer[7];
+	eot = buffer[5];
+	gpl = buffer[6];
+	dtl = buffer[7];
 }
 
 // ---------------------------------------------------------------------------
@@ -1252,33 +1583,33 @@ uint IFCALL FDC::GetStatusSize()
 
 bool IFCALL FDC::SaveStatus(uint8* s)
 {
-	Snapshot* st = (Snapshot*) s;
-	
-	st->rev			= ssrev;
-	st->bufptr		= bufptr ? bufptr - buffer : ~0;
-	st->count		= count;
-	st->status		= status;
-	st->command		= command;
-	st->data		= data;
-	st->phase		= phase;
-	st->prevphase	= prevphase;
-	st->t_phase		= timerhandle ? t_phase : idlephase;
+	Snapshot* st = (Snapshot*)s;
+
+	st->rev = ssrev;
+	st->bufptr = bufptr ? bufptr - buffer : ~0;
+	st->count = count;
+	st->status = status;
+	st->command = command;
+	st->data = data;
+	st->phase = phase;
+	st->prevphase = prevphase;
+	st->t_phase = timerhandle ? t_phase : idlephase;
 	st->int_requested = int_requested;
-	st->accepttc	= accepttc;
-	st->idr			= idr;
-	st->hdu			= hdu;
-	st->hdue		= hdue;
-	st->dtl			= dtl;
-	st->eot			= eot;
-	st->seekstate	= seekstate;
-	st->result		= result;
+	st->accepttc = accepttc;
+	st->idr = idr;
+	st->hdu = hdu;
+	st->hdue = hdue;
+	st->dtl = dtl;
+	st->eot = eot;
+	st->seekstate = seekstate;
+	st->result = result;
 	st->readdiagptr = readdiagptr ? readdiagptr - buffer : ~0;
 	st->readdiaglim = readdiaglim - buffer;
-	st->xbyte		= xbyte;
+	st->xbyte = xbyte;
 	st->readdiagcount = readdiagcount;
 	st->wid = wid;
 	memcpy(st->buf, buffer, 0x4000);
-	for (int d=0; d<num_drives; d++)
+	for (int d = 0; d < num_drives; d++)
 		st->dr[d] = drive[d];
 	LOG1("save status  bufptr = %p\n", bufptr);
 
@@ -1287,48 +1618,48 @@ bool IFCALL FDC::SaveStatus(uint8* s)
 
 bool IFCALL FDC::LoadStatus(const uint8* s)
 {
-	const Snapshot* st = (const Snapshot*) s;
-	if (st->rev != ssrev)
+	const Snapshot* st = (const Snapshot*)s;
+	if (st->rev != ssrev) {
 		return false;
+	}
 
-	bufptr		= (st->bufptr == ~0) ? 0 : buffer + st->bufptr;
-	count		= st->count;
-	status		= st->status;
-	command		= st->command;
-	data		= st->data;
-	phase		= st->phase;
-	prevphase	= st->prevphase;
-	t_phase		= st->t_phase;
+	bufptr = (st->bufptr == ~0) ? 0 : buffer + st->bufptr;
+	count = st->count;
+	status = st->status;
+	command = st->command;
+	data = st->data;
+	phase = st->phase;
+	prevphase = st->prevphase;
+	t_phase = st->t_phase;
 	int_requested = st->int_requested;
-	accepttc	= st->accepttc;
-	idr			= st->idr;
-	hdu			= st->hdu;
-	hdue		= st->hdue;
-	dtl			= st->dtl;
-	eot			= st->eot;
-	seekstate	= st->seekstate;
-	result		= st->result;
+	accepttc = st->accepttc;
+	idr = st->idr;
+	hdu = st->hdu;
+	hdue = st->hdue;
+	dtl = st->dtl;
+	eot = st->eot;
+	seekstate = st->seekstate;
+	result = st->result;
 	readdiagptr = (st->readdiagptr == ~0) ? 0 : buffer + st->readdiagptr;
 	readdiaglim = buffer + st->readdiaglim;
-	xbyte		= st->xbyte;
+	xbyte = st->xbyte;
 	readdiagcount = st->readdiagcount;
-	wid			= st->wid;
+	wid = st->wid;
 	memcpy(buffer, st->buf, 0x4000);
 
 	if ((command & 19) == 17)
 		dtl |= 0x100;
 
 	scheduler->DelEvent(this);
-	if (st->t_phase != idlephase)
+	if (st->t_phase != idlephase) {
 		timerhandle = scheduler->AddEvent(diskwait ? 100 : 10, this, STATIC_CAST(TimeFunc, &FDC::PhaseTimer), st->t_phase);
-	
+	}
+
 	fdstat = 0;
-	for (int d=0; d<num_drives; d++)
-	{
+	for (int d = 0; d < num_drives; d++) {
 		drive[d] = st->dr[d];
 		diskmgr->GetFDU(d)->Seek(drive[d].cyrinder);
-		if (seekstate & (1 << d))
-		{
+		if (seekstate & (1 << d)) {
 			scheduler->AddEvent(diskwait ? 100 : 10, this, STATIC_CAST(TimeFunc, &FDC::SeekEvent), d);
 			fdstat |= 0x10;
 		}
@@ -1336,7 +1667,11 @@ bool IFCALL FDC::LoadStatus(const uint8* s)
 
 		fdstat |= drive[d].hd ? 4 << d : 0;
 	}
-	if (pfdstat >= 0) bus->Out(pfdstat, fdstat);
+
+	if (pfdstat >= 0) {
+		bus->Out(pfdstat, fdstat);
+	}
+
 	LOG1("load status  bufptr = %p\n", bufptr);
 
 	return true;
@@ -1347,7 +1682,7 @@ bool IFCALL FDC::LoadStatus(const uint8* s)
 //
 const Device::Descriptor FDC::descriptor = { indef, outdef };
 
-const Device::OutFuncPtr FDC::outdef[] = 
+const Device::OutFuncPtr FDC::outdef[] =
 {
 	STATIC_CAST(Device::OutFuncPtr, &Reset),
 	STATIC_CAST(Device::OutFuncPtr, &SetData),
@@ -1355,7 +1690,7 @@ const Device::OutFuncPtr FDC::outdef[] =
 	STATIC_CAST(Device::OutFuncPtr, &MotorControl)
 };
 
-const Device::InFuncPtr FDC::indef[] = 
+const Device::InFuncPtr FDC::indef[] =
 {
 	STATIC_CAST(Device::InFuncPtr, &Status),
 	STATIC_CAST(Device::InFuncPtr, &GetData),

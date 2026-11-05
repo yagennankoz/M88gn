@@ -20,7 +20,7 @@ public:
 	WinDrawSub() : status(0) {}
 	virtual ~WinDrawSub() {}
 
-	virtual bool Init(HWND hwnd, uint w, uint h, GUID* display) = 0;
+	virtual bool Init(HWND hwnd, uint w, uint h, GUID* display, int mag) = 0;
 	virtual bool Resize(uint width, uint height) { return false; }
 	virtual bool Cleanup() = 0;
 	virtual void SetPalette(PALETTEENTRY* pal, int index, int nentries) {}
@@ -72,7 +72,7 @@ public:
 	
 	void SetPriorityLow(bool low);
 	void SetGUIFlag(bool flag);
-	bool ChangeDisplayMode(bool fullscreen, bool force480 = true);
+	bool ChangeDisplayMode(bool fullscreen, bool force480 = true, bool stretchx2 = false);
 	void Refresh() { refresh = 1; }
 	void WindowMoved(int cx, int cy);
 
@@ -122,5 +122,7 @@ private:
 	GUID gmonitor;					// hmonitor ‚É‘Î‰ž‚·‚é GUID
 
 	PALETTEENTRY palette[0x100];
+
+	bool bStretchx2;
 };
 

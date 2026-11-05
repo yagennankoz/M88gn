@@ -19,7 +19,7 @@ public:
 	WinDrawGDI();
 	~WinDrawGDI();
 
-	bool Init(HWND hwnd, uint w, uint h, GUID*);
+	bool Init(HWND hwnd, uint w, uint h, GUID* g, int mag);
 	bool Resize(uint width, uint height);
 	bool Cleanup();
 	void SetPalette(PALETTEENTRY* pal, int index, int nentries);
@@ -46,6 +46,9 @@ private:
 	uint	height;
 	bool	updatepal;
 	BI256	binfo;
+	int		m_nBitmapW;
+	int		m_nBitmapH;
+	int		m_nMag;
 };
 
 #endif // !defined(win32_drawgdi_h)

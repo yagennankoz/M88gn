@@ -30,7 +30,10 @@ WinDrawD2D::WinDrawD2D() :
 	m_D2DFact(0),
 	m_RenderTarget(0),
 	m_UpdatePal(false),
-	m_hBitmap(0)
+	m_hBitmap(0),
+	m_nMag(1),
+	m_nBitmapW(640),
+	m_nBitmapH(400)
 {
 }
 
@@ -42,11 +45,12 @@ WinDrawD2D::~WinDrawD2D()
 // ---------------------------------------------------------------------------
 //	初期化処理
 //
-bool WinDrawD2D::Init( HWND _hWnd, uint _width, uint _height, GUID* )
+bool WinDrawD2D::Init( HWND _hWnd, uint _width, uint _height, GUID* g, int mag)
 {
 	m_hWnd = _hWnd;
+	m_nMag = mag;
 
-	if ( CreateD2D() == false ) {
+	if ( CreateD2D(_width, _height) == false ) {
 		return false;
 	}
 
@@ -68,7 +72,7 @@ void WinDrawD2D::SetGUIMode( bool _mode )
 }
 
 
-bool WinDrawD2D::CreateD2D()
+bool WinDrawD2D::CreateD2D(uint w, uint h)
 {
 	// OSバージョンのチェック
 	OSVERSIONINFOEX osinfo;
@@ -91,8 +95,8 @@ bool WinDrawD2D::CreateD2D()
 			WS_CHILD,
 			0,
 			0,
-			640,
-			480,
+			w,
+			h,
 			m_hWnd,
 			NULL, NULL, NULL);
 	}
@@ -126,7 +130,7 @@ bool WinDrawD2D::Resize( uint _width, uint _height )
 
 	HRESULT hr = S_OK;
 
-	::SetWindowPos( m_hCWnd, HWND_BOTTOM, 0, 0, 640, 400, SWP_SHOWWINDOW);
+	::SetWindowPos( m_hCWnd, HWND_BOTTOM, 0, 0, m_width, m_height, SWP_SHOWWINDOW);
 
 	if ( !m_RenderTarget ) {
 
@@ -156,7 +160,7 @@ bool WinDrawD2D::Resize( uint _width, uint _height )
 		if ( MakeBitmap() == false ) {
 			return false;
 		}
-		memset( m_image, 0x40, _width * _height);
+		memset( m_image, 0x40, m_nBitmapW * m_nBitmapH);
 	} else {
 		RECT rc;
 		GetClientRect( m_hCWnd, &rc );
@@ -198,8 +202,8 @@ bool WinDrawD2D::Cleanup()
 bool WinDrawD2D::MakeBitmap()
 {
 	m_bmpinfo.header.biSize          = sizeof(BITMAPINFOHEADER);
-	m_bmpinfo.header.biWidth         = m_width;
-	m_bmpinfo.header.biHeight        = -(int) m_height;
+	m_bmpinfo.header.biWidth         = m_nBitmapW;
+	m_bmpinfo.header.biHeight        = -(int)m_nBitmapH;
 	m_bmpinfo.header.biPlanes        = 1;
 	m_bmpinfo.header.biBitCount      = 8;
 	m_bmpinfo.header.biCompression   = BI_RGB;
@@ -228,7 +232,7 @@ bool WinDrawD2D::MakeBitmap()
 									NULL,
 									0 );
 
-	RECT rect = { 0,0,640,400 };
+	RECT rect = { 0,0,m_nBitmapW,m_nBitmapH };
 	m_GDIRT->ReleaseDC( &rect );
 	m_RenderTarget->EndDraw();
 
@@ -236,7 +240,7 @@ bool WinDrawD2D::MakeBitmap()
 		return false;
 	}
 
-	bpl = m_width;
+	bpl = m_nBitmapW;
 	m_image = bitmapimage;
 	return true;
 }
@@ -272,7 +276,7 @@ void WinDrawD2D::DrawScreen(const RECT& _rect, bool refresh)
 	bool valid = rc.left < rc.right && rc.top < rc.bottom;
 
 	if ( refresh || m_UpdatePal ) {
-		::SetRect( &rc, 0, 0, m_width, m_height );
+		::SetRect( &rc, 0, 0, m_nBitmapW, m_nBitmapH );
 		valid = true;
 	}
 
@@ -288,15 +292,30 @@ void WinDrawD2D::DrawScreen(const RECT& _rect, bool refresh)
 			::SetDIBColorTable( hmemdc, 0, 0x100, m_bmpinfo.colors );
 		}
 
-		::BitBlt( hDC, rc.left, rc.top,
-				  rc.right - rc.left, rc.bottom - rc.top,
-				  hmemdc, rc.left, rc.top,
-				  SRCCOPY);
+		if (m_nMag > 1) {
+			::StretchBlt(
+				hDC,
+				rc.left * m_nMag,
+				rc.top * m_nMag,
+				(rc.right - rc.left) * m_nMag,
+				(rc.bottom - rc.top) * m_nMag,
+				hmemdc,
+				rc.left,
+				rc.top,
+				rc.right - rc.left,
+				rc.bottom - rc.top,
+				SRCCOPY);
+		} else {
+			::BitBlt( hDC, rc.left, rc.top,
+					  rc.right - rc.left, rc.bottom - rc.top,
+					  hmemdc, rc.left, rc.top,
+					  SRCCOPY);
+		}
 
 		::SelectObject( hmemdc, oldbitmap );
 		::DeleteDC( hmemdc );
 
-		RECT rect = { 0,0,640,400 };
+		RECT rect = { 0,0,m_nBitmapW * m_nMag,m_nBitmapH * m_nMag };
 		m_GDIRT->ReleaseDC( &rect );
 	}
 

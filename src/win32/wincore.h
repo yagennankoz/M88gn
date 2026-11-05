@@ -48,6 +48,7 @@ public:
 
 	long GetExecCount() { return seq.GetExecCount(); }
 	void Wait(bool dowait) { seq.Activate(!dowait); }
+	void ExecOne() { seq.ExecOne(); }
 	void* IFCALL QueryIF(REFIID iid);
 	void IFCALL Lock() { seq.Lock(); }
 	void IFCALL Unlock() { seq.Unlock(); }

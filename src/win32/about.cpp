@@ -39,7 +39,7 @@ INT_PTR M88About::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 	switch (msg)
 	{
 	case WM_INITDIALOG:
-		wsprintf(buf, "M88 for Win32 (rel " APP_VER_STRING ")\n"
+		wsprintf(buf, "M88g for Win32 (rel " APP_VER_STRING ")\n"
 					  "PC-8801 series emulator.\n"
 					  "Copyright (C) 1998, 2003 cisc\n");
 	
@@ -94,7 +94,7 @@ INT_PTR CALLBACK M88About::DlgProcGate
 //	about 用のテキスト
 //
 const char M88About::abouttext[] =
-	"build date:"__DATE__" (%.8x)\r\n"
+	"build date:" __DATE__ " (%.8x)\r\n"
 	"\r\n"
 	"要望・バグ報告などは以下のページにどうぞ\r\n"
 	"\r\n"
@@ -108,5 +108,9 @@ const char M88About::abouttext[] =
 	"佐藤達之氏作の fm.c を参考にさせていただきました．\r\n"
 	"\r\n"
 	"N80/SR モードは arearea 氏のコードを元に実装されています．\r\n"
+	"\r\n"
+	"FDX68についてはGIMONS DEVELOPER WORKSのページへ．\r\n"
+	"\r\n"
+	"http://www.retropc.net/gimons/\r\n"
 	;
 
