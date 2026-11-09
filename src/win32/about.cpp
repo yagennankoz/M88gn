@@ -39,7 +39,8 @@ INT_PTR M88About::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 	switch (msg)
 	{
 	case WM_INITDIALOG:
-		wsprintf(buf, "M88g for Win32 (rel " APP_VER_STRING ")\n"
+		wsprintf(buf, "M88gn for Win32 ver " M88GN_VER_STRING "\n"
+					  "(based on M88 rel " APP_VER_STRING ")\n"
 					  "PC-8801 series emulator.\n"
 					  "Copyright (C) 1998, 2003 cisc\n");
 	
@@ -96,21 +97,27 @@ INT_PTR CALLBACK M88About::DlgProcGate
 const char M88About::abouttext[] =
 	"build date:" __DATE__ " (%.8x)\r\n"
 	"\r\n"
-	"要望・バグ報告などは以下のページにどうぞ\r\n"
+	"M88gn は、rururutan 氏の M88 私家版に GIMONS 氏の M88g の差分を当てたものをもとに、"
+	"テープ (T88) まわりなどを改修したものです．\r\n"
 	"\r\n"
+	"主な改修: テープ関連の処理の改修、解像度を変えない全画面表示\r\n"
+	"\r\n"
+	"https://github.com/yagennankoz/M88gn\r\n"
+	"\r\n"
+	"M88gn について、cisc 氏・rururutan 氏・GIMONS 氏に問い合わせないでください．\r\n"
+	"\r\n"
+	"rururutan 氏の M88 私家版\r\n"
 	"https://github.com/rururutan/m88\r\n"
 	"\r\n"
-	"オリジナル M88 のページ\r\n"
+	"M88g・FDX68 (GIMONS DEVELOPER WORKS)\r\n"
+	"http://www.retropc.net/gimons/\r\n"
 	"\r\n"
+	"オリジナル M88 のページ\r\n"
 	"http://www.retropc.net/cisc/m88/\r\n"
 	"\r\n"
 	"FM 音源ユニットの作成にあたっては，\r\n"
 	"佐藤達之氏作の fm.c を参考にさせていただきました．\r\n"
 	"\r\n"
 	"N80/SR モードは arearea 氏のコードを元に実装されています．\r\n"
-	"\r\n"
-	"FDX68についてはGIMONS DEVELOPER WORKSのページへ．\r\n"
-	"\r\n"
-	"http://www.retropc.net/gimons/\r\n"
 	;
 

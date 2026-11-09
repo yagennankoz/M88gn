@@ -141,6 +141,11 @@ void LoadConfig(Config* cfg, const char* inifile, bool applydefault)
 
 	LoadConfigEntry(inifile, "WinPosY", &cfg->winposy, 64, applydefault);
 	LoadConfigEntry(inifile, "WinPosX", &cfg->winposx, 64, applydefault);
+
+	if (LoadConfigEntry(inifile, "TapeVolume", &n, 100, applydefault))
+		cfg->tapevolume = Limit(n, 100, 0);
+	if (LoadConfigEntry(inifile, "TapeSpeed", &n, 1, applydefault))
+		cfg->tapespeed = (n == 2 || n == 4 || n == 8) ? n : 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +219,8 @@ void SaveConfig(Config* cfg, const char* inifile, bool writedefault)
 
 	SaveEntry(inifile, "WinPosY", cfg->winposy, writedefault);
 	SaveEntry(inifile, "WinPosX", cfg->winposx, writedefault);
+	SaveEntry(inifile, "TapeVolume", cfg->tapevolume, writedefault);
+	SaveEntry(inifile, "TapeSpeed", cfg->tapespeed, writedefault);
 }
 
 }

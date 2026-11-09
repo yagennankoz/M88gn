@@ -242,11 +242,16 @@ bool Sound::Update(ISoundSource* /*src*/)
 }
 
 // ---------------------------------------------------------------------------
-//	今まで合成された時間の，1サンプル未満の端数(0-1999)を求める
+//	合成した位置から今の時刻までを、1/2000 サンプル単位で求める
+//	(Update が間隔が短いため合成しなかったときも、合成した位置からの今の時刻を返す。
+//	 1/2000 サンプル単位なので、2000 以上にもなる)
 //
 int IFCALL Sound::GetSubsampleTime(ISoundSource* /*src*/)
 {
-	return tdiff;
+	if (!enabled)
+		return tdiff;
+	uint32 time = pc->GetCPUTick() - prevtime;
+	return MulDiv(time, rate50, pc->GetEffectiveSpeed()) + tdiff;
 }
 
 // ---------------------------------------------------------------------------

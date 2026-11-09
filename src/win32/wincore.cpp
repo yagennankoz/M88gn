@@ -14,6 +14,7 @@
 #include "version.h"
 #include "file.h"
 #include "pc88/diskmgr.h"
+#include "pc88/tapemgr.h"
 #include "pc88/opnif.h"
 #include "pc88/beep.h"
 #include "extdev.h"
@@ -163,6 +164,7 @@ bool WinCore::ConnectDevices(WinKeyIF* keyb)
 	if (FAILED(GetOPN1()->Connect(&sound))) return false;
 	if (FAILED(GetOPN2()->Connect(&sound))) return false;
 	if (FAILED(GetBEEP()->Connect(&sound))) return false;
+	if (FAILED(GetTapeManager()->Connect(&sound))) return false;
 
 	return true;
 }

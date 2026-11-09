@@ -1,0 +1,392 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{9792F586-937B-4B5B-B01E-DF451C23B5C4}</ProjectGuid>
+    <RootNamespace>M88</RootNamespace>
+    <Keyword>Win32Proj</Keyword>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <OutDir>$(SolutionDir)build\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)build\obj\$(Configuration)\</IntDir>
+    <TargetName>M88</TargetName>
+    <LinkIncremental>true</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <OutDir>$(SolutionDir)build\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)build\obj\$(Configuration)\</IntDir>
+    <TargetName>M88</TargetName>
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <Optimization>Disabled</Optimization>
+      <AdditionalIncludeDirectories>.\src;.\src\Win32;.\src\PC88;.\src\common;.\src\devices;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>headers.h</PrecompiledHeaderFile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <Culture>0x0411</Culture>
+      <AdditionalIncludeDirectories>.\vs2022;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>comctl32.lib;winmm.lib;ddraw.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <DelayLoadDLLs>d2d1.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
+      <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
+    </Link>
+    <Manifest>
+      <AdditionalManifestDependencies>type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'</AdditionalManifestDependencies>
+    </Manifest>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <Optimization>MaxSpeed</Optimization>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <AdditionalIncludeDirectories>.\src;.\src\Win32;.\src\common;.\src\devices;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;ISOLATION_AWARE_ENABLED;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>headers.h</PrecompiledHeaderFile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>false</SDLCheck>
+      <ConformanceMode>false</ConformanceMode>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <Culture>0x0411</Culture>
+      <AdditionalIncludeDirectories>.\vs2022;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>comctl32.lib;winmm.lib;ddraw.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <DelayLoadDLLs>d2d1.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
+      <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+    <Manifest>
+      <AdditionalManifestDependencies>type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'</AdditionalManifestDependencies>
+    </Manifest>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="src\Win32\pch.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\common\device.cpp" />
+    <ClCompile Include="src\common\error.cpp" />
+    <ClCompile Include="src\common\lpf.cpp" />
+    <ClCompile Include="src\common\lz77d.cpp" />
+    <ClCompile Include="src\common\memmgr.cpp" />
+    <ClCompile Include="src\common\schedule.cpp" />
+    <ClCompile Include="src\common\sndbuf2.cpp" />
+    <ClCompile Include="src\common\soundbuf.cpp" />
+    <ClCompile Include="src\common\srcbuf.cpp" />
+    <ClCompile Include="src\devices\fmgen.cpp" />
+    <ClCompile Include="src\devices\fmtimer.cpp" />
+    <ClCompile Include="src\devices\opm.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\devices\opna.cpp" />
+    <ClCompile Include="src\devices\psg.cpp" />
+    <ClCompile Include="src\devices\Z80_x86.cpp" />
+    <ClCompile Include="src\devices\Z80c.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\devices\Z80debug.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\devices\Z80diag.cpp" />
+    <ClCompile Include="src\devices\Z80Test.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\pc88\base.cpp" />
+    <ClCompile Include="src\pc88\beep.cpp" />
+    <ClCompile Include="src\pc88\calender.cpp" />
+    <ClCompile Include="src\pc88\crtc.cpp" />
+    <ClCompile Include="src\pc88\diskmgr.cpp" />
+    <ClCompile Include="src\pc88\fdc.cpp" />
+    <ClCompile Include="src\pc88\fdu.cpp" />
+    <ClCompile Include="src\pc88\floppy.cpp" />
+    <ClCompile Include="src\pc88\intc.cpp" />
+    <ClCompile Include="src\pc88\ioview.cpp" />
+    <ClCompile Include="src\pc88\joypad.cpp" />
+    <ClCompile Include="src\pc88\kanjirom.cpp" />
+    <ClCompile Include="src\pc88\memory.cpp" />
+    <ClCompile Include="src\pc88\memview.cpp" />
+    <ClCompile Include="src\pc88\mouse.cpp" />
+    <ClCompile Include="src\pc88\opnif.cpp" />
+    <ClCompile Include="src\pc88\pc88.cpp" />
+    <ClCompile Include="src\pc88\pd8257.cpp" />
+    <ClCompile Include="src\pc88\pio.cpp" />
+    <ClCompile Include="src\pc88\screen.cpp" />
+    <ClCompile Include="src\pc88\sio.cpp" />
+    <ClCompile Include="src\pc88\sound.cpp" />
+    <ClCompile Include="src\pc88\subsys.cpp" />
+    <ClCompile Include="src\pc88\tapemgr.cpp" />
+    <ClCompile Include="src\Win32\88config.cpp" />
+    <ClCompile Include="src\Win32\about.cpp" />
+    <ClCompile Include="src\win32\basmon.cpp" />
+    <ClCompile Include="src\win32\cfgpage.cpp" />
+    <ClCompile Include="src\win32\codemon.cpp" />
+    <ClCompile Include="src\win32\dderr.cpp" />
+    <ClCompile Include="src\Win32\diag.cpp" />
+    <ClCompile Include="src\win32\DrawD2D.cpp" />
+    <ClCompile Include="src\Win32\DrawDDS.cpp" />
+    <ClCompile Include="src\Win32\DrawDDW.cpp" />
+    <ClCompile Include="src\Win32\DrawGDI.cpp" />
+    <ClCompile Include="src\win32\extdev.cpp" />
+    <ClCompile Include="src\Win32\File.cpp" />
+    <ClCompile Include="src\win32\filetest.cpp" />
+    <ClCompile Include="src\win32\guid.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\win32\iomon.cpp" />
+    <ClCompile Include="src\win32\keybconn.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\win32\loadmon.cpp" />
+    <ClCompile Include="src\Win32\main.cpp" />
+    <ClCompile Include="src\win32\memmon.cpp" />
+    <ClCompile Include="src\win32\module.cpp" />
+    <ClCompile Include="src\win32\mvmon.cpp" />
+    <ClCompile Include="src\Win32\newdisk.cpp" />
+    <ClCompile Include="src\win32\regmon.cpp" />
+    <ClCompile Include="src\win32\sequence.cpp" />
+    <ClCompile Include="src\win32\soundds.cpp" />
+    <ClCompile Include="src\win32\soundds2.cpp" />
+    <ClCompile Include="src\Win32\soundmon.cpp" />
+    <ClCompile Include="src\win32\soundwo.cpp" />
+    <ClCompile Include="src\Win32\status.cpp" />
+    <ClCompile Include="src\win32\timekeep.cpp" />
+    <ClCompile Include="src\Win32\Ui.cpp" />
+    <ClCompile Include="src\win32\wincfg.cpp" />
+    <ClCompile Include="src\Win32\wincore.cpp" />
+    <ClCompile Include="src\Win32\windraw.cpp" />
+    <ClCompile Include="src\win32\winexapi.cpp" />
+    <ClCompile Include="src\Win32\WinJoy.cpp" />
+    <ClCompile Include="src\Win32\WinKeyIF.cpp" />
+    <ClCompile Include="src\win32\winmon.cpp" />
+    <ClCompile Include="src\Win32\winmouse.cpp" />
+    <ClCompile Include="src\Win32\winsound.cpp" />
+    <ClCompile Include="src\win32\winvars.cpp" />
+    <ClCompile Include="src\win32\romeo\juliet.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\win32\romeo\piccolo.cpp" />
+    <ClCompile Include="src\win32\romeo\piccolo_gimic.cpp" />
+    <ClCompile Include="src\win32\romeo\piccolo_romeo.cpp" />
+    <ClCompile Include="src\zlib\adler32.c">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\zlib\compress.c">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\zlib\crc32.c">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\zlib\deflate.c">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\zlib\inffast.c">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\zlib\inflate.c">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\zlib\inftrees.c">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\zlib\trees.c">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\zlib\uncompr.c">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="src\zlib\zutil.c">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\common\device.h" />
+    <ClInclude Include="src\common\device_i.h" />
+    <ClInclude Include="src\common\draw.h" />
+    <ClInclude Include="src\common\error.h" />
+    <ClInclude Include="src\common\lpf.h" />
+    <ClInclude Include="src\common\lz77d.h" />
+    <ClInclude Include="src\common\memmgr.h" />
+    <ClInclude Include="src\common\misc.h" />
+    <ClInclude Include="src\common\schedule.h" />
+    <ClInclude Include="src\common\sndbuf2.h" />
+    <ClInclude Include="src\common\soundbuf.h" />
+    <ClInclude Include="src\common\soundsrc.h" />
+    <ClInclude Include="src\common\srcbuf.h" />
+    <ClInclude Include="src\devices\fmgen.h" />
+    <ClInclude Include="src\devices\fmgeninl.h" />
+    <ClInclude Include="src\devices\fmtimer.h" />
+    <ClInclude Include="src\devices\opm.h" />
+    <ClInclude Include="src\devices\opna.h" />
+    <ClInclude Include="src\devices\psg.h" />
+    <ClInclude Include="src\devices\Z80.h" />
+    <ClInclude Include="src\devices\Z80_x86.h" />
+    <ClInclude Include="src\devices\Z80c.h" />
+    <ClInclude Include="src\devices\Z80debug.h" />
+    <ClInclude Include="src\devices\Z80diag.h" />
+    <ClInclude Include="src\devices\Z80Test.h" />
+    <ClInclude Include="src\pc88\base.h" />
+    <ClInclude Include="src\pc88\beep.h" />
+    <ClInclude Include="src\pc88\calender.h" />
+    <ClInclude Include="src\pc88\config.h" />
+    <ClInclude Include="src\pc88\crtc.h" />
+    <ClInclude Include="src\pc88\diskmgr.h" />
+    <ClInclude Include="src\pc88\fdc.h" />
+    <ClInclude Include="src\pc88\fdu.h" />
+    <ClInclude Include="src\pc88\floppy.h" />
+    <ClInclude Include="src\pc88\intc.h" />
+    <ClInclude Include="src\pc88\ioview.h" />
+    <ClInclude Include="src\pc88\joypad.h" />
+    <ClInclude Include="src\pc88\kanjirom.h" />
+    <ClInclude Include="src\pc88\memory.h" />
+    <ClInclude Include="src\pc88\memview.h" />
+    <ClInclude Include="src\pc88\mouse.h" />
+    <ClInclude Include="src\pc88\opnif.h" />
+    <ClInclude Include="src\PC88\pc88.h" />
+    <ClInclude Include="src\pc88\pcinfo.h" />
+    <ClInclude Include="src\pc88\pd8257.h" />
+    <ClInclude Include="src\pc88\pio.h" />
+    <ClInclude Include="src\pc88\screen.h" />
+    <ClInclude Include="src\pc88\sio.h" />
+    <ClInclude Include="src\pc88\sound.h" />
+    <ClInclude Include="src\pc88\subsys.h" />
+    <ClInclude Include="src\pc88\tapemgr.h" />
+    <ClInclude Include="src\Win32\88config.h" />
+    <ClInclude Include="src\Win32\about.h" />
+    <ClInclude Include="src\win32\basmon.h" />
+    <ClInclude Include="src\win32\cfgpage.h" />
+    <ClInclude Include="src\win32\codemon.h" />
+    <ClInclude Include="src\Win32\CritSect.h" />
+    <ClInclude Include="src\win32\dderr.h" />
+    <ClInclude Include="src\Win32\diag.h" />
+    <ClInclude Include="src\win32\DrawD2D.h" />
+    <ClInclude Include="src\Win32\DrawDDS.h" />
+    <ClInclude Include="src\Win32\DrawDDW.h" />
+    <ClInclude Include="src\Win32\DrawGDI.h" />
+    <ClInclude Include="src\win32\extdev.h" />
+    <ClInclude Include="src\Win32\File.h" />
+    <ClInclude Include="src\win32\filetest.h" />
+    <ClInclude Include="src\Win32\headers.h" />
+    <ClInclude Include="src\win32\iomon.h" />
+    <ClInclude Include="src\win32\keybconn.h" />
+    <ClInclude Include="src\win32\loadmon.h" />
+    <ClInclude Include="src\win32\memmon.h" />
+    <ClInclude Include="src\Win32\messages.h" />
+    <ClInclude Include="src\win32\module.h" />
+    <ClInclude Include="src\win32\mvmon.h" />
+    <ClInclude Include="src\Win32\newdisk.h" />
+    <ClInclude Include="src\win32\regmon.h" />
+    <ClInclude Include="src\Win32\resource.h" />
+    <ClInclude Include="src\win32\sequence.h" />
+    <ClInclude Include="src\win32\sounddrv.h" />
+    <ClInclude Include="src\win32\soundds.h" />
+    <ClInclude Include="src\win32\soundds2.h" />
+    <ClInclude Include="src\Win32\soundmon.h" />
+    <ClInclude Include="src\win32\soundwo.h" />
+    <ClInclude Include="src\Win32\status.h" />
+    <ClInclude Include="src\win32\timekeep.h" />
+    <ClInclude Include="src\Win32\types.h" />
+    <ClInclude Include="src\Win32\ui.h" />
+    <ClInclude Include="src\win32\version.h" />
+    <ClInclude Include="src\win32\wincfg.h" />
+    <ClInclude Include="src\Win32\wincore.h" />
+    <ClInclude Include="src\Win32\windraw.h" />
+    <ClInclude Include="src\win32\winexapi.h" />
+    <ClInclude Include="src\Win32\WinJoy.h" />
+    <ClInclude Include="src\Win32\WinKeyIF.h" />
+    <ClInclude Include="src\win32\winmon.h" />
+    <ClInclude Include="src\Win32\winmouse.h" />
+    <ClInclude Include="src\Win32\winsound.h" />
+    <ClInclude Include="src\win32\winvars.h" />
+    <ClInclude Include="src\win32\romeo\juliet.h" />
+    <ClInclude Include="src\win32\romeo\piccolo.h" />
+    <ClInclude Include="src\win32\romeo\piccolo_gimic.h" />
+    <ClInclude Include="src\win32\romeo\piccolo_romeo.h" />
+    <ClInclude Include="src\win32\romeo\romeo.h" />
+    <ClInclude Include="src\if\ifcommon.h" />
+    <ClInclude Include="src\if\ifguid.h" />
+    <ClInclude Include="src\if\ifpc88.h" />
+    <ClInclude Include="src\if\ifui.h" />
+    <ClInclude Include="src\zlib\deflate.h" />
+    <ClInclude Include="src\zlib\inffast.h" />
+    <ClInclude Include="src\zlib\inffixed.h" />
+    <ClInclude Include="src\zlib\inftrees.h" />
+    <ClInclude Include="src\zlib\trees.h" />
+    <ClInclude Include="src\zlib\zconf.h" />
+    <ClInclude Include="src\zlib\zlib.h" />
+    <ClInclude Include="src\zlib\zutil.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="src\Win32\M88.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\Win32\M88.ico" />
+    <None Include="m88dev.html" />
+    <None Include="memo.txt" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

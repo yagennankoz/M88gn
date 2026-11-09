@@ -30,9 +30,9 @@ SIO::~SIO()
 // ---------------------------------------------------------------------------
 //	初期化
 //
-bool SIO::Init(IOBus* _bus, uint _prxrdy, uint _preq)
+bool SIO::Init(IOBus* _bus, uint _prxrdy, uint _preq, uint _ptx, uint _pmode)
 {
-	bus = _bus, prxrdy = _prxrdy, prequest = _preq;
+	bus = _bus, prxrdy = _prxrdy, prequest = _preq, ptx = _ptx, pmode = _pmode;
 	LOG0("SIO::Init\n");
 
 	return true;
@@ -45,6 +45,8 @@ void SIO::Reset(uint, uint)
 {
 	mode = clear;
 	status = TXRDY | TXE;
+	txen = false;
+	modebyte = 0;
 	baseclock = 1200 * 64;
 }
 
@@ -63,6 +65,9 @@ void IOCALL SIO::SetControl(uint, uint d)
 		{
 			// Asynchronus mode
 			mode = async;
+			modebyte = d;
+			if (pmode)
+				bus->Out(pmode, d);
 			// b7 b6 b5 b4 b3 b2 b1 b0
 			// STOP  EP PE CHAR  RATE
 			static const int clockdiv[] = { 1, 1, 16, 64 };
@@ -135,6 +140,18 @@ void IOCALL SIO::SetControl(uint, uint d)
 void IOCALL SIO::SetData(uint, uint d)
 {
 	LOG1("<%.2x ", d);
+	// 送信: テープに渡し、送り終わるまで TXRDY / TXE を落とす
+	if (txen && ptx)
+	{
+		// モード命令も渡す (テープが DATA の型に書く)
+		status &= ~(TXRDY | TXE);
+		bus->Out(ptx, (d & 0xff) | (mode == async ? (modebyte & 0xfc) << 8 | 0x80000000 : 0));
+	}
+}
+
+void IOCALL SIO::TxReady(uint, uint)
+{
+	status |= TXRDY | TXE;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +181,52 @@ uint IOCALL SIO::GetData(uint)
 
 void IOCALL SIO::AcceptData(uint, uint d)
 {
+	uint err = 0;
+	uint bits = 0;
+	bool decode = false;
+	if ((d & 0x40000000) && mode == async)
+	{
+		// テープの波形から: スタートビットの次から読んだビットの並び
+		bits = d & 0x3fffffff;
+		decode = true;
+	}
+	else if ((d & 0x80000000) && mode == async)
+	{
+		// テープから: bit8-16 にテープの型 (T88 の DATA の型) が付いている。
+		// テープの形式でビット列を作り直し、CPU が設定した形式で読み直す
+		// (パリティが合わなければ PE、ストップビットが 0 なら FE)
+		uint type = (d >> 8) & 0x1ff;
+		uint tdatabits = 5 + ((type >> 2) & 3);
+		uint b = d & ((1 << tdatabits) - 1);
+		bits = b;
+		uint n = tdatabits;
+		if (type & 0x10)
+		{
+			uint par = (Ones(b) & 1) ^ (type & 0x20 ? 0 : 1);	// 偶数パリティ: 1 の数を偶数に
+			bits |= par << n;
+			n++;
+		}
+		bits |= ~0u << n;		// ストップビットとその後 (何も無いとき) は 1
+		decode = true;
+	}
+	if (decode)
+	{
+		// CPU が設定した形式で読む (パリティが合わなければ PE、最初のストップビットが 0 なら FE)
+		uint v = bits & ((1 << datalen) - 1);
+		uint q = datalen;
+		if (parity != none)
+		{
+			uint ones = Ones(v) + ((bits >> q) & 1);
+			if ((parity == even) == !!(ones & 1))
+				err |= PE;
+			q++;
+		}
+		if (!((bits >> q) & 1))
+			err |= FE;
+		d = v;
+	}
+	d &= 0xff;
+
 	LOG1("Accept: [%.2x]", d);
 	if (rxen)
 	{
@@ -173,7 +236,7 @@ void IOCALL SIO::AcceptData(uint, uint d)
 			status |= OE;
 			LOG0(" - overrun");
 		}
-		status |= RXRDY;
+		status |= RXRDY | err;
 		bus->Out(prxrdy, 1);		// 割り込み
 		LOG0("\n");
 	}
@@ -181,6 +244,14 @@ void IOCALL SIO::AcceptData(uint, uint d)
 	{
 		LOG0(" - ignored\n");
 	}
+}
+
+uint SIO::Ones(uint x)
+{
+	uint n = 0;
+	for (; x; x >>= 1)
+		n += x & 1;
+	return n;
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +288,7 @@ bool IFCALL SIO::LoadStatus(const uint8* s)
 	data		= status->data;
 	mode		= status->mode;
 	parity		= status->parity;
+	this->status |= TXRDY | TXE;		// 送信の途中の状態は保存していないので、送信できる状態にする
 	return true;
 }
 
@@ -232,6 +304,7 @@ const Device::OutFuncPtr SIO::outdef[] =
 	STATIC_CAST(Device::OutFuncPtr, &SetControl),
 	STATIC_CAST(Device::OutFuncPtr, &SetData),
 	STATIC_CAST(Device::OutFuncPtr, &AcceptData),
+	STATIC_CAST(Device::OutFuncPtr, &TxReady),
 };
 
 const Device::InFuncPtr SIO::indef[] = 

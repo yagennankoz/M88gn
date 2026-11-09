@@ -32,6 +32,7 @@ WinDrawD2D::WinDrawD2D() :
 	m_UpdatePal(false),
 	m_hBitmap(0),
 	m_nMag(1),
+	m_bFit(false),
 	m_nBitmapW(640),
 	m_nBitmapH(400)
 {
@@ -48,7 +49,9 @@ WinDrawD2D::~WinDrawD2D()
 bool WinDrawD2D::Init( HWND _hWnd, uint _width, uint _height, GUID* g, int mag)
 {
 	m_hWnd = _hWnd;
-	m_nMag = mag;
+	// mag = 0: 全画面。親のウィンドウいっぱいに、縦横比を保って拡大する
+	m_bFit = mag == 0;
+	m_nMag = m_bFit ? 1 : mag;
 
 	if ( CreateD2D(_width, _height) == false ) {
 		return false;
@@ -130,13 +133,21 @@ bool WinDrawD2D::Resize( uint _width, uint _height )
 
 	HRESULT hr = S_OK;
 
-	::SetWindowPos( m_hCWnd, HWND_BOTTOM, 0, 0, m_width, m_height, SWP_SHOWWINDOW);
+	// 描く窓の大きさ (全画面なら親のウィンドウのクライアント領域いっぱい)
+	uint cw = m_width, ch = m_height;
+	if ( m_bFit ) {
+		RECT pr;
+		::GetClientRect( m_hWnd, &pr );
+		cw = Max(1, int(pr.right - pr.left));
+		ch = Max(1, int(pr.bottom - pr.top));
+	}
+	::SetWindowPos( m_hCWnd, HWND_BOTTOM, 0, 0, cw, ch, SWP_SHOWWINDOW);
 
 	if ( !m_RenderTarget ) {
 
 		D2D1_SIZE_U size = D2D1::SizeU(
-			_width,
-			_height
+			cw,
+			ch
 			);
 
 		D2D1_RENDER_TARGET_PROPERTIES RTProps = D2D1::RenderTargetProperties();
@@ -292,7 +303,29 @@ void WinDrawD2D::DrawScreen(const RECT& _rect, bool refresh)
 			::SetDIBColorTable( hmemdc, 0, 0x100, m_bmpinfo.colors );
 		}
 
-		if (m_nMag > 1) {
+		if (m_bFit) {
+			// 全画面: いつも全体を描く。縦横比を保って拡大し、余りは黒
+			RECT cr;
+			::GetClientRect( m_hCWnd, &cr );
+			int cw = cr.right - cr.left, ch = cr.bottom - cr.top;
+			int dw, dh;
+			if ( cw * m_nBitmapH <= ch * m_nBitmapW ) {
+				dw = cw, dh = cw * m_nBitmapH / m_nBitmapW;
+			} else {
+				dh = ch, dw = ch * m_nBitmapW / m_nBitmapH;
+			}
+			::PatBlt( hDC, 0, 0, cw, ch, BLACKNESS );
+			::SetStretchBltMode( hDC, COLORONCOLOR );
+			::StretchBlt( hDC, (cw - dw) / 2, (ch - dh) / 2, dw, dh,
+						  hmemdc, 0, 0, m_nBitmapW, m_nBitmapH, SRCCOPY );
+			::SelectObject( hmemdc, oldbitmap );
+			::DeleteDC( hmemdc );
+			m_GDIRT->ReleaseDC( &cr );
+			if ( m_RenderTarget->EndDraw() == D2DERR_RECREATE_TARGET ) {
+				// device lost
+			}
+			return;
+		} else if (m_nMag > 1) {
 			::StretchBlt(
 				hDC,
 				rc.left * m_nMag,

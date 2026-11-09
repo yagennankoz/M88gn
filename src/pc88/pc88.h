@@ -108,6 +108,7 @@ public:
 	Z80*			GetCPU2() { return &cpu2; }
 	PC8801::PD8257*	GetDMAC() { return dmac; }
 	PC8801::Beep*	GetBEEP() { return beep; }
+	TapeManager*	GetTapeManager() { return tapemgr; }
 
 	bool SaveShapshot(const char* filename);
 	bool LoadShapshot(const char* filename);
@@ -127,6 +128,9 @@ public:
 		popnio2,		// OPN の入出力ポート 2 (連番)
 		psioin,			// SIO 関係
 		psioreq,
+		psiotx,			// SIO の送信 (テープへ)
+		psiotxrdy,		// SIO の送信の終わり (テープから)
+		psiomode,		// SIO のモード命令 (テープへ)
 		ptimesync,
 		portend
 	};

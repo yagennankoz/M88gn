@@ -20,14 +20,16 @@ class SIO : public Device
 public:
 	enum
 	{
-		reset=0, setcontrol, setdata, acceptdata,
+		reset=0, setcontrol, setdata, acceptdata, txready,
 		getstatus=0, getdata,
 	};
 
 public:
 	SIO(const ID& id);
 	~SIO();
-	bool Init(IOBus* bus, uint prxrdy, uint prequest);
+	// ptx: 送信のバイトを渡す先 (テープ)。0 なら送信はすぐ終わったことにする
+	// pmode: モード命令を知らせる先 (テープ)
+	bool Init(IOBus* bus, uint prxrdy, uint prequest, uint ptx = 0, uint pmode = 0);
 
 	void IOCALL Reset(uint=0, uint=0);
 	void IOCALL SetControl(uint, uint d);
@@ -36,6 +38,8 @@ public:
 	uint IOCALL GetData(uint=0);
 
 	void IOCALL AcceptData(uint, uint);
+	void IOCALL TxReady(uint=0, uint=0);		// 送信が終わった (テープから呼ばれる)
+	static uint Ones(uint x);					// 1 のビットの数
 
 	uint IFCALL GetStatusSize();
 	bool IFCALL SaveStatus(uint8* s);
@@ -50,11 +54,14 @@ private:
 	IOBus* bus;
 	uint prxrdy;
 	uint prequest;
+	uint ptx;
+	uint pmode;
 	
 	uint baseclock;
 	uint clock;
 	uint datalen;
 	uint stop;
+	uint modebyte;			// モード命令 (非同期のとき)
 	uint status;
 	uint data;
 	Mode mode;

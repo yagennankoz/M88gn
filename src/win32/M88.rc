@@ -68,6 +68,7 @@ BEGIN
         MENUITEM "N&80SR mode",                 IDM_N80V2MODE
         MENUITEM SEPARATOR
         MENUITEM "&Burst mode",                 IDM_CPU_BURST
+        MENUITEM "&Full screen\tAlt+Enter",    IDM_TOGGLEDISPLAY
         MENUITEM "&Reset\tF12",                 IDM_RESET
         MENUITEM SEPARATOR
         MENUITEM "E&xit",                       IDM_EXIT
@@ -82,6 +83,25 @@ BEGIN
     POPUP "Ta&pe"
     BEGIN
         MENUITEM "&Open...",                    IDM_TAPE
+        MENUITEM "Re&wind",                     IDM_TAPE_REWIND
+        MENUITEM SEPARATOR
+        MENUITEM "&Record",                     IDM_TAPE_RECORD
+        MENUITEM SEPARATOR
+        POPUP "Tape &speed"
+        BEGIN
+            MENUITEM "&Normal",                     IDM_TAPESPEED_1
+            MENUITEM "x&2",                         IDM_TAPESPEED_2
+            MENUITEM "x&4",                         IDM_TAPESPEED_4
+            MENUITEM "x&8",                         IDM_TAPESPEED_8
+        END
+        POPUP "Tape sound &volume"
+        BEGIN
+            MENUITEM "&Off",                        IDM_TAPEVOL_0
+            MENUITEM "&25%",                        IDM_TAPEVOL_25
+            MENUITEM "&50%",                        IDM_TAPEVOL_50
+            MENUITEM "&75%",                        IDM_TAPEVOL_75
+            MENUITEM "&100%",                       IDM_TAPEVOL_100
+        END
     END
     POPUP "&Tools"
     BEGIN
@@ -218,7 +238,7 @@ BEGIN
         LEFTMARGIN, 5
         RIGHTMARGIN, 177
         TOPMARGIN, 3
-        BOTTOMMARGIN, 76
+        BOTTOMMARGIN, 84
     END
 
     IDD_CONFIG_CPU, DIALOG
@@ -339,15 +359,15 @@ END
 // Dialog
 //
 
-IDD_ABOUT DIALOGEX 20, 20, 184, 88
+IDD_ABOUT DIALOGEX 20, 20, 184, 96
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "About M88"
 FONT 10, "‚l‚r ‚oƒSƒVƒbƒN", 0, 0, 0x0
 BEGIN
     DEFPUSHBUTTON   "OK",IDOK,137,2,40,14
-    LTEXT           "",IDC_ABOUT_TEXT,25,5,110,25
+    LTEXT           "",IDC_ABOUT_TEXT,25,5,110,33
     ICON            IDI_ICON_M88,IDC_STATIC,3,2,18,20
-    EDITTEXT        IDC_ABOUT_BOX,22,31,155,45,ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | ES_WANTRETURN | WS_VSCROLL
+    EDITTEXT        IDC_ABOUT_BOX,22,39,155,45,ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | ES_WANTRETURN | WS_VSCROLL
 END
 
 IDD_CONFIG_CPU DIALOGEX 0, 0, 210, 140

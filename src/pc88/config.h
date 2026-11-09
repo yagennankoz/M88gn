@@ -110,6 +110,8 @@ public:
 	int romeolatency;
 	int winposx;
 	int winposy;
+	int tapevolume;			// テープの再生音の音量 (0～100%)
+	int tapespeed;			// テープのロードの速さ (1: 実機どおり、2/4/8: 倍率)
 
 	BASICMode basicmode;
 

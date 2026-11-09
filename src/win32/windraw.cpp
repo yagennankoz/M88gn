@@ -79,6 +79,7 @@ bool WinDraw::Init0(HWND hwindow)
 	palcngend = palrgnend = -1;
 
 	bStretchx2 = false;
+	bFit = false;
 
 	return true;
 }
@@ -318,7 +319,7 @@ void WinDraw::WindowMoved(int x, int y)
 //
 bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480, bool stretchx2)
 {
-	DisplayType type = fullscreen ? DDFull : D2D;
+	DisplayType type = D2D;
 
 	// 現在窓(M88)が所属するモニタの GUID を取得
 	memset(&gmonitor, 0, sizeof(gmonitor));
@@ -327,7 +328,7 @@ bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480, bool stretchx2)
 	(*DDEnumerateEx)(DDEnumCallback, reinterpret_cast<LPVOID>(this), DDENUM_ATTACHEDSECONDARYDEVICES);
 
 	// 2倍拡大選択時でフルスクリーンでないならドライバを強制的に破棄させる
-	if (type != drawtype || bStretchx2 != stretchx2)
+	if (type != drawtype || bStretchx2 != stretchx2 || bFit != fullscreen)
 	{
 		// 今までのドライバを廃棄
 		if (draw)
@@ -357,12 +358,12 @@ bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480, bool stretchx2)
 		
 		bool result = true;
 		
-		if (!newdraw || !newdraw->Init(hwnd, width, height, &gmonitor, stretchx2 ? 2 : 1))
+		if (!newdraw || !newdraw->Init(hwnd, width, height, &gmonitor, fullscreen ? 0 : (stretchx2 ? 2 : 1)))
 		{
 			// 初期化に失敗した場合 GDI ドライバで再挑戦
 			delete newdraw;
 			
-			if (type == DDFull)
+			if (fullscreen)
 				statusdisplay.Show(50, 2500, "画面切り替えに失敗しました");
 			else
 				statusdisplay.Show(120, 3000, "GDI ドライバを使用します");
@@ -397,6 +398,7 @@ bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480, bool stretchx2)
 		if (drawtype == DDFull)	ShowCursor(true);
 		drawtype = type;
 		bStretchx2 = stretchx2;
+		bFit = fullscreen && type == D2D;
 
 		refresh = 2;
 		

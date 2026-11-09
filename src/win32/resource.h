@@ -261,6 +261,17 @@
 #define IDM_MEM_0_ERAM3                 40228
 #define IDM_4MHZ                        40229
 #define IDM_8MHZ                        40230
+#define IDM_TAPEVOL_0                   40232
+#define IDM_TAPEVOL_25                  40233
+#define IDM_TAPEVOL_50                  40234
+#define IDM_TAPEVOL_75                  40235
+#define IDM_TAPEVOL_100                 40236
+#define IDM_TAPESPEED_1                 40237
+#define IDM_TAPESPEED_2                 40238
+#define IDM_TAPESPEED_4                 40239
+#define IDM_TAPESPEED_8                 40242
+#define IDM_TAPE_REWIND                 40243
+#define IDM_TAPE_RECORD                 40244
 #define IDM_DBG_RUN                     40240
 #define IDM_DBG_STEP                    40241
 
@@ -269,7 +280,7 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        140
-#define _APS_NEXT_COMMAND_VALUE         40231
+#define _APS_NEXT_COMMAND_VALUE         40246
 #define _APS_NEXT_CONTROL_VALUE         1136
 #define _APS_NEXT_SYMED_VALUE           101
 #endif

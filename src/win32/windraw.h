@@ -124,5 +124,6 @@ private:
 	PALETTEENTRY palette[0x100];
 
 	bool bStretchx2;
+	bool bFit;			// 全画面 (解像度は変えず、ウィンドウいっぱいに拡大する)
 };
 

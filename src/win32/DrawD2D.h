@@ -54,5 +54,6 @@ private:
 	int		m_nBitmapW;
 	int		m_nBitmapH;
 	int		m_nMag;
+	bool	m_bFit;		// 親のウィンドウいっぱいに、縦横比を保って拡大する (全画面)
 	int		bpl;
 };

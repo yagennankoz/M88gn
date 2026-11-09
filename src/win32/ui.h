@@ -72,7 +72,9 @@ private:
 	bool CreateDiskMenu(uint drive);
 
 	void ChangeTapeImage();
-	void OpenTapeImage(const char* filename);
+	void OpenTapeImage(const char* filename, bool readonly = false);
+	static void TapeNotify(void* ctx, int code);
+	void ShowOverlay(const char* msg);
 
 	void ShowStatusWindow();
 	void ResizeWindow(uint width, uint height);
@@ -115,6 +117,11 @@ private:
 	// disk
 	DiskInfo diskinfo[2];
 	char tapetitle[MAX_PATH];
+
+	// 画面の上に数秒出す知らせ (テープのセーブが記録されないときなど)
+	HWND hoverlay;
+	HFONT overlayfont;
+	HBRUSH overlaybrush;
 	
 	// snapshot 関係
 	HMENU hmenuss[2];
@@ -150,6 +157,7 @@ private:
 	LRESULT M88ApplyConfig(HWND, WPARAM, LPARAM);
 	LRESULT M88SendKeyState(HWND, WPARAM, LPARAM);
 	LRESULT M88ClipCursor(HWND, WPARAM, LPARAM);
+	LRESULT M88TapeNotify(HWND, WPARAM, LPARAM);
 	LRESULT WmDropFiles(HWND, WPARAM, LPARAM);
 	LRESULT WmDisplayChange(HWND, WPARAM, LPARAM);
 	LRESULT WmKeyDown(HWND, WPARAM, LPARAM);

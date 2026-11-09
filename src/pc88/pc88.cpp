@@ -479,23 +479,26 @@ bool PC88::ConnectDevices()
 		{ 0x20,  IOBus::portout, SIO::setdata },
 		{ 0x21,  IOBus::portout, SIO::setcontrol },
 		{ psioin,IOBus::portout, SIO::acceptdata },
+		{ psiotxrdy, IOBus::portout, SIO::txready },
 		{ 0x20,  IOBus::portin,  SIO::getdata },
 		{ 0x21,  IOBus::portin,  SIO::getstatus },
 		{ 0, 0, 0 }
 	};
 	siotape = new PC8801::SIO(DEV_ID('S', 'I', 'O', ' '));
 	if (!siotape || !bus1.Connect(siotape, c_sio)) return false;
-	if (!siotape->Init(&bus1, pint0, psioreq)) return false;
+	if (!siotape->Init(&bus1, pint0, psioreq, psiotx, psiomode)) return false;
 
 	static const IOBus::Connector c_tape[] =
 	{
 		{ psioreq,	IOBus::portout, TapeManager::requestdata },
 		{ 0x30,		IOBus::portout,	TapeManager::out30 },
+		{ psiotx,	IOBus::portout,	TapeManager::txdata },
+		{ psiomode,	IOBus::portout,	TapeManager::siomode },
 		{ 0x40,		IOBus::portin,	TapeManager::in40 },
 		{ 0, 0, 0 }
 	};
 	if (!bus1.Connect(tapemgr, c_tape)) return false;
-	if (!tapemgr->Init(this, &bus1, psioin)) return false;
+	if (!tapemgr->Init(this, &bus1, psioin, psiotxrdy)) return false;
 
 	static const IOBus::Connector c_opn1[] =
 	{
@@ -647,6 +650,8 @@ void PC88::ApplyConfig(Config* cfg)
 	crtc->ApplyConfig(cfg);
 	fdc->ApplyConfig(cfg);
 	beep->EnableSING(!(cfg->flags & Config::disablesing));
+	tapemgr->SetSpeed(cfg->tapespeed);
+	tapemgr->SetVolume(cfg->tapevolume);
 	opn1->SetFMMixMode(!!(cfg->flag2 & Config::usefmclock));
 	opn1->SetVolume(cfg);
 	opn2->SetFMMixMode(!!(cfg->flag2 & Config::usefmclock));

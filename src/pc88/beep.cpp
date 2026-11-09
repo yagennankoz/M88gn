@@ -7,6 +7,7 @@
 #include "headers.h"
 #include "pc88/beep.h"
 #include "misc.h"
+#include <math.h>
 
 using namespace PC8801;
 
@@ -30,6 +31,16 @@ bool Beep::Init()
 {
 	port40 = 0;
 	p40mask = 0xa0;
+	bcount = 0;
+	bperiod = 0;
+	lpfa = 0;
+	lpfe = 1;
+	lpf1 = lpf2 = 0;
+	hpfk = 0;
+	hpfl = 0;
+	edgehead = 0;
+	mixpos = 0;
+	mixstate = 0;
 	return true;
 }
 
@@ -55,59 +66,108 @@ bool IFCALL Beep::Connect(ISoundControl* control)
 //
 bool Beep::SetRate(uint rate)
 {
-	pslice = 0;
-	bslice = 0;
+	CriticalSection::Lock lock(cs);
 	bcount = 0;
 	bperiod = int(2400.0 / rate * (1 << 14));
+	// 実機のスピーカーまわりのように、矩形波の角を丸める。
+	// 同じ RC を 2 段重ねると、1 段の遮断周波数の 0.6436 倍で -3dB になる
+	lpfa = 2 * 3.14159265358979 * (lpfcut / 0.6436) / (rate * 2000.0);
+	lpfe = exp(-lpfa * 2000);
+	lpf1 = lpf2 = 0;
+	hpfk = 1 - exp(-2 * 3.14159265358979 * hpfcut / rate);
+	hpfl = 0;
+	edges.clear();
+	edgehead = 0;
+	mixpos = 0;
+	mixstate = port40;
 	return true;
 }
 
 // ---------------------------------------------------------------------------
 //	ビープ音合成
-//
-//	0-2000
-//	 0 -  4		1111
-//	 5 -  9		0111
-//	10 - 14		0011
-//	15 - 19		0001
+//	1 サンプル (2000) の中を、ポート 40h が切り替わった時刻で区切り、
+//	区間ごとの入力 (鳴っていれば 8192) でフィルター (Filter) を進め、サンプルの終わりの値を出す。
+//	SING (bit7) はそのまま、BEEP (bit5) は 2400Hz の矩形波の
+//	このサンプルでの平均 (1 サンプルを 8 つに分けて求める) を入力にする。
+//	SING と BEEP は OR (どちらかが 1 なら 1)
 //
 void IFCALL Beep::Mix(int32* dest, int nsamples)
 {
-	int i;
-	int p = port40 & 0x80 ? 0 : 0x10000;
-	int b = port40 & 0x20 ? 0 : 0x10000;
-		
-	uint ps = pslice, bs = bslice;
-	pslice = bslice = 0;
-	
-	int sample = 0;
-	for (i=0; i<8; i++)
-	{
-		if (ps < 500) p ^= 0x10000;
-		if (bs < 500) b ^= 0x10000;
+	CriticalSection::Lock lock(cs);
 
-		sample += (b & bcount) | p;
-		bcount += bperiod;
-		ps -= 500;
-		bs -= 500;
-	}
-	sample >>= 6;
-	*dest++ += sample; *dest++ += sample;
-	
-	if (p | b)
+	// 合成した位置より前の切り替えは、すぐに反映する
+	while (edgehead < edges.size() && edges[edgehead].pos <= mixpos)
+		mixstate = edges[edgehead++].state;
+
+	for (int i = 0; i < nsamples; i++)
 	{
-		for (i=nsamples-1; i>0; i--)
+		__int64 end = mixpos + 2000;
+		bool more = edgehead < edges.size() && edges[edgehead].pos < end;
+		if (!more && !(mixstate & 0xa0) && fabs(lpf1) < 0.5 && fabs(lpf2) < 0.5 && fabs(hpfl) < 0.5)
 		{
-			sample = 0;
-			for (int j=0; j<8; j++)
-			{
-				sample += (b & bcount) | p;
-				bcount += bperiod;
-			}
-			sample >>= 6;
-			*dest++ += sample; *dest++ += sample;
+			// 鳴っていない (フィルターの出力も消えた) 間は、次の切り替えまで飛ばす
+			lpf1 = lpf2 = 0;
+			hpfl = 0;
+			int skip = nsamples - i;
+			if (edgehead < edges.size())
+				skip = Min(skip, int((edges[edgehead].pos - mixpos) / 2000));
+			dest += skip * 2;
+			mixpos += __int64(skip) * 2000;
+			bcount += bperiod * 8 * skip;
+			i += skip - 1;
+			continue;
 		}
+
+		// 2400Hz の矩形波の、このサンプルでの平均 (0～8)
+		int osc = 0;
+		for (int j = 0; j < 8; j++)
+		{
+			osc += (bcount >> 16) & 1;
+			bcount += bperiod;
+		}
+		double beepin = 8192.0 * osc / 8;
+
+		// 区間ごとにフィルターを進める
+		__int64 t = mixpos;
+		for (;;)
+		{
+			__int64 next = end;
+			if (edgehead < edges.size() && edges[edgehead].pos < end)
+				next = edges[edgehead].pos;
+			int d = int(next - t);
+			if (d > 0)
+				Filter(mixstate & 0x80 ? 8192.0 : mixstate & 0x20 ? beepin : 0.0, d);
+			if (next >= end)
+				break;
+			mixstate = edges[edgehead++].state;
+			t = next;
+		}
+		hpfl += (lpf2 - hpfl) * hpfk;
+		int sample = int(lpf2 - hpfl);
+		*dest++ += sample; *dest++ += sample;
+		mixpos = end;
 	}
+
+	// 使い終わった切り替えを捨てる
+	if (edgehead > 0 && (edgehead == edges.size() || edgehead > 4096))
+	{
+		edges.erase(edges.begin(), edges.begin() + edgehead);
+		edgehead = 0;
+	}
+}
+
+// ---------------------------------------------------------------------------
+//	フィルターを、入力 x のまま d (1/2000 サンプル単位) だけ進める
+//	同じ RC (時定数 1/a) を 2 段: 入力が一定なら、t 後の値は
+//	  1 段目 x + u1 e^(-at)、2 段目 x + (u2 + u1 at) e^(-at)  (u1, u2 は始めの値 - x)
+//
+void Beep::Filter(double x, int d)
+{
+	double ad = lpfa * d;
+	double e = d == 2000 ? lpfe : exp(-ad);
+	double u1 = lpf1 - x, u2 = lpf2 - x;
+	lpf2 = x + (u2 + u1 * ad) * e;
+	lpf1 = x + u1 * e;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,11 +181,27 @@ void IOCALL Beep::Out40(uint, uint data)
 	{
 		if (soundcontrol)
 		{
+			// 合成を今の時刻の近くまで進めてから、合成した位置からの時刻を求める
 			soundcontrol->Update(this);
-
 			int tdiff = soundcontrol->GetSubsampleTime(this);
-			if (i & 0x80) pslice = tdiff;
-			if (i & 0x20) bslice = tdiff;
+
+			CriticalSection::Lock lock(cs);
+			if (edges.size() - edgehead >= maxedges)
+			{
+				// 合成が止まっている (音を出していない) ときは、溜めずに捨てる
+				edges.clear();
+				edgehead = 0;
+				mixstate = data;
+			}
+			else
+			{
+				Edge e;
+				e.pos = mixpos + tdiff;
+				if (!edges.empty() && edges.back().pos > e.pos)
+					e.pos = edges.back().pos;
+				e.state = data;
+				edges.push_back(e);
+			}
 		}
 		port40 = data;
 	}
@@ -153,6 +229,10 @@ bool IFCALL Beep::LoadStatus(const uint8* s)
 	if (st->rev != ssrev)
 		return false;
 	port40 = st->port40;
+	CriticalSection::Lock lock(cs);
+	edges.clear();
+	edgehead = 0;
+	mixstate = port40;
 	return true;
 }
 

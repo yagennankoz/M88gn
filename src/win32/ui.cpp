@@ -62,12 +62,19 @@ WinUI::WinUI(HINSTANCE hinstance)
 	snapshotchanged = true;
 
 	clipmode = 0;
+	hoverlay = 0;
+	overlayfont = 0;
+	overlaybrush = 0;
 	background = false;
 	mousebutton = 0;
 }
 
 WinUI::~WinUI()
 {
+	if (overlayfont)
+		DeleteObject(overlayfont);
+	if (overlaybrush)
+		DeleteObject(overlaybrush);
 	delete diskmgr;
 	delete tapemgr;
 }
@@ -123,6 +130,7 @@ bool WinUI::InitM88(const char* cmdline)
 	LOG1("%d\tcore\n", timeGetTime());
 	if (!core.Init(this, hwnd, &draw, diskmgr, &keyif, &winconfig, tapemgr))
 		return false;
+	tapemgr->SetNotify(TapeNotify, this);
 
 	
 	//	debug 用クラス初期化
@@ -360,6 +368,18 @@ LRESULT WinUI::WinProc(HWND hwnd, UINT umsg, WPARAM wp, LPARAM lp)
 	PROC_MSG(WM_M88_CHANGEDISPLAY,	M88ChangeDisplay);
 	PROC_MSG(WM_M88_CHANGEVOLUME,	M88ChangeVolume);
 	PROC_MSG(WM_M88_CLIPCURSOR,		M88ClipCursor);
+	PROC_MSG(WM_M88_TAPERECORD,		M88TapeNotify);
+	case WM_CTLCOLORSTATIC:
+		// 知らせの色 (黄色の地に黒い字)
+		if (hoverlay && (HWND) lp == hoverlay)
+		{
+			SetTextColor((HDC) wp, RGB(0, 0, 0));
+			SetBkColor((HDC) wp, RGB(255, 236, 140));
+			ret = (LRESULT) overlaybrush;
+		}
+		else
+			ret = DefWindowProc(hwnd, umsg, wp, lp);
+		break;
 	PROC_MSG(WM_MOUSEMOVE,			WmMouseMove);
 	PROC_MSG(WM_SETCURSOR,			WmSetCursor);
 	
@@ -660,6 +680,53 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		ChangeTapeImage();
 		break;
 
+	case IDM_TAPE_REWIND:
+		core.Lock();
+		tapemgr->Rewind();
+		core.Unlock();
+		statusdisplay.Show(20, 2000, "Tape: rewound");
+		break;
+
+	case IDM_TAPE_RECORD:
+		{
+			core.Lock();
+			bool on = !tapemgr->IsRecord();
+			bool ask = on && tapemgr->NeedAppendConfirm();
+			core.Unlock();
+			if (ask)
+			{
+				// 既にデータのあるテープに初めて追記する (一度許可したら、開き直すまで聞かない)
+				char msg[MAX_PATH + 256];
+				wsprintf(msg,
+					"テープにはデータがあります。\n\n%s\n\n"
+					"セーブを、テープの最後に追記しますか？\n"
+					"(はい を選ぶと、このテープを開き直すまでは確認しません)",
+					tapemgr->GetFileName());
+				if (MessageBox(hwnd, msg, "M88 - Record", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+					break;
+			}
+			core.Lock();
+			if (ask)
+				tapemgr->AllowAppend();
+			tapemgr->SetRecord(on);
+			core.Unlock();
+		}
+		break;
+
+	case IDM_TAPESPEED_1:	config.tapespeed = 1; ApplyConfig(); break;
+	case IDM_TAPESPEED_2:	config.tapespeed = 2; ApplyConfig(); break;
+	case IDM_TAPESPEED_4:	config.tapespeed = 4; ApplyConfig(); break;
+	case IDM_TAPESPEED_8:	config.tapespeed = 8; ApplyConfig(); break;
+
+	case IDM_TAPEVOL_0:
+	case IDM_TAPEVOL_25:
+	case IDM_TAPEVOL_50:
+	case IDM_TAPEVOL_75:
+	case IDM_TAPEVOL_100:
+		config.tapevolume = (wid - IDM_TAPEVOL_0) * 25;
+		ApplyConfig();
+		break;
+
 	case IDM_RECORDPCM:
 		if (!core.GetSound()->IsDumping())
 		{
@@ -872,6 +939,13 @@ LRESULT WinUI::WmTimer(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		InvalidateRect(hwnd, 0, false);
 		return 0;
 	}
+	if (wparam == 9)
+	{
+		KillTimer(hwnd, 9);
+		if (hoverlay)
+			ShowWindow(hoverlay, SW_HIDE);
+		return 0;
+	}
 	if (wparam == statusdisplay.GetTimerID())
 	{
 		statusdisplay.Update();
@@ -906,6 +980,16 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 	EnableMenuItem(hmenu, IDM_N88V2CD, core.IsCDSupported() ? MF_ENABLED : MF_GRAYED);
 
 	CheckMenuItem(hmenu, IDM_CPU_BURST, (config.flags & Config::cpuburst) ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_TOGGLEDISPLAY, fullscreen ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_TAPESPEED_1, (config.tapespeed == 1) ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_TAPESPEED_2, (config.tapespeed == 2) ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_TAPESPEED_4, (config.tapespeed == 4) ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_TAPESPEED_8, (config.tapespeed == 8) ? MF_CHECKED : MF_UNCHECKED);
+	EnableMenuItem(hmenu, IDM_TAPE_REWIND, tapemgr->IsOpen() ? MF_ENABLED : MF_GRAYED);
+	CheckMenuItem(hmenu, IDM_TAPE_RECORD, tapemgr->IsRecord() ? MF_CHECKED : MF_UNCHECKED);
+	EnableMenuItem(hmenu, IDM_TAPE_RECORD, (tapemgr->IsOpen() && !tapemgr->IsWriteProtected()) ? MF_ENABLED : MF_GRAYED);
+	for (int v = 0; v <= 4; v++)
+		CheckMenuItem(hmenu, IDM_TAPEVOL_0 + v, (config.tapevolume == v * 25) ? MF_CHECKED : MF_UNCHECKED);
 
 	CheckMenuItem(hmenu, IDM_WATCHREGISTER, (config.dipsw != 1 && regmon.IsOpen()) ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_STATUSBAR, (config.flags & Config::showstatusbar) ? MF_CHECKED : MF_UNCHECKED);
@@ -949,6 +1033,8 @@ LRESULT WinUI::WmSize(HWND hwnd, WPARAM wp, LPARAM lp)
 		PostMessage(hwndstatus, WM_SIZE, wp, lp);
 	active = wp != SIZE_MINIMIZED;
 	draw.Activate(active);
+	if (fullscreen && active)
+		draw.Resize(640, 400);		// 全画面: 描く範囲をウィンドウいっぱいに合わせ直す
 	return DefWindowProc(hwnd, WM_SIZE, wp, lp);
 }
 
@@ -1324,7 +1410,9 @@ void WinUI::ChangeTapeImage()
 	
 	SetGUIFlag(true);
 	
+	core.Lock();
 	tapemgr->Close();
+	core.Unlock();
 
 	OFNV5 ofn;
 	memset(&ofn, 0, sizeof(ofn));
@@ -1335,7 +1423,9 @@ void WinUI::ChangeTapeImage()
 	filename[0] = 0;
 	
 	ofn.hwndOwner = hwnd;
-	ofn.lpstrFilter = "T88 tape image (*.t88)\0*.t88\0"
+	ofn.lpstrFilter = "Tape image (*.t88;*.raw)\0*.t88;*.raw\0"
+					  "T88 tape image (*.t88)\0*.t88\0"
+					  "PicoCmt RAW (*.raw)\0*.raw\0"
 					  "All Files (*.*)\0*.*\0";
 	ofn.lpstrFile = filename;
 	ofn.nMaxFile = MAX_PATH;
@@ -1348,14 +1438,31 @@ void WinUI::ChangeTapeImage()
 	(*EnableIME)(hwnd, false);
 
 	if (isopen)
-	  OpenTapeImage(filename);
+	{
+		// 無い名前なら (作るか聞かれて はい なら) 空の T88 を作る
+		bool ok = true;
+		if (GetFileAttributes(filename) == INVALID_FILE_ATTRIBUTES)
+		{
+			size_t len = strlen(filename);
+			if (len >= 4 && !_stricmp(filename + len - 4, ".raw"))
+				ok = false;		// RAW は作れない (T88 だけ)
+			else
+				ok = TapeManager::CreateNew(filename);
+			if (!ok)
+				MessageBox(hwnd, "ファイルを作れませんでした。", "M88", MB_OK | MB_ICONERROR);
+		}
+		if (ok)
+			OpenTapeImage(filename, !!(ofn.Flags & OFN_READONLY));
+	}
+	else
+		OpenTapeImage("", false);		// 開かなかった (前のテープは閉じている)
 
 	SetGUIFlag(false);
 	SetThreadPriority(hthread, prev);
 	snapshotchanged = true;
 }
 
-void WinUI::OpenTapeImage(const char* filename)
+void WinUI::OpenTapeImage(const char* filename, bool readonly)
 {
 	char buf[MAX_PATH+32];
 	MENUITEMINFO mii;
@@ -1364,10 +1471,14 @@ void WinUI::OpenTapeImage(const char* filename)
 	mii.fMask = MIIM_TYPE;
 	mii.fType = MFT_STRING;
 		
-	if (tapemgr->Open(filename))
+	core.Lock();
+	bool r = *filename && tapemgr->Open(filename, readonly);
+	bool wp = tapemgr->IsWriteProtected();
+	core.Unlock();
+	if (r)
 	{
 		GetFileNameTitle(tapetitle, sizeof(tapetitle), filename);
-		wsprintf(buf, "&Open - %s...", tapetitle);
+		wsprintf(buf, wp ? "&Open - %s (read only)..." : "&Open - %s...", tapetitle);
 		mii.dwTypeData = buf;
 	}
 	else
@@ -1375,6 +1486,76 @@ void WinUI::OpenTapeImage(const char* filename)
 		mii.dwTypeData = "&Open...";
 	}
 	SetMenuItemInfo(GetMenu(hwnd), IDM_TAPE, false, &mii);
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::TapeNotify
+//	テープからの知らせ (エミュレーションのスレッドから呼ばれる)
+//
+void WinUI::TapeNotify(void* ctx, int code)
+{
+	WinUI* ui = reinterpret_cast<WinUI*>(ctx);
+	PostMessage(ui->hwnd, WM_M88_TAPERECORD, code, 0);
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::M88TapeNotify
+//	テープからの知らせを処理する
+//
+LRESULT WinUI::M88TapeNotify(HWND hwnd, WPARAM code, LPARAM)
+{
+	switch (code)
+	{
+	case TapeManager::notify_norecord:
+		ShowOverlay("Tape: Record がオフなので、このセーブはテープに記録されません");
+		break;
+
+	case TapeManager::notify_notape:
+		ShowOverlay("Tape: テープを開いていないので、このセーブは記録されません");
+		break;
+	}
+	return 0;
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::ShowOverlay
+//	M88 の画面の中央に、知らせを数秒出す (フォーカスは移さない)
+//
+void WinUI::ShowOverlay(const char* msg)
+{
+	if (!hoverlay)
+	{
+		hoverlay = CreateWindowEx(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+			"STATIC", "", WS_POPUP | WS_BORDER | SS_CENTER | SS_CENTERIMAGE,
+			0, 0, 0, 0, hwnd, 0, hinst, 0);
+		if (!hoverlay)
+			return;
+		overlayfont = CreateFont(-16, 0, 0, 0, FW_BOLD, 0, 0, 0, SHIFTJIS_CHARSET,
+			OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, "MS UI Gothic");
+		overlaybrush = CreateSolidBrush(RGB(255, 236, 140));
+		if (overlayfont)
+			SendMessage(hoverlay, WM_SETFONT, (WPARAM) overlayfont, 0);
+	}
+
+	// 字の大きさから窓の大きさを決める
+	RECT tr = { 0, 0, 0, 0 };
+	HDC hdc = GetDC(hoverlay);
+	HGDIOBJ old = SelectObject(hdc, overlayfont ? (HGDIOBJ) overlayfont : GetStockObject(DEFAULT_GUI_FONT));
+	DrawText(hdc, msg, -1, &tr, DT_CALCRECT | DT_SINGLELINE);
+	SelectObject(hdc, old);
+	ReleaseDC(hoverlay, hdc);
+	int w = tr.right - tr.left + 40;
+	int h = tr.bottom - tr.top + 24;
+
+	RECT cr;
+	GetClientRect(hwnd, &cr);
+	POINT c = { (cr.left + cr.right) / 2, (cr.top + cr.bottom) / 2 };
+	ClientToScreen(hwnd, &c);
+
+	SetWindowText(hoverlay, msg);
+	SetWindowPos(hoverlay, HWND_TOPMOST, c.x - w / 2, c.y - h / 2, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+	InvalidateRect(hoverlay, 0, TRUE);
+	::SetTimer(hwnd, 9, 4000, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1490,7 +1671,7 @@ LRESULT WinUI::M88ChangeDisplay(HWND hwnd, WPARAM, LPARAM)
 		SetWindowLongPtr(hwnd, GWL_STYLE, wstyle);
 		SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
 		ResizeWindow(640, 400);
-		SetWindowPos(hwnd, HWND_NOTOPMOST, point.x, point.y, 0, 0, SWP_NOSIZE);
+		SetWindowPos(hwnd, HWND_NOTOPMOST, point.x, point.y, 0, 0, SWP_NOSIZE | SWP_FRAMECHANGED);
 		ShowStatusWindow();
 		report = true;
 		guimodebymouse = false;
@@ -1507,7 +1688,15 @@ LRESULT WinUI::M88ChangeDisplay(HWND hwnd, WPARAM, LPARAM)
 		SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
 		SetWindowText(hwnd, "M88");
 
-		SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
+		// 解像度は変えず、M88 のあるモニターいっぱいにする (メニューバーは上に出したまま)
+		MONITORINFO mi;
+		memset(&mi, 0, sizeof(mi));
+		mi.cbSize = sizeof(mi);
+		GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+		RECT& mr = mi.rcMonitor;
+		SetWindowPos(hwnd, HWND_TOPMOST, mr.left, mr.top, mr.right - mr.left, mr.bottom - mr.top,
+					 SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+		draw.Resize(640, 400);
 
 		report = false;
 	}
@@ -1603,7 +1792,7 @@ LRESULT WinUI::WmDropFiles(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		// 正常にマウントできたらリセット
 		if (diskinfo[0].filename[0])
 		  Reset();
-	} else if (strcmpi(ext, ".t88") == 0) {
+	} else if (strcmpi(ext, ".t88") == 0 || strcmpi(ext, ".raw") == 0) {
 		OpenTapeImage(path);
 	} else {
 		statusdisplay.Show(50, 3000, "非対応のファイルです.");
