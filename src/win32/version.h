@@ -7,5 +7,5 @@
 #define APP_VER_STRING	"2.21"
 
 // M88gn ‚Ì”Å (‚à‚Æ‚É‚µ‚½ M88 ‚Ì”Å‚Í APP_VER_STRING)
-#define M88GN_VER_STRING	"1.0.0"
+#define M88GN_VER_STRING	"1.1.0"
 
