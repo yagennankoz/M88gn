@@ -127,6 +127,7 @@ bool WinUI::InitM88(const char* cmdline)
 	LOG1("%d\tkeyboard if\n", timeGetTime());
 	if (!keyif.Init(hwnd))
 		return false;
+	softkbd.Init(hinst, hwnd, &keyif);
 	LOG1("%d\tcore\n", timeGetTime());
 	if (!core.Init(this, hwnd, &draw, diskmgr, &keyif, &winconfig, tapemgr))
 		return false;
@@ -162,6 +163,9 @@ bool WinUI::InitM88(const char* cmdline)
 	ApplyCommandLine(cmdline);
 	LOG1("%d\tapply config\n", timeGetTime());
 	ApplyConfig();
+	softkbd.SetPlacement(config.softkbdx, config.softkbdy, config.softkbdw);
+	if (config.softkbdshow)
+		softkbd.Show(true);
 	
 	//	リセット
 	LOG1("%d\treset\n", timeGetTime());
@@ -182,6 +186,8 @@ bool WinUI::InitM88(const char* cmdline)
 //
 void WinUI::CleanupM88()
 {
+	softkbd.GetPlacement(&config.softkbdx, &config.softkbdy, &config.softkbdw);
+	config.softkbdshow = softkbd.IsShown();
 	PC8801::Config cfg = config;
 	PC8801::SaveConfig(&cfg, m88ini, true);
 	core.Cleanup();
@@ -642,6 +648,10 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		ShowStatusWindow();
 		break;
 
+	case IDM_SOFTKBD:
+		softkbd.Show(!softkbd.IsShown());
+		break;
+
 	case IDM_FDC_STATUS:
 		config.flags ^= PC8801::Config::showfdcstatus;
 		ApplyConfig();
@@ -687,6 +697,24 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		statusdisplay.Show(20, 2000, "Tape: rewound");
 		break;
 
+	case IDM_TAPE_NEXT:
+	case IDM_TAPE_PREV:
+		{
+			core.Lock();
+			bool ok = tapemgr->Cue(wid == IDM_TAPE_NEXT ? 1 : -1);
+			uint t = tapemgr->GetPos() / 4800;
+			core.Unlock();
+			if (ok)
+				statusdisplay.Show(20, 3000, "Tape: %d:%.2d", t / 60, t % 60);
+			else
+				statusdisplay.Show(20, 3000, "Tape: no next gap");
+			// メニューから選んだときは、続けて選べるように Tape メニューを開き直す
+			// (Windows のメニューは選ぶと閉じる。マウスは同じ所にあるので、もう一度クリックすれば続けて動く)
+			if (HIWORD(wparam) == 0 && lparam == 0)
+				PostMessage(hwnd, WM_SYSCOMMAND, SC_KEYMENU, 'p');
+		}
+		break;
+
 	case IDM_TAPE_RECORD:
 		{
 			core.Lock();
@@ -724,6 +752,15 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 	case IDM_TAPEVOL_75:
 	case IDM_TAPEVOL_100:
 		config.tapevolume = (wid - IDM_TAPEVOL_0) * 25;
+		ApplyConfig();
+		break;
+
+	case IDM_DISKVOL_0:
+	case IDM_DISKVOL_25:
+	case IDM_DISKVOL_50:
+	case IDM_DISKVOL_75:
+	case IDM_DISKVOL_100:
+		config.fddvolume = (wid - IDM_DISKVOL_0) * 25;
 		ApplyConfig();
 		break;
 
@@ -986,13 +1023,18 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 	CheckMenuItem(hmenu, IDM_TAPESPEED_4, (config.tapespeed == 4) ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_TAPESPEED_8, (config.tapespeed == 8) ? MF_CHECKED : MF_UNCHECKED);
 	EnableMenuItem(hmenu, IDM_TAPE_REWIND, tapemgr->IsOpen() ? MF_ENABLED : MF_GRAYED);
+	EnableMenuItem(hmenu, IDM_TAPE_NEXT, tapemgr->CanCue() ? MF_ENABLED : MF_GRAYED);
+	EnableMenuItem(hmenu, IDM_TAPE_PREV, tapemgr->CanCue() ? MF_ENABLED : MF_GRAYED);
 	CheckMenuItem(hmenu, IDM_TAPE_RECORD, tapemgr->IsRecord() ? MF_CHECKED : MF_UNCHECKED);
 	EnableMenuItem(hmenu, IDM_TAPE_RECORD, (tapemgr->IsOpen() && !tapemgr->IsWriteProtected()) ? MF_ENABLED : MF_GRAYED);
 	for (int v = 0; v <= 4; v++)
 		CheckMenuItem(hmenu, IDM_TAPEVOL_0 + v, (config.tapevolume == v * 25) ? MF_CHECKED : MF_UNCHECKED);
+	for (int v = 0; v <= 4; v++)
+		CheckMenuItem(hmenu, IDM_DISKVOL_0 + v, (config.fddvolume == v * 25) ? MF_CHECKED : MF_UNCHECKED);
 
 	CheckMenuItem(hmenu, IDM_WATCHREGISTER, (config.dipsw != 1 && regmon.IsOpen()) ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_STATUSBAR, (config.flags & Config::showstatusbar) ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_SOFTKBD, softkbd.IsShown() ? MF_CHECKED : MF_UNCHECKED);
 	EnableMenuItem(hmenu, IDM_STATUSBAR, fullscreen ? MF_GRAYED : MF_ENABLED);
 	CheckMenuItem(hmenu, IDM_FDC_STATUS, (config.flags & Config::showfdcstatus) ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_SOUNDMON, opnmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);

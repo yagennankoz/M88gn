@@ -165,6 +165,7 @@ bool WinCore::ConnectDevices(WinKeyIF* keyb)
 	if (FAILED(GetOPN2()->Connect(&sound))) return false;
 	if (FAILED(GetBEEP()->Connect(&sound))) return false;
 	if (FAILED(GetTapeManager()->Connect(&sound))) return false;
+	if (FAILED(GetFDDSound()->Connect(&sound))) return false;
 
 	return true;
 }

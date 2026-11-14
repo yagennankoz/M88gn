@@ -636,6 +636,11 @@ bool PC88::ConnectDevices2()
 	return true;
 }
 
+ISoundSource* PC88::GetFDDSound()
+{
+	return fdc->GetSound();
+}
+
 // ---------------------------------------------------------------------------
 //	Ý’è”½‰f
 //
@@ -652,6 +657,7 @@ void PC88::ApplyConfig(Config* cfg)
 	beep->EnableSING(!(cfg->flags & Config::disablesing));
 	tapemgr->SetSpeed(cfg->tapespeed);
 	tapemgr->SetVolume(cfg->tapevolume);
+	fdc->GetSound()->SetVolume(cfg->fddvolume);
 	opn1->SetFMMixMode(!!(cfg->flag2 & Config::usefmclock));
 	opn1->SetVolume(cfg);
 	opn2->SetFMMixMode(!!(cfg->flag2 & Config::usefmclock));

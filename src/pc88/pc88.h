@@ -109,6 +109,7 @@ public:
 	PC8801::PD8257*	GetDMAC() { return dmac; }
 	PC8801::Beep*	GetBEEP() { return beep; }
 	TapeManager*	GetTapeManager() { return tapemgr; }
+	ISoundSource*	GetFDDSound();
 
 	bool SaveShapshot(const char* filename);
 	bool LoadShapshot(const char* filename);

@@ -12,6 +12,7 @@
 #include "schedule.h"
 #include "floppy.h"
 #include "fdu.h"
+#include "fddsound.h"
 
 class DiskManager;
 
@@ -68,6 +69,7 @@ public:
 	void ApplyConfig(const Config* cfg);
 
 	bool IsBusy() { return phase != idlephase; }
+	FDDSound* GetSound() { return &sound; }			// ドライブの音 (シーク)
 	
 	void IOCALL Reset(uint=0, uint=0);
 	void IOCALL DriveControl(uint, uint data);			// 2HD/2DD 切り替えとか
@@ -191,6 +193,7 @@ private:
 	bool accepttc;
 	bool showstatus;
 	
+	FDDSound sound;
 	bool diskwait;
 
 	IDR idr;

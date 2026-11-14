@@ -821,6 +821,7 @@ void FDC::Seek(uint dr, uint cy)
 	} else {
 		LOG3("Seek: %d -> %d (%d)\n", drive[dr].cyrinder, cy, seekcount);
 		drive[dr].cyrinder = cy;
+		sound.Step(seekcount >> drive[dr].dd);	// ŽÀÛ‚É“®‚­ƒVƒŠƒ“ƒ_[‚Ì”‚¾‚¯–Â‚ç‚· (2D ‚Í 2 ”{‚Å”‚¦‚Ä‚¢‚é)
 		seektime = seekcount && diskwait ? (400 * Abs(seekcount) + 500) : 10;
 		scheduler->AddEvent
 			(seektime, this, STATIC_CAST(TimeFunc, &FDC::SeekEvent), dr);

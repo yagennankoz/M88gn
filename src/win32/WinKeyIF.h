@@ -41,6 +41,10 @@ public:
 	void KeyDown(uint, uint32);
 	void KeyUp(uint, uint32);
 
+	// ソフトウェアキーボード
+	void SetSoftKeys(const uint8* keys);	// 押しているキー (ポート 0～15 のビット。1 = 押している)
+	void GetMatrix(uint8* keys);			// PC-8801 に見えているキー (ポート 0～15。1 = 押している)
+
 	const Descriptor* IFCALL GetDesc() const { return &descriptor; }
 
 private:
@@ -61,6 +65,7 @@ private:
 	};
 
 	uint GetKey(const Key* key);
+	uint ReadPort(uint port);				// パソコンのキーボードから求めたポートの値 (0 = 押している)
 
 	static const Key KeyTable98[16 * 8][8];
 	static const Key KeyTable106[16 * 8][8];
@@ -78,6 +83,9 @@ private:
 	int keyport[16];
 	uint8 keyboard[256];
 	uint8 keystate[512];
+	LONG shiftuptime;					// 最後に Shift が離されたときのメッセージの時刻
+	bool shiftupvalid;
+	volatile uint8 softkey[16];			// ソフトウェアキーボードで押しているキー (1 = 押している)
 
 private:
 	static const Descriptor descriptor;

@@ -267,6 +267,89 @@ bool TapeManager::Rewind(bool timer)
 }
 
 // ---------------------------------------------------------------------------
+//	頭出し
+//
+//	区切り: BLANK の続きの始まり、MARK と MARK にはさまれた SPACE の続きの始まり
+//	(セーブとセーブの間。データの前のリーダーの SPACE は、前が MARK でないので含まない)
+//
+bool TapeManager::IsCuePoint(Tag* t)
+{
+	if (t->id != T_BLANK && t->id != T_SPACE)
+		return false;
+	if (t->prev && t->prev->id == t->id)
+		return false;						// 続きの途中
+	if (t->id == T_BLANK)
+		return true;
+	if (!t->prev || t->prev->id != T_MARK)
+		return false;
+	Tag* n = t->next;
+	while (n && n->id == T_SPACE)
+		n = n->next;
+	return n && n->id == T_MARK;
+}
+
+//	区切りの後の最初の DATA の始まり (次の区切りまでに DATA が無ければ ~0)
+uint32 TapeManager::CueDataPos(Tag* t)
+{
+	for (Tag* n = t->next; n && !IsCuePoint(n); n = n->next)
+	{
+		if (n->id == T_DATA)
+			return TagPos(n);
+	}
+	return ~0u;
+}
+
+//	タグの始まりに移る (BLANK / SPACE)
+void TapeManager::GoTag(Tag* t)
+{
+	scheduler->DelEvent(event), event = 0;
+	gapfast = false;
+	tick = TagPos(t);
+	pos = t;
+	Proceed();						// モーターが止まっていれば、残りの時間を持つだけ
+	SoundState();
+}
+
+bool TapeManager::Cue(int dir)
+{
+	if (!CanCue())
+		return false;
+
+	// 今のタグ (Proceed は、処理中のタグの次を pos に置く。終わりなら pos = 0)
+	Tag* cur = tags;
+	if (pos)
+		cur = pos->prev;
+	else
+		while (cur->next)
+			cur = cur->next;
+
+	if (dir > 0)
+	{
+		for (Tag* t = cur->next; t; t = t->next)
+		{
+			if (IsCuePoint(t))
+			{
+				GoTag(t);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	uint now = GetPos();
+	for (Tag* t = cur; t && t->id != T_VERSION; t = t->prev)
+	{
+		// データが始まっていればこの区切りへ。区切りの無音やリーダーの途中なら、さらに前へ
+		if (IsCuePoint(t) && CueDataPos(t) != ~0u && now > CueDataPos(t))
+		{
+			GoTag(t);
+			return true;
+		}
+	}
+	return Rewind();
+}
+
+// ---------------------------------------------------------------------------
 //	モータ
 //
 bool TapeManager::Motor(bool s)

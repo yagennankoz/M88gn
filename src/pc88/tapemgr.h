@@ -38,6 +38,15 @@ public:
 	bool Close();
 	bool Rewind(bool timer = true);
 
+	// 頭出し: 次 / 前の区切りの始まりに移る (dir: 1 = 次、-1 = 前)
+	//   区切りは、BLANK の続きの始まりと、MARK と MARK にはさまれた SPACE の続きの始まり。
+	//   前は、今いる区切りの後の DATA が始まっていればその区切りの始まりへ、
+	//   そうでなければ (区切りの無音やリーダーの途中なら) 1 つ前へ
+	//   (データは短いと 1 秒ほどなので、始まってからの時間では決めない)
+	//   (無ければテープの先頭)。次が無ければ移らずに false
+	bool Cue(int dir);
+	bool CanCue() { return tags && !recording && !recarm; }
+
 	bool IsOpen() { return tags || wave; }
 	bool IsWave() { return wave; }		// PicoCmt の .RAW (波形) を開いている
 
@@ -149,6 +158,10 @@ private:
 	int Wait(int count);
 	void PlayStart();
 	void PlayStop();
+	bool IsCuePoint(Tag* t);
+	uint32 CueDataPos(Tag* t);
+	void GoTag(Tag* t);
+	static uint32 TagPos(Tag* t) { return ((BlankTag*) t->data)->pos; }
 
 	Scheduler* scheduler;
 	SchedulerEvent* event;

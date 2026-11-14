@@ -22,6 +22,7 @@
 #include "regmon.h"
 #include "loadmon.h"
 #include "iomon.h"
+#include "softkbd.h"
 
 // ---------------------------------------------------------------------------
 
@@ -135,6 +136,7 @@ private:
 	WinCore core;
 	WinDraw draw;
 	PC8801::WinKeyIF keyif;
+	SoftKeyboard softkbd;
 	PC8801::Config config;
 	PC8801::WinConfig winconfig;
 	WinNewDisk newdisk;

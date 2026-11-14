@@ -79,11 +79,22 @@ BEGIN
         MENUITEM "Drive &2...",                 IDM_DRIVE_2
         MENUITEM SEPARATOR
         MENUITEM "&Change disk image...",       IDM_BOTHDRIVE
+        MENUITEM SEPARATOR
+        POPUP "Disk sound &volume"
+        BEGIN
+            MENUITEM "&Off",                        IDM_DISKVOL_0
+            MENUITEM "&25%",                        IDM_DISKVOL_25
+            MENUITEM "&50%",                        IDM_DISKVOL_50
+            MENUITEM "&75%",                        IDM_DISKVOL_75
+            MENUITEM "&100%",                       IDM_DISKVOL_100
+        END
     END
     POPUP "Ta&pe"
     BEGIN
         MENUITEM "&Open...",                    IDM_TAPE
         MENUITEM "Re&wind",                     IDM_TAPE_REWIND
+        MENUITEM "&Previous gap",               IDM_TAPE_PREV
+        MENUITEM "&Next gap",                   IDM_TAPE_NEXT
         MENUITEM SEPARATOR
         MENUITEM "&Record",                     IDM_TAPE_RECORD
         MENUITEM SEPARATOR
@@ -108,6 +119,7 @@ BEGIN
         MENUITEM "&Configure...",               IDM_CONFIG
         MENUITEM SEPARATOR
         MENUITEM "S&how Status",                IDM_STATUSBAR
+        MENUITEM "Software &keyboard",          IDM_SOFTKBD
         MENUITEM "&Capture...\tAlt+F2",         IDM_CAPTURE
         MENUITEM "&Record Sound",               IDM_RECORDPCM
         MENUITEM SEPARATOR

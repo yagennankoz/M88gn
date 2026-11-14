@@ -144,6 +144,12 @@ void LoadConfig(Config* cfg, const char* inifile, bool applydefault)
 
 	if (LoadConfigEntry(inifile, "TapeVolume", &n, 100, applydefault))
 		cfg->tapevolume = Limit(n, 100, 0);
+	LoadConfigEntry(inifile, "SoftKbdX", &cfg->softkbdx, 0, applydefault);
+	LoadConfigEntry(inifile, "SoftKbdY", &cfg->softkbdy, 0, applydefault);
+	LoadConfigEntry(inifile, "SoftKbdW", &cfg->softkbdw, 0, applydefault);
+	LoadConfigEntry(inifile, "SoftKbdShow", &cfg->softkbdshow, 0, applydefault);
+	if (LoadConfigEntry(inifile, "DiskVolume", &n, 100, applydefault))
+		cfg->fddvolume = Limit(n, 100, 0);
 	if (LoadConfigEntry(inifile, "TapeSpeed", &n, 1, applydefault))
 		cfg->tapespeed = (n == 2 || n == 4 || n == 8) ? n : 1;
 }
@@ -221,6 +227,11 @@ void SaveConfig(Config* cfg, const char* inifile, bool writedefault)
 	SaveEntry(inifile, "WinPosX", cfg->winposx, writedefault);
 	SaveEntry(inifile, "TapeVolume", cfg->tapevolume, writedefault);
 	SaveEntry(inifile, "TapeSpeed", cfg->tapespeed, writedefault);
+	SaveEntry(inifile, "DiskVolume", cfg->fddvolume, writedefault);
+	SaveEntry(inifile, "SoftKbdX", cfg->softkbdx, writedefault);
+	SaveEntry(inifile, "SoftKbdY", cfg->softkbdy, writedefault);
+	SaveEntry(inifile, "SoftKbdW", cfg->softkbdw, writedefault);
+	SaveEntry(inifile, "SoftKbdShow", cfg->softkbdshow, writedefault);
 }
 
 }

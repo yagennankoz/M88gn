@@ -31,6 +31,11 @@ WinKeyIF::WinKeyIF()
 	}
 	memset(keyboard, 0, 256);
 	memset(keystate, 0, 512);
+	for (int i=0; i<16; i++)
+		softkey[i] = 0;
+	active = false;
+	shiftuptime = 0;
+	shiftupvalid = false;
 	usearrow = false;
 
 	disable = false;
@@ -103,6 +108,24 @@ void WinKeyIF::KeyDown(uint vkcode, uint32 keydata)
 	uint keyindex = (vkcode & 0xff) | ((keydata & (1<<24)) ? 0x100 : 0);
 	LOG2("KeyDown  = %.2x %.3x\n", vkcode, keyindex);
 	keystate[keyindex] = 1;
+
+	// Shift + テンキー (NumLock がオン): Windows はテンキーを End・↓ などとして渡すために、
+	// 直前に偽物の「Shift を離した」を送ってくる。拡張キーのしるしが付かないことがあり、
+	// 本物の Shift が離されたことになって PC-8801 に SHIFT が届かなかった。
+	// 離されたのと同じ時刻にテンキーから来たキー (拡張キーでない Insert・End・↓ など) が
+	// 押されたら、偽物と見なして Shift を押したままに戻す
+	// (テンキーを離すと、Windows は偽物の「Shift を押した」を送ってくるので、そのままで合う)
+	if (shiftupvalid && GetMessageTime() - shiftuptime <= 10)
+	{
+		switch (keyindex)
+		{
+		case VK_INSERT: case VK_END: case VK_DOWN: case VK_NEXT: case VK_LEFT:
+		case VK_CLEAR: case VK_RIGHT: case VK_HOME: case VK_UP: case VK_PRIOR: case VK_DELETE:
+			keystate[VK_SHIFT] = 1;
+			break;
+		}
+	}
+	shiftupvalid = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -112,6 +135,11 @@ void WinKeyIF::KeyUp(uint vkcode, uint32 keydata)
 {
 	uint keyindex = (vkcode & 0xff) | (keydata & (1<<24) ? 0x100 : 0);
 	keystate[keyindex] = 0;
+	if (keyindex == VK_SHIFT)
+	{
+		shiftuptime = GetMessageTime();		// テンキーの偽物の Shift かどうかを、次のキーで見る
+		shiftupvalid = true;
+	}
 	LOG2("KeyUp   = %.2x %.3x\n", vkcode, keyindex);
 	
 	// SHIFT + テンキーによる押しっぱなし現象対策
@@ -275,23 +303,54 @@ uint IOCALL WinKeyIF::In(uint port)
 		int r = keyport[port];
 		if (r == -1)
 		{
-			const Key* key = keytable + port * 64 + 56;
-			r=0;
-			for (int i=0; i<8; i++)
-			{
-				r = r * 2 + GetKey(key);
-				key -= 8;
-			}
+			r = ReadPort(port);
 			keyport[port] = r;
 			if (port == 0x0d)
 			{	
 				LOG3("In(13)   = %.2x %.2x %.2x\n", r, keystate[0xf4], keystate[0x1f4]);
 			}
 		}
-		return uint8(r);
+		return uint8(r & ~softkey[port]);
 	}
 	else
-		return 0xff;
+		return uint8(~softkey[port]);		// M88 が非アクティブでも、ソフトウェアキーボードのキーは届ける
+}
+
+// ---------------------------------------------------------------------------
+//	パソコンのキーボードから求めたポートの値 (0 = 押している)
+//
+uint WinKeyIF::ReadPort(uint port)
+{
+	const Key* key = keytable + port * 64 + 56;
+	uint r = 0;
+	for (int i=0; i<8; i++)
+	{
+		r = r * 2 + GetKey(key);
+		key -= 8;
+	}
+	return r;
+}
+
+// ---------------------------------------------------------------------------
+//	ソフトウェアキーボード
+//	SetSoftKeys: UI のスレッドから呼ぶ。In() が次に読むときに効く (ポートの値はフレームごとに覚えている)
+//	GetMatrix: 光らせる表示用。UI のスレッドから呼ぶ (keyboard / keystate は読むだけ)
+//
+void WinKeyIF::SetSoftKeys(const uint8* keys)
+{
+	for (int i=0; i<16; i++)
+		softkey[i] = keys[i];
+}
+
+void WinKeyIF::GetMatrix(uint8* keys)
+{
+	for (uint i=0; i<16; i++)
+	{
+		uint m = softkey[i];
+		if (active)
+			m |= ~ReadPort(i) & 0xff;
+		keys[i] = uint8(m);
+	}
 }
 
 // ---------------------------------------------------------------------------

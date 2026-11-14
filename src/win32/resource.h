@@ -272,6 +272,14 @@
 #define IDM_TAPESPEED_8                 40242
 #define IDM_TAPE_REWIND                 40243
 #define IDM_TAPE_RECORD                 40244
+#define IDM_TAPE_NEXT                   40246
+#define IDM_TAPE_PREV                   40247
+#define IDM_DISKVOL_0                   40248
+#define IDM_DISKVOL_25                  40249
+#define IDM_DISKVOL_50                  40250
+#define IDM_DISKVOL_75                  40251
+#define IDM_DISKVOL_100                 40252
+#define IDM_SOFTKBD                     40253
 #define IDM_DBG_RUN                     40240
 #define IDM_DBG_STEP                    40241
 
@@ -280,7 +288,7 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        140
-#define _APS_NEXT_COMMAND_VALUE         40246
+#define _APS_NEXT_COMMAND_VALUE         40254
 #define _APS_NEXT_CONTROL_VALUE         1136
 #define _APS_NEXT_SYMED_VALUE           101
 #endif

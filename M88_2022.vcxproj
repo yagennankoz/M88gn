@@ -166,6 +166,7 @@
     <ClCompile Include="src\pc88\sio.cpp" />
     <ClCompile Include="src\pc88\sound.cpp" />
     <ClCompile Include="src\pc88\subsys.cpp" />
+    <ClCompile Include="src\pc88\fddsound.cpp" />
     <ClCompile Include="src\pc88\tapemgr.cpp" />
     <ClCompile Include="src\Win32\88config.cpp" />
     <ClCompile Include="src\Win32\about.cpp" />
@@ -211,6 +212,7 @@
     <ClCompile Include="src\win32\winexapi.cpp" />
     <ClCompile Include="src\Win32\WinJoy.cpp" />
     <ClCompile Include="src\Win32\WinKeyIF.cpp" />
+    <ClCompile Include="src\win32\softkbd.cpp" />
     <ClCompile Include="src\win32\winmon.cpp" />
     <ClCompile Include="src\Win32\winmouse.cpp" />
     <ClCompile Include="src\Win32\winsound.cpp" />
@@ -314,6 +316,8 @@
     <ClInclude Include="src\pc88\sio.h" />
     <ClInclude Include="src\pc88\sound.h" />
     <ClInclude Include="src\pc88\subsys.h" />
+    <ClInclude Include="src\pc88\fddclick.h" />
+    <ClInclude Include="src\pc88\fddsound.h" />
     <ClInclude Include="src\pc88\tapemgr.h" />
     <ClInclude Include="src\Win32\88config.h" />
     <ClInclude Include="src\Win32\about.h" />
@@ -358,6 +362,7 @@
     <ClInclude Include="src\win32\winexapi.h" />
     <ClInclude Include="src\Win32\WinJoy.h" />
     <ClInclude Include="src\Win32\WinKeyIF.h" />
+    <ClInclude Include="src\win32\softkbd.h" />
     <ClInclude Include="src\win32\winmon.h" />
     <ClInclude Include="src\Win32\winmouse.h" />
     <ClInclude Include="src\Win32\winsound.h" />
