@@ -1153,8 +1153,7 @@ looop:
 							LOADF \
 							__asm { dec B } \
 							SAVEF \
-							SETF(NF) \
-							OINTERRUPT
+							SETF(NF)
 
 // ---------------------------------------------------------------------------
 //	ブロック転送操作 ---------------------------------------------------------
@@ -1781,13 +1780,18 @@ static OPFUNC(LD_R_A) { STORERA; CLK(9, 2); OPEND; }
 
 static OPFUNC(INI) { MINX; INC16(HL); CLK(16, 3); OPEND; inp_sync: PCDEC2; OPEND; }
 static OPFUNC(IND) { MINX; DEC16(HL); CLK(16, 3); OPEND; inp_sync: PCDEC2; OPEND; }
-static OPFUNC(OUTI) { MOUTX; INC16(HL); CLK(16, 3); OPEND; outx_sync: PCDEC2; OPEND; }
-static OPFUNC(OUTD) { MOUTX; DEC16(HL); CLK(16, 3); OPEND; outx_sync: PCDEC2; OPEND; }
+// OUTI/OUTD/OTIR/OTDR: 割り込みの確認 (OINTERRUPT) は HL の増減の後に行う。
+// OINTERRUPT は割り込みが待っていると次の命令を先に実行するので、その後で HL を増減すると
+// 次の命令が HL に入れた値がずれる (OUTI の直後に LD HL,(nn) などがあると壊れる)
+static OPFUNC(OUTI) { MOUTX; INC16(HL); CLK(16, 3); OINTERRUPT; OPEND; outx_sync: PCDEC2; OPEND; }
+static OPFUNC(OUTD) { MOUTX; DEC16(HL); CLK(16, 3); OINTERRUPT; OPEND; outx_sync: PCDEC2; OPEND; }
 
 static OPFUNC(INIR) { MINX;  INC16(HL); MIFZ(END); CLK(20, 3); inp_sync: PCDEC2; OPEND; END: CLK(16, 3); OPEND; }
 static OPFUNC(INDR) { MINX;  DEC16(HL); MIFZ(END); CLK(20, 3); inp_sync: PCDEC2; OPEND; END: CLK(16, 3); OPEND; }
-static OPFUNC(OTIR) { MOUTX; INC16(HL); MIFZ(END); CLK(20, 3); outx_sync: PCDEC2; OPEND; END: CLK(16, 3); OPEND; }
-static OPFUNC(OTDR) { MOUTX; DEC16(HL); MIFZ(END); CLK(20, 3); outx_sync: PCDEC2; OPEND; END: CLK(16, 3); OPEND; }
+// OTIR/OTDR: くり返す間は割り込みの確認をしない (PC を OTIR に戻すので、次の命令を先に実行してはいけない)。
+// 最後の 1 回だけ、HL の増減の後に確認する
+static OPFUNC(OTIR) { MOUTX; INC16(HL); MIFZ(END); CLK(20, 3); outx_sync: PCDEC2; OPEND; END: CLK(16, 3); OINTERRUPT; OPEND; }
+static OPFUNC(OTDR) { MOUTX; DEC16(HL); MIFZ(END); CLK(20, 3); outx_sync: PCDEC2; OPEND; END: CLK(16, 3); OINTERRUPT; OPEND; }
 
 // ---------------------------------------------------------------------------
 //	ブロック転送命令 ---------------------------------------------------------
