@@ -102,7 +102,7 @@ const char M88About::abouttext[] =
 	"M88gn は、rururutan 氏の M88 私家版に GIMONS 氏の M88g の差分を当てたものをもとに、"
 	"テープ (T88) まわりなどを改修したものです．\r\n"
 	"\r\n"
-	"主な改修: テープまわり、音 (テープ・ディスク・BEEP)、操作性 (ソフトウェアキーボード・全画面表示)\r\n"
+	"主な改修: テープまわり、音 (テープ・ディスク・BEEP)、画面 (CRT 風のフィルター・全画面表示)、操作性 (ソフトウェアキーボード)、Z80 の不具合の修正\r\n"
 	"\r\n"
 	"https://github.com/yagennankoz/M88gn\r\n"
 	"\r\n"
