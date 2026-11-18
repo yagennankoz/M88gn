@@ -7,6 +7,7 @@
 #include "headers.h"
 #include "types.h"
 #include "misc.h"
+#include <math.h>
 #include "pc88/sound.h"
 #include "pc88/pc88.h"
 #include "pc88/config.h"
@@ -38,6 +39,7 @@ bool Sound::Init(PC88* pc88, uint rate, int bufsize)
 	prevtime = pc->GetCPUTick();
 	enabled = false;
 	mixthreshold = 16;
+	mastergain = 4096;
 	
 	if (!SetRate(rate, bufsize))
 		return false;
@@ -118,8 +120,7 @@ int Sound::Get(Sample* dest, int nsamples)
 		{
 			memset(mixingbuf, 0, mixsamples * 2 * sizeof(int32));
 			CriticalSection::Lock lock(cs_ss);
-			for (SSNode* s = sslist; s; s = s->next)
-				s->ss->Mix(mixingbuf, mixsamples);
+			MixAll(mixingbuf, mixsamples);
 		}
 
 		int32* src = mixingbuf;
@@ -140,9 +141,38 @@ int Sound::Get(SampleL* dest, int nsamples)
 	// 合成
 	memset(dest, 0, nsamples * 2 * sizeof(int32));
 	CriticalSection::Lock lock(cs_ss);
-	for (SSNode* s = sslist; s; s = s->next)
-		s->ss->Mix(dest, nsamples);
+	MixAll(dest, nsamples);
 	return nsamples;
+}
+
+// ---------------------------------------------------------------------------
+//	すべての音源を混ぜる: 全体の音量を掛ける音源を混ぜて音量を掛け、
+//	掛けない音源 (ディスクの音) はその後に足す。cs_ss を取ってから呼ぶ
+//
+void Sound::MixAll(int32* dest, int nsamples)
+{
+	for (SSNode* s = sslist; s; s = s->next)
+		if (!s->nomaster)
+			s->ss->Mix(dest, nsamples);
+	if (mastergain != 4096)
+	{
+		for (int n = 0; n < nsamples * 2; n++)
+			dest[n] = int32((__int64(dest[n]) * mastergain) >> 12);
+	}
+	for (SSNode* s = sslist; s; s = s->next)
+		if (s->nomaster)
+			s->ss->Mix(dest, nsamples);
+}
+
+// ---------------------------------------------------------------------------
+//	この音源には全体の音量を掛けない
+//
+void Sound::SetNoMaster(ISoundSource* ss)
+{
+	CriticalSection::Lock lock(cs_ss);
+	for (SSNode* n = sslist; n; n = n->next)
+		if (n->ss == ss)
+			n->nomaster = true;
 }
 
 
@@ -152,6 +182,15 @@ int Sound::Get(SampleL* dest, int nsamples)
 void Sound::ApplyConfig(const Config* config)
 {
 	mixthreshold = (config->flags & Config::precisemixing) ? 100 : 2000;
+	SetMasterVolume(config->volmaster);
+}
+
+// ---------------------------------------------------------------------------
+//	全体の音量 (dB。-40 以下で消音)。最後に混ぜた音に掛ける
+//
+void Sound::SetMasterVolume(int db)
+{
+	mastergain = db <= -40 ? 0 : int(4096 * pow(10.0, db / 20.0) + 0.5);
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +218,7 @@ bool Sound::Connect(ISoundSource* ss)
 	{
 		*n = nn;
 		nn->next = 0;
+		nn->nomaster = false;
 		nn->ss = ss;
 		ss->SetRate(mixrate);
 		return true;

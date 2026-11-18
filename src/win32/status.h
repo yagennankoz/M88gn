@@ -32,6 +32,13 @@ public:
 
 	HWND GetHWnd() { return hwnd; }
 
+	// 全画面: ステータスバーの代わりに、メニューバーの右の端に知らせとランプを出す
+	bool EnableMenu(bool sfs);
+	void DisableMenu();
+	void MeasureMenuItem(MEASUREITEMSTRUCT* mis);
+	void DrawMenuItem(DRAWITEMSTRUCT* dis);
+	void RedrawMenu();			// 変わったところを描き直す (UI のスレッドから)
+
 private:
 	struct List
 	{
@@ -49,6 +56,9 @@ private:
 	};
 
 	void Clean();
+	void DrawLamps(HDC hdc, int left, int cy);
+	void DrawMenuStatus(HDC hdc, const RECT& r);
+	int LampWidth() { return Scale(showfdstat ? 80 : 64); }
 	
 	HWND hwnd;
 	HWND hwndparent;
@@ -57,6 +67,8 @@ private:
 	CriticalSection cs;
 	Border border;
 	int height;
+	int dpi;					// ランプの大きさを合わせる画面の DPI (96 = 100%)
+	int Scale(int x) { return MulDiv(x, dpi, 96); }
 	int litstat[3];
 	int litcurrent[3];
 	bool showfdstat;
@@ -66,6 +78,9 @@ private:
 	int currentpriority;
 
 	char buf[128];
+	bool menumode;				// 全画面でメニューバーに出している
+	HFONT menufont;
+	char menutext[128];			// メニューバーに出す知らせ
 };
 
 extern StatusDisplay statusdisplay;

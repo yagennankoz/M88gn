@@ -128,6 +128,7 @@ void LoadConfig(Config* cfg, const char* inifile, bool applydefault)
 	if (LoadConfigEntry(inifile, "ROMEOLatency", &n, 100, applydefault))
 		cfg->romeolatency = Limit(n, 500, 0);
 	
+	LOADVOLUMEENTRY("VolumeMaster", VOLUME_BIAS, cfg->volmaster);
 	LOADVOLUMEENTRY("VolumeFM", VOLUME_BIAS, cfg->volfm);
 	LOADVOLUMEENTRY("VolumeSSG", 97, cfg->volssg);
 	LOADVOLUMEENTRY("VolumeADPCM", VOLUME_BIAS, cfg->voladpcm);
@@ -148,10 +149,30 @@ void LoadConfig(Config* cfg, const char* inifile, bool applydefault)
 	LoadConfigEntry(inifile, "SoftKbdY", &cfg->softkbdy, 0, applydefault);
 	LoadConfigEntry(inifile, "SoftKbdW", &cfg->softkbdw, 0, applydefault);
 	LoadConfigEntry(inifile, "SoftKbdShow", &cfg->softkbdshow, 0, applydefault);
+	LoadConfigEntry(inifile, "SoftKbdDpi", &cfg->softkbddpi, 0, applydefault);
 	if (LoadConfigEntry(inifile, "DiskVolume", &n, 100, applydefault))
 		cfg->fddvolume = Limit(n, 100, 0);
 	if (LoadConfigEntry(inifile, "TapeSpeed", &n, 1, applydefault))
 		cfg->tapespeed = (n == 2 || n == 4 || n == 8) ? n : 1;
+	// 表示の倍率。無ければ、前の「画面2倍」の設定なら 2、そうでなければ 0 (画面の DPI から決める)
+	if (LoadConfigEntry(inifile, "ScreenScale", &n, 0, false))
+		cfg->screenscale = Limit(n, 4, 1);
+	else if (applydefault)
+		cfg->screenscale = (cfg->flag2 & Config::stretchx2) ? 2 : 0;
+	if (LoadConfigEntry(inifile, "CrtScanline", &n, 0, applydefault))
+		cfg->crtscan = Limit(n, 3, 0);
+	if (LoadConfigEntry(inifile, "CrtMask", &n, 0, applydefault))
+		cfg->crtmask = Limit(n, 3, 0);
+	if (LoadConfigEntry(inifile, "CrtSharpness", &n, 1, applydefault))
+		cfg->crtsharp = Limit(n, 2, 0);
+	if (LoadConfigEntry(inifile, "CrtBrightness", &n, 1, applydefault))
+		cfg->crtbright = Limit(n, 2, 0);
+	if (LoadConfigEntry(inifile, "CrtDirect", &n, 0, applydefault))
+		cfg->crtdirect = n ? 1 : 0;
+	if (LoadConfigEntry(inifile, "CrtMaskPitch", &n, 0, applydefault))
+		cfg->crtpitch = Limit(n, 3, 0);
+	if (LoadConfigEntry(inifile, "CrtGlow", &n, 0, applydefault))
+		cfg->crtglow = Limit(n, 3, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +233,7 @@ void SaveConfig(Config* cfg, const char* inifile, bool writedefault)
 	SaveEntry(inifile, "LPFOrder", cfg->lpforder, writedefault);
 	SaveEntry(inifile, "ROMEOLatency", cfg->romeolatency, writedefault);
 
+	SaveEntry(inifile, "VolumeMaster", cfg->volmaster + VOLUME_BIAS, writedefault);
 	SaveEntry(inifile, "VolumeFM", cfg->volfm + VOLUME_BIAS, writedefault);
 	SaveEntry(inifile, "VolumeSSG", cfg->volssg + VOLUME_BIAS, writedefault);
 	SaveEntry(inifile, "VolumeADPCM", cfg->voladpcm + VOLUME_BIAS, writedefault);
@@ -228,10 +250,20 @@ void SaveConfig(Config* cfg, const char* inifile, bool writedefault)
 	SaveEntry(inifile, "TapeVolume", cfg->tapevolume, writedefault);
 	SaveEntry(inifile, "TapeSpeed", cfg->tapespeed, writedefault);
 	SaveEntry(inifile, "DiskVolume", cfg->fddvolume, writedefault);
+	if (cfg->screenscale > 0)
+		SaveEntry(inifile, "ScreenScale", cfg->screenscale, writedefault);
+	SaveEntry(inifile, "CrtScanline", cfg->crtscan, writedefault);
+	SaveEntry(inifile, "CrtMask", cfg->crtmask, writedefault);
+	SaveEntry(inifile, "CrtSharpness", cfg->crtsharp, writedefault);
+	SaveEntry(inifile, "CrtBrightness", cfg->crtbright, writedefault);
+	SaveEntry(inifile, "CrtGlow", cfg->crtglow, writedefault);
+	SaveEntry(inifile, "CrtMaskPitch", cfg->crtpitch, writedefault);
+	SaveEntry(inifile, "CrtDirect", cfg->crtdirect, writedefault);
 	SaveEntry(inifile, "SoftKbdX", cfg->softkbdx, writedefault);
 	SaveEntry(inifile, "SoftKbdY", cfg->softkbdy, writedefault);
 	SaveEntry(inifile, "SoftKbdW", cfg->softkbdw, writedefault);
 	SaveEntry(inifile, "SoftKbdShow", cfg->softkbdshow, writedefault);
+	SaveEntry(inifile, "SoftKbdDpi", cfg->softkbddpi, writedefault);
 }
 
 }

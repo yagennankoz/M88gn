@@ -8,6 +8,7 @@
 #include "resource.h"
 #include "winmon.h"
 #include "misc.h"
+#include "dpi.h"
 
 // ---------------------------------------------------------------------------
 //	ç\íz/è¡ñ≈
@@ -58,6 +59,7 @@ void WinMonitor::Show(HINSTANCE hinstance, HWND hwndparent, bool show)
 
 			RECT rect = wndrect;
 			hinst = hinstance;
+			Dpi::UnawareScope dpiscope;		// ñ{ëÃÇÃëãÇÃÇŸÇ©ÇÕ DPI îÒëŒâûÇÃÇ‹Ç‹
 			hwnd = CreateDialogParam(hinst, lptemplate, hwndparent, DLGPROC((void*)DlgProcGate), (LPARAM)this);
 			hwndstatus = 0;
 

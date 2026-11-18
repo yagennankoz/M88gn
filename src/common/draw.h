@@ -60,5 +60,6 @@ public:
 	virtual void SetPalette(uint index, uint nents, const Palette* pal) = 0;
 	virtual void Flip() {}
 	virtual bool SetFlipMode(bool) = 0;
+	virtual void SetLines(int lines) {}	// 画面の走査線の数 (200 / 400 ライン。CRT 風のフィルターで使う)
 };
 

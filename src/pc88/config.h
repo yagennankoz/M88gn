@@ -87,6 +87,7 @@ public:
 		usedsnotify		= 1 << 12,
 		saveposition	= 1 << 13,	// 起動時に前回終了時のウインドウ位置を復元
 		stretchx2		= 1 << 14,	// 画面2倍拡大
+		appshortcut		= 1 << 15,	// M88 のショートカット (全画面など) に Alt でなくアプリケーションキーを使う
 	};
 
 	int flags;
@@ -99,6 +100,7 @@ public:
 	int sound;
 	int erambanks;
 	int keytype;
+	int volmaster;			// 全体の音量 (dB。-40 以下で消音)
 	int volfm, volssg, voladpcm, volrhythm;
 	int volbd, volsd, voltop, volhh, voltom, volrim;
 	int dipsw;
@@ -113,8 +115,17 @@ public:
 	int tapevolume;			// テープの再生音の音量 (0～100%)
 	int softkbdx, softkbdy, softkbdw;	// ソフトウェアキーボードの窓の位置と幅 (幅 0 なら既定)
 	int softkbdshow;		// ソフトウェアキーボードを表示する
+	int softkbddpi;			// softkbdx/y/w を書いたときの画面の DPI (0: 1.1.0 までの値 = 96 DPI 換算)
 	int fddvolume;			// フロッピーのドライブの音 (シーク) の音量 (0～100%)
 	int tapespeed;			// テープのロードの速さ (1: 実機どおり、2/4/8: 倍率)
+	int screenscale;		// ウィンドウの表示の倍率 (1～4。0: 決めていない (画面の DPI から決める))
+	int crtscan;			// CRT 風のフィルター: 走査線 (0: なし 1: 弱 2: 中 3: 強)
+	int crtmask;			// CRT 風のフィルター: マスク (0: なし 1: アパーチャグリル 2: シャドウマスク 3: スロットマスク)
+	int crtsharp;			// CRT 風のフィルター: 横のシャープさ (0: Sharp 1: Normal 2: Soft)
+	int crtbright;			// CRT 風のフィルター: 明るさの補正 (0: Low 1: Normal 2: High)
+	int crtdirect;			// CRT 風のフィルターを掛けずに出す (1: Direct。ほかの CRT の設定は残す)
+	int crtpitch;			// CRT 風のフィルター: マスクの間隔 (0: Pixel 1: 0.25mm 2: 0.31mm 3: 0.39mm)
+	int crtglow;			// CRT 風のフィルター: 明るい所の周りの丸いぼけ (0: Off 1: Weak 2: Normal 3: Strong)
 
 	BASICMode basicmode;
 

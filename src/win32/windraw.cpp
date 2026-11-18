@@ -13,11 +13,13 @@
 #include "drawdds.h"
 #include "drawddw.h"
 #include "drawd2d.h"
+#include "drawd3d11.h"
 #include "messages.h"
 #include "error.h"
 #include "status.h"
 #include "loadmon.h"
 #include "winexapi.h"
+#include "dpi.h"
 
 #define LOGNAME "windraw"
 #include "diag.h"
@@ -40,6 +42,11 @@ WinDraw::WinDraw()
 	refresh = false;
 	locked = false;
 	active = false;
+	lines = 400;
+	crtscan = crtmask = 0;
+	crtsharp = crtbright = 1;
+	crtglow = 0;
+	crtpitch = 0;
 
 }
 
@@ -78,7 +85,7 @@ bool WinDraw::Init0(HWND hwindow)
 	palcngbegin = palrgnbegin = 0x100;
 	palcngend = palrgnend = -1;
 
-	bStretchx2 = false;
+	nScale = 1;
 	bFit = false;
 
 	return true;
@@ -137,6 +144,7 @@ uint WinDraw::ThreadMain()
 
 uint __stdcall WinDraw::ThreadEntry(LPVOID arg)
 {
+	Dpi::InitThread();		// 全画面で描く範囲を測るので、本体の窓と同じく DPI 対応にする
 	if (arg)
 		return reinterpret_cast<WinDraw*> (arg)->ThreadMain();
 	else
@@ -306,6 +314,30 @@ void WinDraw::Resize(uint w, uint h)
 }
 
 // ---------------------------------------------------------------------------
+//	走査線の数 (エミュレータが Lock の間に呼ぶ)
+//
+void WinDraw::SetLines(int l)
+{
+	lines = l;
+	if (draw)
+		draw->SetLines(l);
+}
+
+// ---------------------------------------------------------------------------
+//	CRT 風のフィルター (D3D11 で描くときだけ効く)
+//
+void WinDraw::SetCrtFilter(int scan, int mask, int sharp, int bright, int glow, int pitch)
+{
+	CriticalSection::Lock lock(csdraw);
+	crtscan = scan, crtmask = mask, crtsharp = sharp, crtbright = bright, crtglow = glow, crtpitch = pitch;
+	if (draw)
+		draw->SetCrtFilter(scan, mask, sharp, bright, glow, pitch);
+	drawall = true;
+	drawing = true;
+	PaintWindow();
+}
+
+// ---------------------------------------------------------------------------
 //	画面位置を変える
 //
 void WinDraw::WindowMoved(int x, int y)
@@ -317,9 +349,9 @@ void WinDraw::WindowMoved(int x, int y)
 // ---------------------------------------------------------------------------
 //	画面描画ドライバの変更
 //
-bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480, bool stretchx2)
+bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480, int scale)
 {
-	DisplayType type = D2D;
+	DisplayType type = D3D11;		// 使えなければ D2D、それもだめなら GDI
 
 	// 現在窓(M88)が所属するモニタの GUID を取得
 	memset(&gmonitor, 0, sizeof(gmonitor));
@@ -327,8 +359,8 @@ bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480, bool stretchx2)
 	hmonitor = (*MonitorFromWin)(hwnd, MONITOR_DEFAULTTOPRIMARY);
 	(*DDEnumerateEx)(DDEnumCallback, reinterpret_cast<LPVOID>(this), DDENUM_ATTACHEDSECONDARYDEVICES);
 
-	// 2倍拡大選択時でフルスクリーンでないならドライバを強制的に破棄させる
-	if (type != drawtype || bStretchx2 != stretchx2 || bFit != fullscreen)
+	// 倍率・全画面が変わったらドライバを作り直す
+	if (type != drawtype || nScale != scale || bFit != fullscreen)
 	{
 		// 今までのドライバを廃棄
 		if (draw)
@@ -354,11 +386,32 @@ bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480, bool stretchx2)
 		case D2D:
 			newdraw = new WinDrawD2D();
 			break;
+		case D3D11:
+			newdraw = new WinDrawD3D11();
+			break;
 		}
 		
 		bool result = true;
 		
-		if (!newdraw || !newdraw->Init(hwnd, width, height, &gmonitor, fullscreen ? 0 : (stretchx2 ? 2 : 1)))
+		// Direct3D 11 が使えなければ D2D にする
+		if (type == D3D11 && (!newdraw || !newdraw->Init(hwnd, width, height, &gmonitor, fullscreen ? 0 : scale)))
+		{
+			delete newdraw;
+			statusdisplay.Show(120, 3000, "Direct3D 11 を使えないので、Direct2D で描きます");
+			newdraw = new WinDrawD2D(), type = D2D;
+			if (newdraw && !newdraw->Init(hwnd, width, height, &gmonitor, fullscreen ? 0 : scale))
+			{
+				delete newdraw;
+				newdraw = 0;
+			}
+		}
+		else if (type != D3D11 && newdraw && !newdraw->Init(hwnd, width, height, &gmonitor, fullscreen ? 0 : scale))
+		{
+			delete newdraw;
+			newdraw = 0;
+		}
+
+		if (!newdraw)
 		{
 			// 初期化に失敗した場合 GDI ドライバで再挑戦
 			delete newdraw;
@@ -371,7 +424,7 @@ bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480, bool stretchx2)
 			newdraw = new WinDrawGDI(), type = GDI;
 			result = false;
 
-			if (!newdraw || !newdraw->Init(hwnd, width, height, 0, stretchx2 ? 2 : 1))
+			if (!newdraw || !newdraw->Init(hwnd, width, height, 0, scale))
 				newdraw = 0, drawtype = None;
 		}
 		
@@ -379,6 +432,8 @@ bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480, bool stretchx2)
 		{
 			newdraw->SetFlipMode(flipmode);
 			newdraw->SetGUIMode(false);
+			newdraw->SetLines(lines);
+			newdraw->SetCrtFilter(crtscan, crtmask, crtsharp, crtbright, crtglow, crtpitch);
 		}
 		
 		// 新しいドライバを使用可能にする
@@ -397,8 +452,8 @@ bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480, bool stretchx2)
 		if (type == DDFull)		ShowCursor(false);
 		if (drawtype == DDFull)	ShowCursor(true);
 		drawtype = type;
-		bStretchx2 = stretchx2;
-		bFit = fullscreen && type == D2D;
+		nScale = scale;
+		bFit = fullscreen && (type == D2D || type == D3D11);	// 全画面用に作った (戻すときに作り直す)
 
 		refresh = 2;
 		

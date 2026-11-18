@@ -46,6 +46,7 @@ public:
 	bool Init(IOBus* bus, Memory* memory, CRTC* crtc);
 	void IOCALL Reset(uint=0, uint=0);
 	bool UpdatePalette(Draw* draw);
+	bool Is400Line() const { return line400 && !n80mode; }	// 400 ƒ‰ƒCƒ“ (200 ƒ‰ƒCƒ“‚È‚ç 640x400 ‚Ì‹ô”‚Ìs‚¾‚¯‚ªŠG)
 	void UpdateScreen(uint8* image, int bpl, Draw::Region& region, bool refresh);
 	void ApplyConfig(const Config* config);
 	

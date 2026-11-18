@@ -7,6 +7,7 @@
 #include "headers.h"
 #include "ui.h"
 #include "file.h"
+#include "dpi.h"
 
 // ---------------------------------------------------------------------------
 
@@ -41,6 +42,7 @@ int WINAPI WinMain(HINSTANCE hinst, HINSTANCE, LPSTR cmdline, int nwinmode)
 		return -1;
 
 	InitPathInfo();
+	Dpi::Init();				// –{‘Ì‚Ì‘‹‚ğ DPI ‘Î‰‚É‚·‚é (‘‹‚ğì‚é‘O‚É)
 	InitCommonControls();
 		
 	int r = -1;

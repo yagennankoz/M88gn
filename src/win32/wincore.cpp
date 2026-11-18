@@ -165,7 +165,9 @@ bool WinCore::ConnectDevices(WinKeyIF* keyb)
 	if (FAILED(GetOPN2()->Connect(&sound))) return false;
 	if (FAILED(GetBEEP()->Connect(&sound))) return false;
 	if (FAILED(GetTapeManager()->Connect(&sound))) return false;
+	sound.SetNoMaster(GetTapeManager());		// テープの音は全体の音量 (Master) の外
 	if (FAILED(GetFDDSound()->Connect(&sound))) return false;
+	sound.SetNoMaster(GetFDDSound());			// ディスクの音は全体の音量 (Master) の外
 
 	return true;
 }

@@ -9,6 +9,13 @@
 
 //#define LOGNAME "status"
 #include "diag.h"
+#include "dpi.h"
+#include "resource.h"
+#include "messages.h"
+
+#ifndef COLOR_MENUBAR
+#define COLOR_MENUBAR	30		// メニューバーの地の色 (Windows XP 以降)
+#endif
 
 StatusDisplay statusdisplay;
 
@@ -22,6 +29,10 @@ StatusDisplay::StatusDisplay()
 	list = 0;
 	timerid = 0;
 	height = 0;
+	dpi = 96;
+	menumode = false;
+	menufont = 0;
+	menutext[0] = 0;
 	litstat[0] = litstat[1] = litstat[2] = 0;
 	litcurrent[0] = litcurrent[1] = litcurrent[2] = 0;
 	updatemessage = 0;
@@ -61,10 +72,12 @@ bool StatusDisplay::Enable(bool showfd)
 
 		SendMessage(hwnd, SB_GETBORDERS, 0, (LPARAM) &border);
 		
+		// ランプの欄の幅は画面の DPI に合わせる。位置は窓の中の幅から決める (枠の太さは DPI で変わる)
+		dpi = Dpi::GetForWindow(hwndparent);
 		RECT rect;
-		GetWindowRect(hwndparent, &rect);
+		GetClientRect(hwndparent, &rect);
 		int widths[2];
-		widths[0] = (rect.right-rect.left-border.vertical) - 1*((showfd ? 80 : 64)+border.split);
+		widths[0] = (rect.right-rect.left-border.vertical) - 1*(Scale(showfd ? 80 : 64)+border.split);
 		widths[1] = -1;
 		SendMessage(hwnd, SB_SETPARTS, 2, (LPARAM) widths);
 		InvalidateRect(hwndparent, 0, false);
@@ -91,6 +104,11 @@ bool StatusDisplay::Disable()
 void StatusDisplay::Cleanup()
 {
 	Disable();
+	if (menufont)
+	{
+		DeleteObject(menufont);
+		menufont = 0;
+	}
 	if (timerid) {
 		KillTimer(hwndparent, timerid);
 		timerid = 0;
@@ -114,32 +132,137 @@ void StatusDisplay::DrawItem(DRAWITEMSTRUCT* dis)
 		}
 	case 1:
 		{
-			const DWORD color[] =
-			{
-				RGB(64, 0, 0), RGB(255, 0, 0), RGB(0, 64, 0), RGB(0, 255, 0),
-				RGB(0, 32, 64), RGB(0, 128, 255),
-			};
-
-			HBRUSH hbrush1, hbrush2, hbrush3, hbrushold;
-			hbrush1 = CreateSolidBrush(color[litcurrent[1] & 3]);
-			hbrush2 = CreateSolidBrush(color[litcurrent[0] & 3]);
-			hbrush3 = CreateSolidBrush(color[4 | (litcurrent[2] & 1)]);
-			hbrushold = (HBRUSH) SelectObject(dis->hDC, hbrush1);
-			Rectangle(dis->hDC, dis->rcItem.left+6, height/2 - 4, dis->rcItem.left + 24, height/2 + 5);
-			SelectObject(dis->hDC, hbrush2);
-			Rectangle(dis->hDC, dis->rcItem.left+32, height/2 - 4, dis->rcItem.left + 50, height/2 + 5);
-			if (showfdstat)
-			{
-				SelectObject(dis->hDC, hbrush3);
-				Rectangle(dis->hDC, dis->rcItem.left+58, height/2 - 4, dis->rcItem.left + 68, height/2 + 5);
-			}
-			SelectObject(dis->hDC, hbrushold);
-			DeleteObject(hbrush1);
-			DeleteObject(hbrush2);
-			DeleteObject(hbrush3);
+			DrawLamps(dis->hDC, dis->rcItem.left, height/2);
 			break;
 		}
-	}	
+	}
+}
+
+// ---------------------------------------------------------------------------
+//	ランプ (左から FDD 2・FDD 1・FDC) を描く。left: 欄の左、cy: 縦の真ん中
+//
+void StatusDisplay::DrawLamps(HDC hdc, int left, int cy)
+{
+	const DWORD color[] =
+	{
+		RGB(64, 0, 0), RGB(255, 0, 0), RGB(0, 64, 0), RGB(0, 255, 0),
+		RGB(0, 32, 64), RGB(0, 128, 255),
+	};
+
+	HBRUSH hbrush1, hbrush2, hbrush3, hbrushold;
+	hbrush1 = CreateSolidBrush(color[litcurrent[1] & 3]);
+	hbrush2 = CreateSolidBrush(color[litcurrent[0] & 3]);
+	hbrush3 = CreateSolidBrush(color[4 | (litcurrent[2] & 1)]);
+	hbrushold = (HBRUSH) SelectObject(hdc, hbrush1);
+	int y0 = cy - Scale(4), y1 = cy + Scale(5);
+	Rectangle(hdc, left+Scale(6), y0, left + Scale(24), y1);
+	SelectObject(hdc, hbrush2);
+	Rectangle(hdc, left+Scale(32), y0, left + Scale(50), y1);
+	if (showfdstat)
+	{
+		SelectObject(hdc, hbrush3);
+		Rectangle(hdc, left+Scale(58), y0, left + Scale(68), y1);
+	}
+	SelectObject(hdc, hbrushold);
+	DeleteObject(hbrush1);
+	DeleteObject(hbrush2);
+	DeleteObject(hbrush3);
+}
+
+// ---------------------------------------------------------------------------
+//	全画面: メニューバーの右の端に、知らせとランプの項目を足す
+//	(右に寄せた、自分で描く項目。押せないようにしておく)
+//
+bool StatusDisplay::EnableMenu(bool showfd)
+{
+	HMENU hmenu = GetMenu(hwndparent);
+	if (!hmenu)
+		return false;
+	showfdstat = showfd;
+	dpi = Dpi::GetForWindow(hwndparent);
+	if (menufont)
+		DeleteObject(menufont);
+	NONCLIENTMETRICS ncm;
+	memset(&ncm, 0, sizeof(ncm));
+	ncm.cbSize = sizeof(ncm);
+	SystemParametersInfo(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
+	menufont = CreateFontIndirect(&ncm.lfMenuFont);
+	if (!menumode)
+	{
+		AppendMenu(hmenu, MF_OWNERDRAW | MF_RIGHTJUSTIFY | MF_DISABLED, IDM_STATUS_MENU, 0);
+		menumode = true;
+	}
+	DrawMenuBar(hwndparent);
+	return true;
+}
+
+void StatusDisplay::DisableMenu()
+{
+	if (!menumode)
+		return;
+	menumode = false;
+	HMENU hmenu = GetMenu(hwndparent);
+	if (hmenu)
+	{
+		RemoveMenu(hmenu, IDM_STATUS_MENU, MF_BYCOMMAND);
+		DrawMenuBar(hwndparent);
+	}
+}
+
+void StatusDisplay::MeasureMenuItem(MEASUREITEMSTRUCT* mis)
+{
+	// 知らせの欄は、平均の字の幅で 48 字ぶん
+	HDC hdc = GetDC(hwndparent);
+	HGDIOBJ old = SelectObject(hdc, menufont ? (HGDIOBJ) menufont : GetStockObject(DEFAULT_GUI_FONT));
+	TEXTMETRIC tm;
+	GetTextMetrics(hdc, &tm);
+	SelectObject(hdc, old);
+	ReleaseDC(hwndparent, hdc);
+	mis->itemWidth = tm.tmAveCharWidth * 48 + LampWidth();
+	mis->itemHeight = tm.tmHeight;
+}
+
+void StatusDisplay::DrawMenuItem(DRAWITEMSTRUCT* dis)
+{
+	DrawMenuStatus(dis->hDC, dis->rcItem);
+}
+
+void StatusDisplay::DrawMenuStatus(HDC hdc, const RECT& r)
+{
+	char text[128];
+	{
+		CriticalSection::Lock lock(cs);
+		memcpy(text, menutext, sizeof(text));
+	}
+	FillRect(hdc, &r, GetSysColorBrush(COLOR_MENUBAR));
+	int lw = LampWidth();
+	RECT tr = r;
+	tr.right -= lw;
+	HGDIOBJ old = SelectObject(hdc, menufont ? (HGDIOBJ) menufont : GetStockObject(DEFAULT_GUI_FONT));
+	SetBkMode(hdc, TRANSPARENT);
+	SetTextColor(hdc, GetSysColor(COLOR_MENUTEXT));
+	DrawText(hdc, text, -1, &tr, DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_END_ELLIPSIS | DT_NOPREFIX);
+	SelectObject(hdc, old);
+	DrawLamps(hdc, r.right - lw, (r.top + r.bottom) / 2);
+}
+
+// 知らせ・ランプが変わったとき (UI のスレッドから。項目のところだけ描く)
+void StatusDisplay::RedrawMenu()
+{
+	if (!menumode)
+		return;
+	HMENU hmenu = GetMenu(hwndparent);
+	int n = hmenu ? GetMenuItemCount(hmenu) : 0;
+	if (n <= 0 || GetMenuItemID(hmenu, n - 1) != IDM_STATUS_MENU)
+		return;
+	RECT r, wr;
+	if (!GetMenuItemRect(hwndparent, hmenu, n - 1, &r))
+		return;
+	GetWindowRect(hwndparent, &wr);
+	OffsetRect(&r, -wr.left, -wr.top);
+	HDC hdc = GetWindowDC(hwndparent);
+	DrawMenuStatus(hdc, r);
+	ReleaseDC(hwndparent, hdc);
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +304,7 @@ bool StatusDisplay::Show(int priority, int duration, char* msg, ...)
 void StatusDisplay::Update()
 {
 	updatemessage = false;
-	if (hwnd)
+	if (hwnd || menumode)
 	{
 		CriticalSection::Lock lock(cs);
 		// find highest priority (0 == highest)
@@ -198,7 +321,13 @@ void StatusDisplay::Update()
 		{
 			LOG3("show: [%s] p:%5d d:%8d\n", entry->msg, entry->priority, entry->duration);
 			memcpy(buf, entry->msg, 128);
-			PostMessage(hwnd,  SB_SETTEXT, SBT_OWNERDRAW | 0, (LPARAM) buf);
+			if (hwnd)
+				PostMessage(hwnd,  SB_SETTEXT, SBT_OWNERDRAW | 0, (LPARAM) buf);
+			else
+			{
+				memcpy(menutext, entry->msg, 128);
+				PostMessage(hwndparent, WM_M88_STATUSMENU, 0, 0);
+			}
 			
 			if (entry->clear)
 			{
@@ -220,7 +349,13 @@ void StatusDisplay::Update()
 		else
 		{
 			LOG0("clear\n");
-			PostMessage(hwnd, SB_SETTEXT, 0, (LPARAM) " ");
+			if (hwnd)
+				PostMessage(hwnd, SB_SETTEXT, 0, (LPARAM) " ");
+			else
+			{
+				menutext[0] = 0;
+				PostMessage(hwndparent, WM_M88_STATUSMENU, 0, 0);
+			}
 			currentpriority = 10000;
 			if (timerid)
 			{
@@ -284,6 +419,13 @@ void StatusDisplay::UpdateDisplay()
 	{
 		if (update)
 			PostMessage(hwnd,  SB_SETTEXT, SBT_OWNERDRAW | 1, 0);
+		if (updatemessage)
+			Update();
+	}
+	else if (menumode)
+	{
+		if (update)
+			PostMessage(hwndparent, WM_M88_STATUSMENU, 0, 0);
 		if (updatemessage)
 			Update();
 	}

@@ -68,7 +68,6 @@ BEGIN
         MENUITEM "N&80SR mode",                 IDM_N80V2MODE
         MENUITEM SEPARATOR
         MENUITEM "&Burst mode",                 IDM_CPU_BURST
-        MENUITEM "&Full screen\tAlt+Enter",    IDM_TOGGLEDISPLAY
         MENUITEM "&Reset\tF12",                 IDM_RESET
         MENUITEM SEPARATOR
         MENUITEM "E&xit",                       IDM_EXIT
@@ -112,6 +111,59 @@ BEGIN
             MENUITEM "&50%",                        IDM_TAPEVOL_50
             MENUITEM "&75%",                        IDM_TAPEVOL_75
             MENUITEM "&100%",                       IDM_TAPEVOL_100
+        END
+    END
+    POPUP "&Screen"
+    BEGIN
+        MENUITEM "&Full screen\tAlt+Enter",    IDM_TOGGLEDISPLAY
+        POPUP "Window &scale"
+        BEGIN
+            MENUITEM "x&1",                         IDM_SCALE_1
+            MENUITEM "x&2",                         IDM_SCALE_2
+            MENUITEM "x&3",                         IDM_SCALE_3
+            MENUITEM "x&4",                         IDM_SCALE_4
+        END
+        MENUITEM SEPARATOR
+        MENUITEM "&Direct (no filter)",         IDM_CRTDIRECT
+        POPUP "Scan&lines"
+        BEGIN
+            MENUITEM "&Off",                        IDM_CRTSCAN_0
+            MENUITEM "&Weak",                       IDM_CRTSCAN_1
+            MENUITEM "&Medium",                     IDM_CRTSCAN_2
+            MENUITEM "&Strong",                     IDM_CRTSCAN_3
+        END
+        POPUP "&Mask"
+        BEGIN
+            MENUITEM "&None",                       IDM_CRTMASK_0
+            MENUITEM "&Aperture grille",            IDM_CRTMASK_1
+            MENUITEM "S&hadow mask",                IDM_CRTMASK_2
+            MENUITEM "Sl&ot mask",                  IDM_CRTMASK_3
+        END
+        POPUP "Mask &pitch"
+        BEGIN
+            MENUITEM "&Pixel",                      IDM_CRTPITCH_0
+            MENUITEM "0.2&5mm (14"")",               IDM_CRTPITCH_1
+            MENUITEM "0.&31mm (14"")",               IDM_CRTPITCH_2
+            MENUITEM "0.3&9mm (14"")",               IDM_CRTPITCH_3
+        END
+        POPUP "S&harpness"
+        BEGIN
+            MENUITEM "&Sharp",                      IDM_CRTSHARP_0
+            MENUITEM "&Normal",                     IDM_CRTSHARP_1
+            MENUITEM "So&ft",                       IDM_CRTSHARP_2
+        END
+        POPUP "&Brightness"
+        BEGIN
+            MENUITEM "&Low",                        IDM_CRTBRIGHT_0
+            MENUITEM "&Normal",                     IDM_CRTBRIGHT_1
+            MENUITEM "&High",                       IDM_CRTBRIGHT_2
+        END
+        POPUP "&Glow"
+        BEGIN
+            MENUITEM "&Off",                        IDM_CRTGLOW_0
+            MENUITEM "&Weak",                       IDM_CRTGLOW_1
+            MENUITEM "&Normal",                     IDM_CRTGLOW_2
+            MENUITEM "&Strong",                     IDM_CRTGLOW_3
         END
     END
     POPUP "&Tools"
@@ -225,6 +277,13 @@ BEGIN
     VK_INSERT,      IDM_LOGSTART,           VIRTKEY, CONTROL, NOINVERT
     VK_RETURN,      IDM_TOGGLEDISPLAY,      VIRTKEY, ALT, NOINVERT
     VK_F12,         IDM_DBG_STEP,           VIRTKEY, ALT, NOINVERT
+END
+
+// ショートカットにアプリケーションキーを使うとき (Alt の付くものを除く。アプリケーションキーとの組み合わせは WinUI::AppShortcut)
+IDR_ACC_M88UI_NOALT ACCELERATORS 
+BEGIN
+    VK_DELETE,      IDM_LOGEND,             VIRTKEY, CONTROL, NOINVERT
+    VK_INSERT,      IDM_LOGSTART,           VIRTKEY, CONTROL, NOINVERT
 END
 
 
@@ -455,6 +514,8 @@ BEGIN
     CONTROL         "スクリーンショットのファイル名を自動生成(&C)",IDC_FUNCTION_SCREENSHOT_NAME,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,114,165,10
     CONTROL         "スナップショットファイルを圧縮する(&Z)",IDC_FUNCTION_COMPSNAP,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,124,165,10
+    CONTROL         "ショートカットに Alt でなくアプリケーションキーを使う(&A)",IDC_FUNCTION_APPSHORTCUT,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,10,134,195,10
 END
 
 IDD_CONFIG_SOUND DIALOGEX 0, 0, 211, 139
@@ -533,7 +594,7 @@ BEGIN
     PUSHBUTTON      "Default",IDC_DIPSW_DEFAULT,4,127,40,12
 END
 
-IDD_CONFIG_SOUNDVOL DIALOGEX 0, 0, 211, 147
+IDD_CONFIG_SOUNDVOL DIALOGEX 0, 0, 211, 162
 STYLE DS_SETFONT | WS_CHILD | WS_DISABLED | WS_CAPTION
 CAPTION "音量"
 FONT 9, "ＭＳ Ｐゴシック", 0, 0, 0x0
@@ -568,8 +629,11 @@ BEGIN
     LTEXT           "R&im Shot",IDC_STATIC,7,105,30,8
     CONTROL         "Slider2",IDC_SOUND_VOLRIM,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,50,105,115,11
     RTEXT           "0",IDC_SOUND_VOLTXTRIM,165,105,20,8
-    PUSHBUTTON      "Reset Source",IDC_SOUND_RESETVOL,50,123,55,12
-    PUSHBUTTON      "Reset Rhythm",IDC_SOUND_RESETRHYTHM,110,123,55,12
+    LTEXT           "&Master",IDC_STATIC,7,120,30,8
+    CONTROL         "Slider2",IDC_SOUND_VOLMASTER,"msctls_trackbar32",TBS_BOTH | TBS_NOTICKS | WS_GROUP | WS_TABSTOP,50,120,115,11
+    RTEXT           "0",IDC_SOUND_VOLTXTMASTER,165,120,20,8
+    PUSHBUTTON      "Reset Source",IDC_SOUND_RESETVOL,50,138,55,12
+    PUSHBUTTON      "Reset Rhythm",IDC_SOUND_RESETRHYTHM,110,138,55,12
 END
 
 IDD_CONFIG_ENV DIALOGEX 0, 0, 210, 140

@@ -13,6 +13,7 @@
 #define IDR_ACCELERATOR1                107
 #define IDD_CONFIG_CPU                  107
 #define IDR_ACC_M88UI                   107
+#define IDR_ACC_M88UI_NOALT             140
 #define IDD_ABOUT                       111
 #define IDR_TOOLBAR1                    115
 #define IDD_SELECTDISK                  117
@@ -155,6 +156,9 @@
 #define IDC_SOUND_WAVEOUT               1120
 #define IDC_SOUND_FMFREQ                1121
 #define IDC_FUNCTION_COMPSNAP           1122
+#define IDC_SOUND_VOLMASTER             1138
+#define IDC_SOUND_VOLTXTMASTER          1139
+#define IDC_FUNCTION_APPSHORTCUT        1137
 #define IDC_SCREEN_VSYNC                1123
 #define IDC_ENV_PLACESBAR               1124
 #define IDC_SOUND_LPF                   1125
@@ -280,6 +284,34 @@
 #define IDM_DISKVOL_75                  40251
 #define IDM_DISKVOL_100                 40252
 #define IDM_SOFTKBD                     40253
+#define IDM_SCALE_1                     40254
+#define IDM_SCALE_2                     40255
+#define IDM_SCALE_3                     40256
+#define IDM_STATUS_MENU                 40257
+#define IDM_CRTSCAN_0                   40258
+#define IDM_CRTSCAN_1                   40259
+#define IDM_CRTSCAN_2                   40260
+#define IDM_CRTSCAN_3                   40261
+#define IDM_CRTMASK_0                   40262
+#define IDM_CRTMASK_1                   40263
+#define IDM_CRTMASK_2                   40264
+#define IDM_CRTMASK_3                   40265
+#define IDM_CRTPITCH_0                  40279
+#define IDM_CRTPITCH_1                  40280
+#define IDM_CRTPITCH_2                  40281
+#define IDM_CRTPITCH_3                  40282
+#define IDM_CRTDIRECT                   40283
+#define IDM_SCALE_4                     40266
+#define IDM_CRTSHARP_0                  40267
+#define IDM_CRTSHARP_1                  40268
+#define IDM_CRTSHARP_2                  40269
+#define IDM_CRTBRIGHT_0                 40270
+#define IDM_CRTBRIGHT_1                 40271
+#define IDM_CRTBRIGHT_2                 40272
+#define IDM_CRTGLOW_0                   40274
+#define IDM_CRTGLOW_1                   40275
+#define IDM_CRTGLOW_2                   40276
+#define IDM_CRTGLOW_3                   40277
 #define IDM_DBG_RUN                     40240
 #define IDM_DBG_STEP                    40241
 
@@ -287,9 +319,9 @@
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        140
-#define _APS_NEXT_COMMAND_VALUE         40254
-#define _APS_NEXT_CONTROL_VALUE         1136
+#define _APS_NEXT_RESOURCE_VALUE        141
+#define _APS_NEXT_COMMAND_VALUE         40284
+#define _APS_NEXT_CONTROL_VALUE         1140
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

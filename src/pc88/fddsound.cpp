@@ -8,6 +8,7 @@
 #include "misc.h"
 #include <math.h>
 #include "fddclick.h"
+#include "fddmech.h"
 
 using namespace PC8801;
 
@@ -18,6 +19,9 @@ FDDSound::FDDSound()
 	amp = maxamp;
 	clicks = 0;
 	clicklen = 0;
+	mech[0] = mech[1] = 0;
+	mechlen[0] = mechlen[1] = 0;
+	mechend = 0;
 	stepsamples = 0;
 	nvoice = 0;
 	pending = -1;
@@ -29,6 +33,8 @@ FDDSound::~FDDSound()
 {
 	// つなぎは外さない (FDC を消すのは PC88 の後始末で、そのときには WinCore の音はもう無い)
 	delete[] clicks;
+	delete[] mech[0];
+	delete[] mech[1];
 }
 
 bool IFCALL FDDSound::Connect(ISoundControl* sc)
@@ -47,9 +53,16 @@ bool IFCALL FDDSound::SetRate(uint r)
 	CriticalSection::Lock lock(cs);
 	nvoice = 0;
 	pending = -1;
+	mechend = 0;
 	delete[] clicks;
 	clicks = 0;
 	clicklen = 0;
+	for (int k = 0; k < 2; k++)
+	{
+		delete[] mech[k];
+		mech[k] = 0;
+		mechlen[k] = 0;
+	}
 	rate = r;
 	if (!rate)
 		return true;
@@ -66,7 +79,44 @@ bool IFCALL FDDSound::SetRate(uint r)
 		}
 	}
 	stepsamples = Max(1, int(rate * stepms / 1000));
+	mech[0] = Convert(fddinsert, sizeof(fddinsert) / sizeof(int16), fddmechrate, rate, &mechlen[0]);
+	mech[1] = Convert(fddeject, sizeof(fddeject) / sizeof(int16), fddmechrate, rate, &mechlen[1]);
 	return true;
+}
+
+// ---------------------------------------------------------------------------
+//	録音した音を合成のレートに直線で補間して変換する
+//
+int16* FDDSound::Convert(const int16* src, int srclen, int srcrate, uint rate, int* len)
+{
+	int n = int(double(srclen - 1) * rate / srcrate);
+	int16* dst = new int16[n];
+	for (int i = 0; i < n; i++)
+	{
+		double p = double(i) * srcrate / rate;
+		int k = int(p);
+		double f = p - k;
+		dst[i] = int16(src[k] * (1 - f) + src[k + 1] * f);
+	}
+	*len = n;
+	return dst;
+}
+
+// ---------------------------------------------------------------------------
+//	ディスクを入れた / 取り出した。前の出し入れの音が鳴っていれば、終わって mechgap 後に鳴らす
+//
+void FDDSound::Mech(bool insert)
+{
+	CriticalSection::Lock lock(cs);
+	int k = insert ? 0 : 1;
+	if (!mech[k] || nvoice >= maxvoice)
+		return;
+	int at = mechend > 0 ? mechend + int(rate * mechgap / 1000) : 0;
+	voice[nvoice].src = mech[k];
+	voice[nvoice].len = mechlen[k];
+	voice[nvoice].pos = -at;
+	nvoice++;
+	mechend = at + mechlen[k];
 }
 
 // ---------------------------------------------------------------------------
@@ -109,7 +159,8 @@ void FDDSound::Step(int steps)
 		int at = start + i * stepsamples;
 		if (at > maxpending * stepsamples)
 			break;
-		voice[nvoice].wave = NextWave();
+		voice[nvoice].src = clicks + NextWave() * clicklen;
+		voice[nvoice].len = clicklen;
 		voice[nvoice].pos = -at;
 		nvoice++;
 		pending = at;
@@ -125,26 +176,28 @@ void IFCALL FDDSound::Mix(int32* dest, int nsamples)
 	if (!nvoice || !clicks)
 	{
 		pending = -1;
+		mechend = 0;
 		return;
 	}
 	int a = amp;
 	for (int v = 0; v < nvoice; )
 	{
 		Voice& vc = voice[v];
-		const int16* src = clicks + vc.wave * clicklen;
+		const int16* src = vc.src;
+		int len = vc.len;
 		int i = 0;
 		if (vc.pos < 0)
 			i = Min(-vc.pos, nsamples);			// まだ鳴らさない分
 		int p = vc.pos + i;
 		int32* d = dest + i * 2;
-		for (; i < nsamples && p < clicklen; i++, p++, d += 2)
+		for (; i < nsamples && p < len; i++, p++, d += 2)
 		{
 			int s = (src[p] * a) >> 10;
 			d[0] += s;
 			d[1] += s;
 		}
 		vc.pos += nsamples;
-		if (vc.pos >= clicklen)
+		if (vc.pos >= len)
 			voice[v] = voice[--nvoice];			// 鳴り終わった
 		else
 			v++;
@@ -155,4 +208,5 @@ void IFCALL FDDSound::Mix(int32* dest, int nsamples)
 		if (pending < 0)
 			pending = -1;
 	}
+	mechend = Max(0, mechend - nsamples);
 }

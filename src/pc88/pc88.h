@@ -110,6 +110,7 @@ public:
 	PC8801::Beep*	GetBEEP() { return beep; }
 	TapeManager*	GetTapeManager() { return tapemgr; }
 	ISoundSource*	GetFDDSound();
+	void			FDDMechSound(bool insert);		// ディスクを入れる / 取り出す音
 
 	bool SaveShapshot(const char* filename);
 	bool LoadShapshot(const char* filename);

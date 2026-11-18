@@ -151,7 +151,8 @@ bool WinDrawD2D::Resize( uint _width, uint _height )
 			);
 
 		D2D1_RENDER_TARGET_PROPERTIES RTProps = D2D1::RenderTargetProperties();
-		m_D2DFact->GetDesktopDpi( &RTProps.dpiX, &RTProps.dpiY );
+		// 1 ピクセル = 1 DIP にする (本体の窓は DPI 対応なので、画面の DPI を使うと絵が拡大されてずれる)
+		RTProps.dpiX = RTProps.dpiY = 96.0f;
 		RTProps.usage =  D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE;
 
 		// Create a GDI compatible Hwnd render target.

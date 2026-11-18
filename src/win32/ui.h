@@ -61,6 +61,7 @@ private:
 	void Reset();
 
 	void ApplyConfig();
+	void SetCrtFilter();
 	void ApplyCommandLine(const char* cmdline);
 
 	void ToggleDisplayMode();
@@ -69,6 +70,7 @@ private:
 	void ChangeDiskImage(HWND hwnd, int drive);
 	bool OpenDiskImage(int drive, const char* filename, bool readonly, int id, bool create);
 	void OpenDiskImage(const char* filename);
+	bool DiskMounted(int drive);
 	bool SelectDisk(uint drive, int id, bool menuonly);
 	bool CreateDiskMenu(uint drive);
 
@@ -79,6 +81,7 @@ private:
 
 	void ShowStatusWindow();
 	void ResizeWindow(uint width, uint height);
+	void SetScaleFlag();
 	void SetGUIFlag(bool);
 
 	void SaveSnapshot(int n);
@@ -98,6 +101,10 @@ private:
 	HWND hwnd;
 	HINSTANCE hinst;
 	HACCEL accel;
+	HACCEL accelnoalt;			// ショートカットにアプリケーションキーを使うときの表
+	uint appswallow;			// アプリケーションキーのショートカットに使ったキー (離したのも PC-8801 に渡さない)
+	bool AppShortcut(const MSG& msg);
+	void SetShortcutLabels(HMENU hmenu);
 	HMENU hmenudbg;
 
 	// 状態表示用
@@ -114,6 +121,11 @@ private:
 	POINT point;
 	int clipmode;
 	bool guimodebymouse;
+	bool cursorhidden;		// 全画面でマウスが止まっていたので、カーソルを消している
+	POINT cursorpos;		// カーソルが動いたかを見るための前の位置
+	enum { cursortimer = 10, cursorhidems = 3000 };
+	void RestartCursorTimer();
+	bool CursorOnScreen();
 	
 	// disk
 	DiskInfo diskinfo[2];
@@ -122,6 +134,7 @@ private:
 	// 画面の上に数秒出す知らせ (テープのセーブが記録されないときなど)
 	HWND hoverlay;
 	HFONT overlayfont;
+	UINT overlaydpi;			// overlayfont を作ったときの DPI
 	HBRUSH overlaybrush;
 	
 	// snapshot 関係
@@ -177,7 +190,10 @@ private:
 	LRESULT WmPaint(HWND, WPARAM, LPARAM);
 	LRESULT WmCommand(HWND, WPARAM, LPARAM);
 	LRESULT WmSize(HWND, WPARAM, LPARAM);
+	LRESULT WmDpiChanged(HWND, WPARAM, LPARAM);
 	LRESULT WmDrawItem(HWND, WPARAM, LPARAM);
+	LRESULT WmMeasureItem(HWND, WPARAM, LPARAM);
+	LRESULT M88StatusMenu(HWND, WPARAM, LPARAM);
 	LRESULT WmEnterMenuLoop(HWND, WPARAM, LPARAM);
 	LRESULT WmExitMenuLoop(HWND, WPARAM, LPARAM);
 	LRESULT WmLButtonDown(HWND, WPARAM, LPARAM);

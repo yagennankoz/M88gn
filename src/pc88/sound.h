@@ -32,6 +32,8 @@ public:
 	void Cleanup();	
 	
 	void ApplyConfig(const Config* config);
+	void SetMasterVolume(int db);			// 全体の音量 (dB。-40 以下で消音)
+	void SetNoMaster(ISoundSource* src);	// この音源には全体の音量を掛けない (つないだ後に呼ぶ)
 	bool SetRate(uint rate, int bufsize);
 
 	void IOCALL UpdateCounter(uint);
@@ -63,6 +65,7 @@ private:
 	{
 		ISoundSource* ss;
 		SSNode* next;
+		bool nomaster;		// 全体の音量を掛けない
 	};
 
 //	SoundBuffer2 soundbuf;
@@ -77,6 +80,8 @@ private:
 	uint32 cfgflg;
 	int tdiff;
 	uint mixthreshold;
+	void MixAll(int32* dest, int nsamples);
+	int mastergain;						// 全体の音量 (4096 = 0dB)
 
 	bool enabled;
 	

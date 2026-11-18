@@ -8,6 +8,7 @@
 #include "sequence.h"
 #include "pc88/pc88.h"
 #include "misc.h"
+#include "dpi.h"
 
 #define LOGNAME "sequence"
 #include "diag.h"
@@ -98,6 +99,7 @@ uint Sequencer::ThreadMain()
 //
 uint CALLBACK Sequencer::ThreadEntry(void* arg)
 {
+	Dpi::InitThread();		// –{‘Ì‚Ì‘‹‚ÉG‚é‚±‚Æ‚ª‚ ‚é‚Ì‚ÅA–{‘Ì‚Ì‘‹‚Æ“¯‚¶‚­ DPI ‘Î‰‚É‚·‚é
 	return reinterpret_cast<Sequencer*>(arg)->ThreadMain();
 }
 

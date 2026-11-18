@@ -11,6 +11,11 @@
 #include <mbstring.h>
 #include "resource.h"
 #include "ui.h"
+#include "dpi.h"
+
+#ifndef WM_DPICHANGED
+#define WM_DPICHANGED	0x02e0
+#endif
 #include "about.h"
 #include "misc.h"
 #include "file.h"
@@ -64,6 +69,7 @@ WinUI::WinUI(HINSTANCE hinstance)
 	clipmode = 0;
 	hoverlay = 0;
 	overlayfont = 0;
+	overlaydpi = 0;
 	overlaybrush = 0;
 	background = false;
 	mousebutton = 0;
@@ -91,6 +97,10 @@ bool WinUI::InitM88(const char* cmdline)
 	//	設定読み込み
 	LOG1("%d\tLoadConfig\n", timeGetTime());
 	PC8801::LoadConfig(&config, m88ini, true);
+	// 表示の倍率が決まっていなければ、画面の DPI から決める (表示スケール 150% → 2 倍)
+	if (config.screenscale <= 0)
+		config.screenscale = Limit(int(Dpi::GetForWindow(hwnd) + 48) / 96, 4, 1);
+	SetScaleFlag();
 
 	// ステータスバー初期化
 	statusdisplay.Init(hwnd);
@@ -163,6 +173,14 @@ bool WinUI::InitM88(const char* cmdline)
 	ApplyCommandLine(cmdline);
 	LOG1("%d\tapply config\n", timeGetTime());
 	ApplyConfig();
+	// 1.1.0 までの M88.ini の値は、DPI 非対応の窓の値 (96 DPI 換算)。今の画面の DPI に直す
+	if (config.softkbdw > 0 && config.softkbddpi == 0 && Dpi::IsAware())
+	{
+		int d = Dpi::GetForWindow(hwnd);
+		config.softkbdx = MulDiv(config.softkbdx, d, 96);
+		config.softkbdy = MulDiv(config.softkbdy, d, 96);
+		config.softkbdw = MulDiv(config.softkbdw, d, 96);
+	}
 	softkbd.SetPlacement(config.softkbdx, config.softkbdy, config.softkbdw);
 	if (config.softkbdshow)
 		softkbd.Show(true);
@@ -187,6 +205,7 @@ bool WinUI::InitM88(const char* cmdline)
 void WinUI::CleanupM88()
 {
 	softkbd.GetPlacement(&config.softkbdx, &config.softkbdy, &config.softkbdw);
+	config.softkbddpi = Dpi::IsAware() ? Dpi::GetForWindow(hwnd) : 0;	// 値は物理ピクセル
 	config.softkbdshow = softkbd.IsShown();
 	PC8801::Config cfg = config;
 	PC8801::SaveConfig(&cfg, m88ini, true);
@@ -217,6 +236,8 @@ bool WinUI::InitWindow(int nwinmode)
 	wcl.lpszMenuName = MAKEINTRESOURCE(IDR_MENU_M88);
 
 	accel = LoadAccelerators(hinst, MAKEINTRESOURCE(IDR_ACC_M88UI));
+	accelnoalt = LoadAccelerators(hinst, MAKEINTRESOURCE(IDR_ACC_M88UI_NOALT));
+	appswallow = 0;
 
 	if (!RegisterClass(&wcl)) 
 		return false;
@@ -245,6 +266,8 @@ bool WinUI::InitWindow(int nwinmode)
 
 	clipmode = 0;
 	guimodebymouse = false;
+	cursorhidden = false;
+	cursorpos.x = cursorpos.y = -1;
 
 	return true;
 }
@@ -312,7 +335,10 @@ int WinUI::Main(const char* cmdline)
 			continue;
 		}
 
-		if (!TranslateAccelerator(msg.hwnd, accel, &msg))
+		// ショートカット: Alt (Windows のアクセラレーター) か、アプリケーションキー (AppShortcut)
+		if (AppShortcut(msg))
+			continue;
+		if (!TranslateAccelerator(msg.hwnd, (config.flag2 & Config::appshortcut) ? accelnoalt : accel, &msg))
 		{
 			if ((msg.message == WM_SYSKEYDOWN || msg.message == WM_SYSKEYUP)
 				&& !(config.flags & Config::suppressmenu))
@@ -357,8 +383,10 @@ LRESULT WinUI::WinProc(HWND hwnd, UINT umsg, WPARAM wp, LPARAM lp)
 	PROC_MSG(WM_SYSKEYUP,			WmSysKeyUp);
 	PROC_MSG(WM_SYSKEYDOWN,			WmSysKeyDown);
 	PROC_MSG(WM_SIZE,				WmSize);
+	PROC_MSG(WM_DPICHANGED,			WmDpiChanged);
 	PROC_MSG(WM_MOVE,				WmMove);
 	PROC_MSG(WM_DRAWITEM,			WmDrawItem);
+	PROC_MSG(WM_MEASUREITEM,		WmMeasureItem);
 	PROC_MSG(WM_ENTERMENULOOP,		WmEnterMenuLoop);
 	PROC_MSG(WM_EXITMENULOOP,		WmExitMenuLoop);
 	PROC_MSG(WM_DISPLAYCHANGE,		WmDisplayChange);
@@ -375,6 +403,7 @@ LRESULT WinUI::WinProc(HWND hwnd, UINT umsg, WPARAM wp, LPARAM lp)
 	PROC_MSG(WM_M88_CHANGEVOLUME,	M88ChangeVolume);
 	PROC_MSG(WM_M88_CLIPCURSOR,		M88ClipCursor);
 	PROC_MSG(WM_M88_TAPERECORD,		M88TapeNotify);
+	PROC_MSG(WM_M88_STATUSMENU,		M88StatusMenu);
 	case WM_CTLCOLORSTATIC:
 		// 知らせの色 (黄色の地に黒い字)
 		if (hoverlay && (HWND) lp == hoverlay)
@@ -598,6 +627,8 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		break;
 
 	case IDM_BOTHDRIVE:
+		if (DiskMounted(1))
+			core.FDDMechSound(false);
 		diskmgr->Unmount(1);
 		OpenDiskImage(1, 0, 0, 0, false);
 		ChangeDiskImage(hwnd, 0);
@@ -616,6 +647,67 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 
 	case IDM_TOGGLEDISPLAY:
 		ToggleDisplayMode();
+		break;
+
+	case IDM_SCALE_1:
+	case IDM_SCALE_2:
+	case IDM_SCALE_3:
+	case IDM_SCALE_4:
+		config.screenscale = (wid == IDM_SCALE_4) ? 4 : wid - IDM_SCALE_1 + 1;	// x4 は番号が続いていない
+		SetScaleFlag();
+		if (!fullscreen)
+			ChangeDisplayType(true);	// 全画面のときは、ウィンドウに戻ったときに効く
+		break;
+
+	case IDM_CRTSCAN_0:
+	case IDM_CRTSCAN_1:
+	case IDM_CRTSCAN_2:
+	case IDM_CRTSCAN_3:
+		config.crtscan = wid - IDM_CRTSCAN_0;
+		SetCrtFilter();
+		break;
+
+	case IDM_CRTSHARP_0:
+	case IDM_CRTSHARP_1:
+	case IDM_CRTSHARP_2:
+		config.crtsharp = wid - IDM_CRTSHARP_0;
+		SetCrtFilter();
+		break;
+
+	case IDM_CRTGLOW_0:
+	case IDM_CRTGLOW_1:
+	case IDM_CRTGLOW_2:
+	case IDM_CRTGLOW_3:
+		config.crtglow = wid - IDM_CRTGLOW_0;
+		SetCrtFilter();
+		break;
+
+	case IDM_CRTBRIGHT_0:
+	case IDM_CRTBRIGHT_1:
+	case IDM_CRTBRIGHT_2:
+		config.crtbright = wid - IDM_CRTBRIGHT_0;
+		SetCrtFilter();
+		break;
+
+	case IDM_CRTMASK_0:
+	case IDM_CRTMASK_1:
+	case IDM_CRTMASK_2:
+	case IDM_CRTMASK_3:
+		config.crtmask = wid - IDM_CRTMASK_0;
+		SetCrtFilter();
+		break;
+
+	case IDM_CRTDIRECT:
+		config.crtdirect = !config.crtdirect;
+		SetCrtFilter();
+		break;
+
+	case IDM_CRTPITCH_0:
+	case IDM_CRTPITCH_1:
+	case IDM_CRTPITCH_2:
+	case IDM_CRTPITCH_3:
+		config.crtpitch = wid - IDM_CRTPITCH_0;
+		SetCrtFilter();
 		break;
 
 	case IDM_CAPTURE:
@@ -854,7 +946,7 @@ LRESULT WinUI::WmCreate(HWND hwnd, WPARAM wparam, LPARAM lparam)
 	rect.left = 0;	rect.right =  640;
 	rect.top  = 0;  rect.bottom = 400;
 	
-	AdjustWindowRectEx(&rect, wstyle, TRUE, 0);
+	Dpi::AdjustWindowRect(&rect, wstyle, true, 0, hwnd);
 	SetWindowPos(hwnd, 0, 0, 0, rect.right-rect.left, rect.bottom-rect.top,
 				 SWP_NOMOVE | SWP_NOZORDER);
 	
@@ -983,6 +1075,21 @@ LRESULT WinUI::WmTimer(HWND hwnd, WPARAM wparam, LPARAM lparam)
 			ShowWindow(hoverlay, SW_HIDE);
 		return 0;
 	}
+	if (wparam == cursortimer)
+	{
+		// 全画面でマウスが止まっていたらカーソルを消す (画面の上にあるときだけ。メニューを開いている間は消さない)
+		KillTimer(hwnd, cursortimer);
+		GUITHREADINFO gi;
+		memset(&gi, 0, sizeof(gi));
+		gi.cbSize = sizeof(gi);
+		bool inmenu = GetGUIThreadInfo(GetCurrentThreadId(), &gi) && (gi.flags & GUI_INMENUMODE);
+		if (fullscreen && !inmenu && CursorOnScreen())
+		{
+			cursorhidden = true;
+			SetCursor(0);
+		}
+		return 0;
+	}
 	if (wparam == statusdisplay.GetTimerID())
 	{
 		statusdisplay.Update();
@@ -998,6 +1105,7 @@ LRESULT WinUI::WmTimer(HWND hwnd, WPARAM wparam, LPARAM lparam)
 LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 {
 	HMENU hmenu = (HMENU) wp;
+	SetShortcutLabels(hmenu);
 #ifndef DEBUG_MONITOR
 	EnableMenuItem(hmenu, IDM_LOGSTART, MF_GRAYED);
 	EnableMenuItem(hmenu, IDM_LOGEND, MF_GRAYED);
@@ -1018,6 +1126,55 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 
 	CheckMenuItem(hmenu, IDM_CPU_BURST, (config.flags & Config::cpuburst) ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_TOGGLEDISPLAY, fullscreen ? MF_CHECKED : MF_UNCHECKED);
+	static const UINT scaleid[4] = { IDM_SCALE_1, IDM_SCALE_2, IDM_SCALE_3, IDM_SCALE_4 };
+	for (int s = 0; s < 4; s++)
+		CheckMenuItem(hmenu, scaleid[s], (config.screenscale == s + 1) ? MF_CHECKED : MF_UNCHECKED);
+	// CRT 風のフィルターは Direct3D 11 で描くときだけ。Direct (フィルター無し) のときは各項目を灰色にする (値は残す)
+	CheckMenuItem(hmenu, IDM_CRTDIRECT, config.crtdirect ? MF_CHECKED : MF_UNCHECKED);
+	EnableMenuItem(hmenu, IDM_CRTDIRECT, draw.CanCrtFilter() ? MF_ENABLED : MF_GRAYED);
+	{
+		// Scanlines・Mask などのサブメニューそのものを灰色にする
+		// (メニューバーの各メニューの中で、最初の項目が CRT の項目のサブメニューを探す)
+		static const UINT crtfirst[6] = { IDM_CRTSCAN_0, IDM_CRTMASK_0, IDM_CRTPITCH_0, IDM_CRTSHARP_0, IDM_CRTBRIGHT_0, IDM_CRTGLOW_0 };
+		UINT en = (draw.CanCrtFilter() && !config.crtdirect) ? MF_ENABLED : MF_GRAYED;
+		int nbar = GetMenuItemCount(hmenu);
+		for (int b = 0; b < nbar; b++)
+		{
+			HMENU pop = GetSubMenu(hmenu, b);
+			if (!pop)
+				continue;
+			int nitem = GetMenuItemCount(pop);
+			for (int i = 0; i < nitem; i++)
+			{
+				HMENU sub = GetSubMenu(pop, i);
+				if (!sub)
+					continue;
+				UINT first = GetMenuItemID(sub, 0);
+				for (int k = 0; k < 6; k++)
+					if (first == crtfirst[k])
+						EnableMenuItem(pop, i, MF_BYPOSITION | en);
+			}
+		}
+	}
+	for (int c = 0; c < 4; c++)
+	{
+		UINT en = (draw.CanCrtFilter() && !config.crtdirect) ? MF_ENABLED : MF_GRAYED;
+		CheckMenuItem(hmenu, IDM_CRTSCAN_0 + c, (config.crtscan == c) ? MF_CHECKED : MF_UNCHECKED);
+		CheckMenuItem(hmenu, IDM_CRTMASK_0 + c, (config.crtmask == c) ? MF_CHECKED : MF_UNCHECKED);
+		EnableMenuItem(hmenu, IDM_CRTSCAN_0 + c, en);
+		EnableMenuItem(hmenu, IDM_CRTMASK_0 + c, en);
+		CheckMenuItem(hmenu, IDM_CRTPITCH_0 + c, (config.crtpitch == c) ? MF_CHECKED : MF_UNCHECKED);
+		EnableMenuItem(hmenu, IDM_CRTPITCH_0 + c, en);
+		CheckMenuItem(hmenu, IDM_CRTGLOW_0 + c, (config.crtglow == c) ? MF_CHECKED : MF_UNCHECKED);
+		EnableMenuItem(hmenu, IDM_CRTGLOW_0 + c, en);
+		if (c < 3)
+		{
+			CheckMenuItem(hmenu, IDM_CRTSHARP_0 + c, (config.crtsharp == c) ? MF_CHECKED : MF_UNCHECKED);
+			EnableMenuItem(hmenu, IDM_CRTSHARP_0 + c, en);
+			CheckMenuItem(hmenu, IDM_CRTBRIGHT_0 + c, (config.crtbright == c) ? MF_CHECKED : MF_UNCHECKED);
+			EnableMenuItem(hmenu, IDM_CRTBRIGHT_0 + c, en);
+		}
+	}
 	CheckMenuItem(hmenu, IDM_TAPESPEED_1, (config.tapespeed == 1) ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_TAPESPEED_2, (config.tapespeed == 2) ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_TAPESPEED_4, (config.tapespeed == 4) ? MF_CHECKED : MF_UNCHECKED);
@@ -1105,12 +1262,13 @@ LRESULT WinUI::M88ApplyConfig(HWND, WPARAM newconfig, LPARAM)
 		{
 			// ウィンドウモードの二倍拡大が変更された時だけ
 			// ディスプレイモードの変更を呼びたい
-			bool changedisplay = false;
-			if ((config.flag2 ^ ((PC8801::Config*)newconfig)->flag2) & PC8801::Config::stretchx2) {
-				if (!fullscreen) changedisplay = true;
-			}
+			// 「画面2倍」は表示の倍率 (Control → Window scale) の 1 / 2 と同じ。変えなければ今の倍率のまま
+			bool stretchchanged = ((config.flag2 ^ ((PC8801::Config*)newconfig)->flag2) & PC8801::Config::stretchx2) != 0;
+			bool changedisplay = stretchchanged && !fullscreen;
+			int scale = config.screenscale;
 
 			config = *((PC8801::Config*)newconfig);
+			config.screenscale = stretchchanged ? ((config.flag2 & PC8801::Config::stretchx2) ? 2 : 1) : scale;
 			ApplyConfig();
 
 			// ディスプレイモード変更要求
@@ -1118,6 +1276,17 @@ LRESULT WinUI::M88ApplyConfig(HWND, WPARAM newconfig, LPARAM)
 		}
 	}
 	return 0;
+}
+
+// ---------------------------------------------------------------------------
+//	CRT 風のフィルターの設定を描画に渡す
+//
+void WinUI::SetCrtFilter()
+{
+	if (config.crtdirect)
+		draw.SetCrtFilter(0, 0, config.crtsharp, config.crtbright, 0, config.crtpitch);	// 走査線・マスク・ぼけが無ければ、フィルター無し (最近傍)
+	else
+		draw.SetCrtFilter(config.crtscan, config.crtmask, config.crtsharp, config.crtbright, config.crtglow, config.crtpitch);
 }
 
 // ---------------------------------------------------------------------------
@@ -1136,6 +1305,7 @@ void WinUI::ApplyConfig()
 	core.ApplyConfig(&config);
 	keyif.ApplyConfig(&config);
 	draw.SetPriorityLow((config.flags & Config::drawprioritylow) != 0);
+	SetCrtFilter();
 
 	MENUITEMINFO mii;
 	memset(&mii, 0, sizeof(mii));
@@ -1201,6 +1371,8 @@ void WinUI::ChangeDiskImage(HWND hwnd, int drive)
 	
 	SetGUIFlag(true);
 	
+	bool was = DiskMounted(drive);
+	bool was1 = DiskMounted(1);
 	if (!diskmgr->Unmount(drive))
 	{
 		MessageBox(hwnd, 
@@ -1208,11 +1380,13 @@ void WinUI::ChangeDiskImage(HWND hwnd, int drive)
 			"M88",
 			MB_ICONERROR | MB_OK);
 	}
+	if (was)
+		core.FDDMechSound(false);			// 取り出す音
 
 	OFNV5 ofn;
 	memset(&ofn, 0, sizeof(ofn));
 	ofn.lStructSize = WINVAR(OFNSIZE);
-	ofn.FlagsEx = config.flag2 & Config::showplacesbar ? 0 : OFN_EX_NOPLACESBAR;
+	ofn.FlagsEx = 0;		// 位置バーを消す指定 (OFN_EX_NOPLACESBAR) を付けると、Windows が古い形のダイアログを出す (DPI 対応の窓ではツールバーのアイコンが小さい)
 
 	char filename[MAX_PATH];
 	filename[0] = 0;
@@ -1271,9 +1445,13 @@ void WinUI::ChangeDiskImage(HWND hwnd, int drive)
 			if (newdisk.DoFormat())
 				diskmgr->FormatDisk(drive);
 		}
+		if (DiskMounted(drive))
+			core.FDDMechSound(true);		// 入れる音
 		if (drive == 0 && !diskinfo[1].filename[0] && diskmgr->GetNumDisks(0) > 1)
 		{
 			OpenDiskImage(1, filename, ofn.Flags & OFN_READONLY, 1, false);
+			if (!was1 && DiskMounted(1))
+				core.FDDMechSound(true);	// 2 枚目を入れる音
 		}
 	}
 	else
@@ -1300,6 +1478,15 @@ void WinUI::OpenDiskImage(const char* path)
 		diskmgr->Unmount(1);
 		OpenDiskImage(1, 0, 0, 0, false);
 	}
+}
+
+// ---------------------------------------------------------------------------
+//	ドライブにディスクが入っているか
+//
+bool WinUI::DiskMounted(int drive)
+{
+	PC8801::FDU* fdu = diskmgr->GetFDU(drive);
+	return fdu && fdu->IsMounted();
 }
 
 // ---------------------------------------------------------------------------
@@ -1358,7 +1545,14 @@ bool WinUI::SelectDisk(uint drive, int id, bool menuonly)
 	
 	bool result = true;
 	if (!menuonly)
+	{
+		// ディスクを替える: 取り出す音と入れる音
+		if (DiskMounted(drive))
+			core.FDDMechSound(false);
 		result = diskmgr->Mount(drive, dinfo.filename, dinfo.readonly, id, false);
+		if (DiskMounted(drive))
+			core.FDDMechSound(true);
+	}
 	
 	int current = result ? diskmgr->GetCurrentDisk(drive) : -1;
 	
@@ -1459,7 +1653,7 @@ void WinUI::ChangeTapeImage()
 	OFNV5 ofn;
 	memset(&ofn, 0, sizeof(ofn));
 	ofn.lStructSize = WINVAR(OFNSIZE);
-	ofn.FlagsEx = config.flag2 & Config::showplacesbar ? 0 : OFN_EX_NOPLACESBAR;
+	ofn.FlagsEx = 0;		// 位置バーを消す指定 (OFN_EX_NOPLACESBAR) を付けると、Windows が古い形のダイアログを出す (DPI 対応の窓ではツールバーのアイコンが小さい)
 
 	char filename[MAX_PATH];
 	filename[0] = 0;
@@ -1572,11 +1766,22 @@ void WinUI::ShowOverlay(const char* msg)
 			0, 0, 0, 0, hwnd, 0, hinst, 0);
 		if (!hoverlay)
 			return;
-		overlayfont = CreateFont(-16, 0, 0, 0, FW_BOLD, 0, 0, 0, SHIFTJIS_CHARSET,
-			OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, "MS UI Gothic");
 		overlaybrush = CreateSolidBrush(RGB(255, 236, 140));
-		if (overlayfont)
-			SendMessage(hoverlay, WM_SETFONT, (WPARAM) overlayfont, 0);
+	}
+	// 字の大きさは画面の DPI に合わせる (DPI の違う画面に移ったら作り直す)
+	UINT dpi = Dpi::GetForWindow(hwnd);
+	if (!overlayfont || overlaydpi != dpi)
+	{
+		HFONT font = CreateFont(-MulDiv(16, dpi, 96), 0, 0, 0, FW_BOLD, 0, 0, 0, SHIFTJIS_CHARSET,
+			OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, "MS UI Gothic");
+		if (font)
+		{
+			SendMessage(hoverlay, WM_SETFONT, (WPARAM) font, 0);
+			if (overlayfont)
+				DeleteObject(overlayfont);
+			overlayfont = font;
+			overlaydpi = dpi;
+		}
 	}
 
 	// 字の大きさから窓の大きさを決める
@@ -1601,21 +1806,120 @@ void WinUI::ShowOverlay(const char* msg)
 }
 
 // ---------------------------------------------------------------------------
+//	WinUI::AppShortcut
+//	ショートカットにアプリケーションキーを使う設定のとき、アプリケーションキー + キーを M88 の操作にする。
+//	そのキーは、押したのも離したのも PC-8801 に渡さない (Alt はいつも GRPH として渡せる)
+//	使ったら true
+//
+static const struct { uint vk; uint id; const char* name; } appshortcuts[] =
+{
+	{ VK_RETURN,	IDM_TOGGLEDISPLAY,	"Enter" },
+	{ VK_F1,		IDM_SNAPSHOT_LOAD,	"F1" },
+	{ VK_F2,		IDM_CAPTURE,		"F2" },
+	{ VK_F10,		IDM_SNAPSHOT_SAVE,	"F10" },
+	{ VK_F12,		IDM_DBG_STEP,		"F12" },
+};
+
+bool WinUI::AppShortcut(const MSG& msg)
+{
+	if (msg.hwnd != hwnd && !IsChild(hwnd, msg.hwnd))
+		return false;
+	if (msg.message == WM_KEYUP || msg.message == WM_SYSKEYUP)
+	{
+		// ショートカットに使ったキーを離した (F12 を離すとリセットになるので、ここで止める)
+		if (appswallow && msg.wParam == appswallow)
+		{
+			appswallow = 0;
+			return true;
+		}
+		return false;
+	}
+	if (msg.message != WM_KEYDOWN && msg.message != WM_SYSKEYDOWN)
+		return false;
+	if (!(config.flag2 & Config::appshortcut) || GetKeyState(VK_APPS) >= 0)
+		return false;
+	for (int i = 0; i < sizeof(appshortcuts) / sizeof(appshortcuts[0]); i++)
+	{
+		if (msg.wParam == appshortcuts[i].vk)
+		{
+			if (!(msg.lParam & 0x40000000))		// キーリピートでは繰り返さない
+				SendMessage(hwnd, WM_COMMAND, MAKEWPARAM(appshortcuts[i].id, 1), 0);
+			appswallow = appshortcuts[i].vk;
+			return true;
+		}
+	}
+	return false;
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::SetShortcutLabels
+//	メニューのショートカットの表示を、設定 (Alt / アプリケーションキー) に合わせる
+//
+void WinUI::SetShortcutLabels(HMENU hmenu)
+{
+	bool app = (config.flag2 & Config::appshortcut) != 0;
+	for (int i = 0; i < sizeof(appshortcuts) / sizeof(appshortcuts[0]); i++)
+	{
+		char buf[128];
+		if (!GetMenuString(hmenu, appshortcuts[i].id, buf, sizeof(buf) - 16, MF_BYCOMMAND))
+			continue;
+		char* tab = strchr(buf, '\t');
+		if (!tab)
+			continue;				// ショートカットを書いていない項目 (Debug の Step など)
+		wsprintf(tab, "\t%s+%s", app ? "App" : "Alt", appshortcuts[i].name);
+		MENUITEMINFO mii;
+		memset(&mii, 0, sizeof(mii));
+		mii.cbSize = sizeof(mii);
+		mii.fMask = MIIM_STRING;		// 文字だけ変える (スナップショットの項目のサブメニューは残す)
+		mii.dwTypeData = buf;
+		SetMenuItemInfo(hmenu, appshortcuts[i].id, false, &mii);
+	}
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::SetScaleFlag
+//	設定のダイアログの「画面2倍」を、表示の倍率に合わせる (2 倍以上なら入れる)
+//
+void WinUI::SetScaleFlag()
+{
+	if (config.screenscale >= 2)
+		config.flag2 |= Config::stretchx2;
+	else
+		config.flag2 &= ~Config::stretchx2;
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::WmDpiChanged
+//	DPI の違う画面に移った: 位置は Windows の勧めに従い、大きさは表示の倍率どおりに作り直す
+//	(枠・メニューの大きさが DPI で変わるため)
+//
+LRESULT WinUI::WmDpiChanged(HWND hwnd, WPARAM, LPARAM lp)
+{
+	if (!fullscreen)
+	{
+		const RECT* r = (const RECT*) lp;
+		SetWindowPos(hwnd, 0, r->left, r->top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+		ResizeWindow(640, 400);
+		ShowStatusWindow();			// ランプの欄の幅を DPI に合わせ直す
+	}
+	return 0;
+}
+
+// ---------------------------------------------------------------------------
 //	WinUI::ResizeWindow
 //	ウィンドウの大きさを変える
 //
 void WinUI::ResizeWindow(uint width, uint height)
 {
-	if (config.flag2 & Config::stretchx2) {
-		width *= 2;
-		height *= 2;
-	}
+	int scale = Limit(config.screenscale, 4, 1);
+	width *= scale;
+	height *= scale;
 
 	RECT rect;
 	rect.left = 0;	rect.right = width;
 	rect.top  = 0;  rect.bottom = height + statusdisplay.GetHeight();
 
-	AdjustWindowRectEx(&rect, wstyle, TRUE, 0);
+	Dpi::AdjustWindowRect(&rect, wstyle, true, 0, hwnd);
 	SetWindowPos(hwnd, 0, 0, 0, rect.right-rect.left, rect.bottom-rect.top,
 				 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 	PostMessage(hwnd, WM_SIZE, SIZE_RESTORED, MAKELONG(width, height));
@@ -1643,9 +1947,33 @@ void WinUI::ShowStatusWindow()
 //
 LRESULT WinUI::WmDrawItem(HWND hwnd, WPARAM wparam, LPARAM lparam)
 {
-	if ((UINT) wparam == 1)
-		statusdisplay.DrawItem((DRAWITEMSTRUCT*)lparam);
+	DRAWITEMSTRUCT* dis = (DRAWITEMSTRUCT*) lparam;
+	if (dis->CtlType == ODT_MENU && dis->itemID == IDM_STATUS_MENU)
+		statusdisplay.DrawMenuItem(dis);
+	else if ((UINT) wparam == 1)
+		statusdisplay.DrawItem(dis);
 	return TRUE;
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::WmMeasureItem
+//	全画面のメニューバーの知らせ・ランプの項目の大きさ
+//
+LRESULT WinUI::WmMeasureItem(HWND hwnd, WPARAM wparam, LPARAM lparam)
+{
+	MEASUREITEMSTRUCT* mis = (MEASUREITEMSTRUCT*) lparam;
+	if (mis->CtlType == ODT_MENU && mis->itemID == IDM_STATUS_MENU)
+	{
+		statusdisplay.MeasureMenuItem(mis);
+		return TRUE;
+	}
+	return DefWindowProc(hwnd, WM_MEASUREITEM, wparam, lparam);
+}
+
+LRESULT WinUI::M88StatusMenu(HWND, WPARAM, LPARAM)
+{
+	statusdisplay.RedrawMenu();
+	return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1697,8 +2025,14 @@ LRESULT WinUI::M88ChangeDisplay(HWND hwnd, WPARAM, LPARAM)
 	if (!draw.ChangeDisplayMode
 				(fullscreen,
 				(config.flags & PC8801::Config::force480) != 0,
-				(config.flag2 & PC8801::Config::stretchx2) != 0))
+				Limit(config.screenscale, 4, 1)))
 		fullscreen = false;
+
+	// 全画面: マウスが止まってしばらくしたらカーソルを消す。ウィンドウに戻ったら出す
+	if (cursorhidden && !fullscreen)
+		SetCursor(LoadCursor(0, IDC_ARROW));
+	cursorhidden = false;
+	RestartCursorTimer();
 
 	// ウィンドウスタイル関係の変更
 	wstyle = (DWORD)GetWindowLongPtr(hwnd, GWL_STYLE);
@@ -1712,6 +2046,7 @@ LRESULT WinUI::M88ChangeDisplay(HWND hwnd, WPARAM, LPARAM)
 //		SetCapture(hwnd);
 		SetWindowLongPtr(hwnd, GWL_STYLE, wstyle);
 		SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
+		statusdisplay.DisableMenu();
 		ResizeWindow(640, 400);
 		SetWindowPos(hwnd, HWND_NOTOPMOST, point.x, point.y, 0, 0, SWP_NOSIZE | SWP_FRAMECHANGED);
 		ShowStatusWindow();
@@ -1739,6 +2074,9 @@ LRESULT WinUI::M88ChangeDisplay(HWND hwnd, WPARAM, LPARAM)
 		SetWindowPos(hwnd, HWND_TOPMOST, mr.left, mr.top, mr.right - mr.left, mr.bottom - mr.top,
 					 SWP_FRAMECHANGED | SWP_SHOWWINDOW);
 		draw.Resize(640, 400);
+		// ステータスバーの代わりに、メニューバーの右の端に知らせとランプを出す
+		if (config.flags & PC8801::Config::showstatusbar)
+			statusdisplay.EnableMenu((config.flags & PC8801::Config::showfdcstatus) != 0);
 
 		report = false;
 	}
@@ -1783,7 +2121,10 @@ LRESULT WinUI::WmExitMenuLoop(HWND, WPARAM wp, LPARAM)
 LRESULT WinUI::M88ChangeVolume(HWND, WPARAM c, LPARAM)
 {
 	if (c)
+	{
 		core.SetVolume((PC8801::Config*) c);
+		core.GetSound()->SetMasterVolume(((PC8801::Config*) c)->volmaster);
+	}
 	return 0;
 }
 
@@ -1829,7 +2170,15 @@ LRESULT WinUI::WmDropFiles(HWND hwnd, WPARAM wparam, LPARAM lparam)
 	}
 
 	if (strcmpi(ext, ".d88") == 0 || strcmpi(ext, ".fdx") == 0) {
+		// 入っていたディスクを取り出す音、入れた音
+		bool was[2] = { DiskMounted(0), DiskMounted(1) };
 		OpenDiskImage(path);
+		for (int i = 0; i < 2; i++)
+			if (was[i])
+				core.FDDMechSound(false);
+		for (int i = 0; i < 2; i++)
+			if (DiskMounted(i))
+				core.FDDMechSound(true);
 
 		// 正常にマウントできたらリセット
 		if (diskinfo[0].filename[0])
@@ -1883,7 +2232,7 @@ void WinUI::CaptureScreen()
 			ofn.Flags = OFN_CREATEPROMPT | OFN_NOREADONLYRETURN;
 			ofn.lpstrDefExt = "bmp";
 			ofn.lpstrTitle = "Save captured image";
-			ofn.FlagsEx = config.flag2 & Config::showplacesbar ? 0 : OFN_EX_NOPLACESBAR;
+			ofn.FlagsEx = 0;		// 位置バーを消す指定 (OFN_EX_NOPLACESBAR) を付けると、Windows が古い形のダイアログを出す (DPI 対応の窓ではツールバーのアイコンが小さい)
 			
 			SetGUIFlag(true);
 			(*EnableIME)(hwnd, true);
@@ -2035,8 +2384,59 @@ LRESULT WinUI::WmMouseMove(HWND hwnd, WPARAM wp, LPARAM lp)
 
 }
 
+// ---------------------------------------------------------------------------
+//	全画面でカーソルを消すまでの時間を数え直す
+//
+void WinUI::RestartCursorTimer()
+{
+	if (fullscreen)
+		::SetTimer(hwnd, cursortimer, cursorhidems, 0);
+	else
+		KillTimer(hwnd, cursortimer);
+}
+
+// ---------------------------------------------------------------------------
+//	カーソルが画面 (本体の窓のクライアント領域。メニューバーは除く) の上にあるか
+//
+bool WinUI::CursorOnScreen()
+{
+	POINT pt;
+	if (!GetCursorPos(&pt))
+		return false;
+	HWND hw = WindowFromPoint(pt);
+	if (hw != hwnd && GetParent(hw) != hwnd)
+		return false;
+	RECT rc;
+	GetClientRect(hwnd, &rc);
+	ScreenToClient(hwnd, &pt);
+	return PtInRect(&rc, pt) != 0;
+}
+
 LRESULT WinUI::WmSetCursor(HWND hwnd, WPARAM wp, LPARAM lp)
 {
+	// 全画面: マウスが動いたらカーソルを出し、止まってしばらくしたら消す
+	if (fullscreen && LOWORD(lp) == HTCLIENT)
+	{
+		POINT pt;
+		GetCursorPos(&pt);
+		if (pt.x != cursorpos.x || pt.y != cursorpos.y)
+		{
+			cursorpos = pt;
+			cursorhidden = false;
+			RestartCursorTimer();
+		}
+		if (cursorhidden)
+		{
+			SetCursor(0);
+			return TRUE;
+		}
+	}
+	else if (cursorhidden)
+	{
+		cursorhidden = false;
+		RestartCursorTimer();
+	}
+
 	if (fullscreen)
 	{
 		uint menu = LOWORD(lp) == HTMENU;

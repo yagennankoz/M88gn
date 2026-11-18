@@ -13,6 +13,7 @@
 #define WM_M88_CHANGEVOLUME		(WM_USER+0x204)	
 #define WM_M88_CLIPCURSOR		(WM_USER+0x205)
 #define WM_M88_TAPERECORD		(WM_USER+0x206)
+#define WM_M88_STATUSMENU		(WM_USER+0x207)	// 全画面: メニューバーの知らせ・ランプを描き直す
 
 #define CLIPCURSOR_MOUSE	1
 #define CLIPCURSOR_WINDOW	2

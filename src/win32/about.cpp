@@ -11,6 +11,7 @@
 #include "about.h"
 #include "version.h"
 #include "filetest.h"
+#include "dpi.h"
 
 // ---------------------------------------------------------------------------
 //	ç\íz/è¡ñ≈
@@ -25,6 +26,7 @@ M88About::M88About()
 //
 void M88About::Show(HINSTANCE hinst, HWND hwndparent)
 {
+	Dpi::UnawareScope dpiscope;		// ñ{ëÃÇÃëãÇÃÇŸÇ©ÇÕ DPI îÒëŒâûÇÃÇ‹Ç‹
 	DialogBoxParam(hinst, MAKEINTRESOURCE(IDD_ABOUT), 
 				   hwndparent, DLGPROC((void*)DlgProcGate), (LPARAM)this); 
 }

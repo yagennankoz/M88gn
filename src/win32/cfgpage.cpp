@@ -329,8 +329,15 @@ void ConfigScreen::Update(HWND hdlg)
 		  || (config.flags & Config::cpuburst)
 		  || (config.speed != 1000);
 	CheckDlgButton(hdlg, IDC_SCREEN_VSYNC, BSTATE(config.flag2 & Config::synctovsync));
-	EnableWindow(GetDlgItem(hdlg, IDC_SCREEN_VSYNC), BSTATE(!f));
+	(void)f;
 	CheckDlgButton(hdlg, IDC_SCREEN_STRETCHX2, BSTATE(config.flag2 & Config::stretchx2));
+	// 今は効かない・意味が合わなくなった項目は、値を残したまま灰色にする
+	//	全画面時 640x480: 全画面は解像度を変えずに描くので切り替えない
+	//	VSync に同期: 値を保存するだけで使われていない (rururutan 版の時点から)
+	//	サイズを2倍: 倍率は Screen メニューの Window scale (x1～x4) で決める
+	EnableWindow(GetDlgItem(hdlg, IDC_SCREEN_FORCE480), FALSE);
+	EnableWindow(GetDlgItem(hdlg, IDC_SCREEN_VSYNC), FALSE);
+	EnableWindow(GetDlgItem(hdlg, IDC_SCREEN_STRETCHX2), FALSE);
 }
 
 
@@ -573,6 +580,7 @@ void ConfigVolume::InitVolumeSlider(HWND hdlg, UINT id, int val)
 
 void ConfigVolume::InitDialog(HWND hdlg)
 {
+	InitVolumeSlider(hdlg, IDC_SOUND_VOLMASTER, orgconfig.volmaster);
 	InitVolumeSlider(hdlg, IDC_SOUND_VOLFM,     orgconfig.volfm);
 	InitVolumeSlider(hdlg, IDC_SOUND_VOLSSG,    orgconfig.volssg);
 	InitVolumeSlider(hdlg, IDC_SOUND_VOLADPCM,  orgconfig.voladpcm);
@@ -588,6 +596,7 @@ void ConfigVolume::InitDialog(HWND hdlg)
 void ConfigVolume::SetActive(HWND hdlg)
 {
 	UpdateSlider(hdlg);
+	SendDlgItemMessage(hdlg, IDC_SOUND_VOLMASTER, TBM_SETRANGE, TRUE, MAKELONG(-40, 20));
 	SendDlgItemMessage(hdlg, IDC_SOUND_VOLFM,     TBM_SETRANGE, TRUE, MAKELONG(-40, 20));
 	SendDlgItemMessage(hdlg, IDC_SOUND_VOLSSG,    TBM_SETRANGE, TRUE, MAKELONG(-40, 20));
 	SendDlgItemMessage(hdlg, IDC_SOUND_VOLADPCM,  TBM_SETRANGE, TRUE, MAKELONG(-40, 20));
@@ -602,6 +611,7 @@ void ConfigVolume::SetActive(HWND hdlg)
 
 void ConfigVolume::Apply(HWND hdlg)
 {
+	config.volmaster = SendDlgItemMessage(hdlg, IDC_SOUND_VOLMASTER, TBM_GETPOS, 0, 0);
 	config.volfm     = SendDlgItemMessage(hdlg, IDC_SOUND_VOLFM,     TBM_GETPOS, 0, 0);
 	config.volssg    = SendDlgItemMessage(hdlg, IDC_SOUND_VOLSSG,    TBM_GETPOS, 0, 0);
 	config.voladpcm  = SendDlgItemMessage(hdlg, IDC_SOUND_VOLADPCM,  TBM_GETPOS, 0, 0);
@@ -616,6 +626,7 @@ void ConfigVolume::Apply(HWND hdlg)
 
 void ConfigVolume::UpdateSlider(HWND hdlg)
 {
+	config.volmaster = SendDlgItemMessage(hdlg, IDC_SOUND_VOLMASTER, TBM_GETPOS, 0, 0);
 	config.volfm     = SendDlgItemMessage(hdlg, IDC_SOUND_VOLFM,     TBM_GETPOS, 0, 0);
 	config.volssg    = SendDlgItemMessage(hdlg, IDC_SOUND_VOLSSG,    TBM_GETPOS, 0, 0);
 	config.voladpcm  = SendDlgItemMessage(hdlg, IDC_SOUND_VOLADPCM,  TBM_GETPOS, 0, 0);
@@ -626,6 +637,7 @@ void ConfigVolume::UpdateSlider(HWND hdlg)
 	config.volhh     = SendDlgItemMessage(hdlg, IDC_SOUND_VOLHH,     TBM_GETPOS, 0, 0);
 	config.voltom    = SendDlgItemMessage(hdlg, IDC_SOUND_VOLTOM,    TBM_GETPOS, 0, 0);
 	config.volrim    = SendDlgItemMessage(hdlg, IDC_SOUND_VOLRIM,    TBM_GETPOS, 0, 0);
+	SetVolumeText(hdlg, IDC_SOUND_VOLTXTMASTER, config.volmaster);
 	SetVolumeText(hdlg, IDC_SOUND_VOLTXTFM,     config.volfm);
 	SetVolumeText(hdlg, IDC_SOUND_VOLTXTSSG,    config.volssg);
 	SetVolumeText(hdlg, IDC_SOUND_VOLTXTADPCM,  config.voladpcm);
@@ -712,6 +724,10 @@ bool ConfigFunction::Clicked(HWND hdlg, HWND hwctl, UINT id)
 		config.flag2 ^= Config::genscrnshotname;
 		return true;
 
+	case IDC_FUNCTION_APPSHORTCUT:
+		config.flag2 ^= Config::appshortcut;
+		return true;
+
 	case IDC_FUNCTION_COMPSNAP:
 		config.flag2 ^= Config::compresssnapshot;
 		return true;
@@ -750,6 +766,7 @@ void ConfigFunction::Update(HWND hdlg)
 	EnableWindow(GetDlgItem(hdlg, IDC_FUNCTION_MOUSEJOY), (config.flags & Config::enablemouse) != 0);
 	CheckDlgButton(hdlg, IDC_FUNCTION_SCREENSHOT_NAME, BSTATE(config.flag2 & Config::genscrnshotname));
 	CheckDlgButton(hdlg, IDC_FUNCTION_COMPSNAP, BSTATE(config.flag2 & Config::compresssnapshot));
+	CheckDlgButton(hdlg, IDC_FUNCTION_APPSHORTCUT, BSTATE(config.flag2 & Config::appshortcut));
 }
 
 void ConfigFunction::UpdateSlider(HWND hdlg)
@@ -836,7 +853,7 @@ void ConfigEnv::Update(HWND hdlg)
 	{ IDC_ENV_KEY106, IDC_ENV_KEY98, IDC_ENV_KEY101 };
 	CheckDlgButton(hdlg, item[(config.keytype) & 3], BSTATE(true));
 	CheckDlgButton(hdlg, IDC_ENV_PLACESBAR, BSTATE(config.flag2 & Config::showplacesbar));
-	EnableWindow(GetDlgItem(hdlg, IDC_ENV_PLACESBAR), WINVAR(MajorVer) >= 5);
+	EnableWindow(GetDlgItem(hdlg, IDC_ENV_PLACESBAR), FALSE);	// 今の形のファイルダイアログは位置バーを消せないので効かない (値は残す)
 }
 
 

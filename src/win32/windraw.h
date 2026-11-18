@@ -35,6 +35,8 @@ public:
 	virtual void Flip() {}
 	virtual bool SetFlipMode(bool flip) { return false; }
 	virtual void WindowMoved(int cx, int cy) { return; }
+	virtual void SetLines(int lines) {}
+	virtual void SetCrtFilter(int scan, int mask, int sharp, int bright, int glow, int pitch) {}
 
 protected:
 	uint status;
@@ -63,6 +65,7 @@ public:
 	uint GetStatus();
 	void Flip();
 	bool SetFlipMode(bool f);
+	void SetLines(int lines);
 	
 // - Unique Interface
 	int GetDrawCount() { int ret = drawcount; drawcount = 0; return ret; }
@@ -72,14 +75,16 @@ public:
 	
 	void SetPriorityLow(bool low);
 	void SetGUIFlag(bool flag);
-	bool ChangeDisplayMode(bool fullscreen, bool force480 = true, bool stretchx2 = false);
+	bool ChangeDisplayMode(bool fullscreen, bool force480 = true, int scale = 1);
 	void Refresh() { refresh = 1; }
 	void WindowMoved(int cx, int cy);
+	void SetCrtFilter(int scan, int mask, int sharp, int bright, int glow, int pitch);
+	bool CanCrtFilter() { return drawtype == D3D11; }
 
 	int CaptureScreen(uint8* dest);
 
 private:
-	enum DisplayType { None, GDI, DDWin, DDFull, D2D };
+	enum DisplayType { None, GDI, DDWin, DDFull, D2D, D3D11 };
 	void PaintWindow();
 
 	static BOOL WINAPI DDEnumCallback(GUID FAR* guid, LPSTR desc, LPSTR name, LPVOID context, HMONITOR hm);
@@ -123,7 +128,15 @@ private:
 
 	PALETTEENTRY palette[0x100];
 
-	bool bStretchx2;
+	int nScale;			// ウィンドウの表示の倍率
 	bool bFit;			// 全画面 (解像度は変えず、ウィンドウいっぱいに拡大する)
+
+	int lines;			// 走査線の数 (200 / 400)
+	int crtscan;		// CRT 風のフィルター: 走査線 (0～3)
+	int crtmask;		// CRT 風のフィルター: マスク (0～3)
+	int crtsharp;		// CRT 風のフィルター: 横のシャープさ (0: Sharp 1: Normal 2: Soft)
+	int crtbright;		// CRT 風のフィルター: 明るさの補正 (0: Low 1: Normal 2: High)
+	int crtpitch;		// CRT 風のフィルター: マスクの間隔 (0: Pixel 1: 0.25mm 2: 0.31mm 3: 0.39mm)
+	int crtglow;		// CRT 風のフィルター: 明るい所の周りの丸いぼけ (0: なし 1: 弱 2: 中 3: 強)
 };
 

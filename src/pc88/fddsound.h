@@ -23,6 +23,7 @@ public:
 	~FDDSound();
 
 	void Step(int steps);				// steps ステップ動かす (エミュレーションのスレッドから呼ぶ)
+	void Mech(bool insert);				// ディスクを入れた / 取り出した (UI のスレッドから呼ぶ。前の出し入れの音が終わってから鳴らす)
 	void SetVolume(int percent);		// 音量 (0～100%)
 
 	// ISoundSource
@@ -33,14 +34,16 @@ public:
 private:
 	enum
 	{
-		maxamp = 102,				// 音量 100% の大きさ (1024 = fddclick.h のまま。初めの 1024 では大きすぎ、その 25% (-20dB) で十分だった)
+		maxamp = 144,				// 音量 100% の大きさ (1024 = fddclick.h のまま。初めの 1024 では大きすぎ、その 25% (-20dB) の 102 にしていたが、少し大きくして +3dB)
 		stepms = 4,					// 1 ステップの間隔 (ms。FDC のシークの待ちと同じ)
 		maxvoice = 32,				// 同時に鳴らす音の数 (50ms の音を 4ms ごと = 13 前後)
 		maxpending = 160,			// 鳴らす前のステップの数の上限 (0 → 79 の往復ぶん)
+		mechgap = 300,				// 取り出してから入れるまでの間 (ms)
 	};
 	struct Voice
 	{
-		int wave;					// 鳴らす音 (fddclick の番号)
+		const int16* src;			// 鳴らす音
+		int len;					// 音の長さ (サンプル)
 		int pos;					// 音の中の位置 (負ならまだ鳴らしていない。サンプル単位)
 	};
 
@@ -49,6 +52,9 @@ private:
 	int amp;						// 音の大きさ (1024 = fddclick.h のまま)
 	int16* clicks;					// 合成のレートに変換した音 (fddclicknum 個)
 	int clicklen;					// 変換した音の長さ (サンプル)
+	int16* mech[2];					// 入れる音・取り出す音 (合成のレートに変換したもの)
+	int mechlen[2];
+	int mechend;					// 鳴らしている出し入れの音が終わるまで (サンプル。0: 鳴らしていない)
 	int stepsamples;				// 1 ステップの間隔 (サンプル)
 	Voice voice[maxvoice];
 	int nvoice;
@@ -57,6 +63,7 @@ private:
 	uint32 rnd;
 	int lastwave;
 	int NextWave();
+	static int16* Convert(const int16* src, int srclen, int srcrate, uint rate, int* len);
 };
 
 }

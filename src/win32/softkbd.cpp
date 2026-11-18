@@ -7,6 +7,7 @@
 #include "softkbd.h"
 #include "WinKeyIF.h"
 #include "misc.h"
+#include "dpi.h"
 
 // ---------------------------------------------------------------------------
 //	キーの並び
@@ -257,9 +258,10 @@ void SoftKeyboard::Create()
 	const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME;
 	const DWORD exstyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
 
-	int w = width > 0 ? width : 800;
+	// 既定の幅は 96 DPI で 800 (M88 の窓の画面の DPI に合わせる)
+	int w = width > 0 ? width : MulDiv(800, Dpi::GetForWindow(owner), 96);
 	RECT r = { 0, 0, w, 0 };
-	AdjustWindowRectEx(&r, style, false, exstyle);
+	Dpi::AdjustWindowRect(&r, style, false, exstyle, owner);
 	int ncw = (r.right - r.left) - w;
 	int nch = r.bottom - r.top;
 	int cw = w - ncw;
@@ -362,7 +364,14 @@ LRESULT SoftKeyboard::WndProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
 		return TRUE;
 
 	case WM_GETMINMAXINFO:
-		((MINMAXINFO*) lp)->ptMinTrackSize.x = 320;
+		((MINMAXINFO*) lp)->ptMinTrackSize.x = MulDiv(320, Dpi::GetForWindow(hw), 96);
+		return 0;
+
+	case 0x02e0:						// WM_DPICHANGED: DPI の違う画面に移った。Windows の勧める位置・大きさにする
+		{
+			const RECT* r = (const RECT*) lp;
+			SetWindowPos(hw, 0, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
+		}
 		return 0;
 
 	case WM_SIZE:

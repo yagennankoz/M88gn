@@ -374,7 +374,7 @@ bool MemoryMonitor::SaveImage()
 	OFNV5 ofn;
 	memset(&ofn, 0, sizeof(ofn));
 	ofn.lStructSize = WINVAR(OFNSIZE);
-	ofn.FlagsEx = OFN_EX_NOPLACESBAR;
+	ofn.FlagsEx = 0;		// 位置バーを消す指定 (OFN_EX_NOPLACESBAR) を付けると、Windows が古い形のダイアログを出す (DPI 対応の窓ではツールバーのアイコンが小さい)
 
 	char filename[MAX_PATH];
 	filename[0] = 0;

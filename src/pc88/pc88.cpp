@@ -207,6 +207,7 @@ void PC88::UpdateScreen(bool refresh)
 				LOG2("(%d -> %d)\n", region.top, region.bottom);
 				
 				bool palchanged = scrn->UpdatePalette(draw);
+				draw->SetLines(scrn->Is400Line() ? 400 : 200);
 				draw->Unlock();
 				updated = palchanged || region.Valid();
 			}
@@ -639,6 +640,11 @@ bool PC88::ConnectDevices2()
 ISoundSource* PC88::GetFDDSound()
 {
 	return fdc->GetSound();
+}
+
+void PC88::FDDMechSound(bool insert)
+{
+	fdc->GetSound()->Mech(insert);
 }
 
 // ---------------------------------------------------------------------------
