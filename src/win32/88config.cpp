@@ -155,6 +155,8 @@ void LoadConfig(Config* cfg, const char* inifile, bool applydefault)
 	if (LoadConfigEntry(inifile, "TapeSpeed", &n, 1, applydefault))
 		cfg->tapespeed = (n == 2 || n == 4 || n == 8) ? n : 1;
 	// 表示の倍率。無ければ、前の「画面2倍」の設定なら 2、そうでなければ 0 (画面の DPI から決める)
+	if (LoadConfigEntry(inifile, "ScreenRotate", &n, 0, applydefault))
+		cfg->screenrotate = Limit(n, 3, 0);
 	if (LoadConfigEntry(inifile, "ScreenScale", &n, 0, false))
 		cfg->screenscale = Limit(n, 4, 1);
 	else if (applydefault)
@@ -173,6 +175,10 @@ void LoadConfig(Config* cfg, const char* inifile, bool applydefault)
 		cfg->crtpitch = Limit(n, 3, 0);
 	if (LoadConfigEntry(inifile, "CrtGlow", &n, 0, applydefault))
 		cfg->crtglow = Limit(n, 3, 0);
+	if (LoadConfigEntry(inifile, "CrtBreathing", &n, 0, applydefault))
+		cfg->crtbreath = Limit(n, 3, 0);
+	if (LoadConfigEntry(inifile, "CrtBreathExpand", &n, 0, applydefault))
+		cfg->crtbreathexp = Limit(n, 1, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -252,11 +258,14 @@ void SaveConfig(Config* cfg, const char* inifile, bool writedefault)
 	SaveEntry(inifile, "DiskVolume", cfg->fddvolume, writedefault);
 	if (cfg->screenscale > 0)
 		SaveEntry(inifile, "ScreenScale", cfg->screenscale, writedefault);
+	SaveEntry(inifile, "ScreenRotate", cfg->screenrotate, writedefault);
 	SaveEntry(inifile, "CrtScanline", cfg->crtscan, writedefault);
 	SaveEntry(inifile, "CrtMask", cfg->crtmask, writedefault);
 	SaveEntry(inifile, "CrtSharpness", cfg->crtsharp, writedefault);
 	SaveEntry(inifile, "CrtBrightness", cfg->crtbright, writedefault);
 	SaveEntry(inifile, "CrtGlow", cfg->crtglow, writedefault);
+	SaveEntry(inifile, "CrtBreathing", cfg->crtbreath, writedefault);
+	SaveEntry(inifile, "CrtBreathExpand", cfg->crtbreathexp, writedefault);
 	SaveEntry(inifile, "CrtMaskPitch", cfg->crtpitch, writedefault);
 	SaveEntry(inifile, "CrtDirect", cfg->crtdirect, writedefault);
 	SaveEntry(inifile, "SoftKbdX", cfg->softkbdx, writedefault);

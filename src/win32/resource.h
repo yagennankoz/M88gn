@@ -301,6 +301,15 @@
 #define IDM_CRTPITCH_2                  40281
 #define IDM_CRTPITCH_3                  40282
 #define IDM_CRTDIRECT                   40283
+#define IDM_CRTBREATH_0                 40284
+#define IDM_CRTBREATH_1                 40285
+#define IDM_CRTBREATH_2                 40286
+#define IDM_CRTBREATH_3                 40287
+#define IDM_CRTBREATH_EXPAND            40288
+#define IDM_ROTATE_0                    40289
+#define IDM_ROTATE_90                   40290
+#define IDM_ROTATE_180                  40291
+#define IDM_ROTATE_270                  40292
 #define IDM_SCALE_4                     40266
 #define IDM_CRTSHARP_0                  40267
 #define IDM_CRTSHARP_1                  40268
@@ -320,7 +329,7 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        141
-#define _APS_NEXT_COMMAND_VALUE         40284
+#define _APS_NEXT_COMMAND_VALUE         40293
 #define _APS_NEXT_CONTROL_VALUE         1140
 #define _APS_NEXT_SYMED_VALUE           101
 #endif

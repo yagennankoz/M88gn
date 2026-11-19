@@ -214,6 +214,7 @@ private:
 	// ポート 30h の bit2: 0 = キャリア (MARK) を出す、1 = 出さない (SPACE)
 	uint16 GapId() { return port30 & 4 ? T_SPACE : T_MARK; }
 	bool LoadTags(const char* file);
+	bool LoadCmt(const char* file);
 	void ToEnd();
 	void Notify(int code) { if (notify) notify(notifyctx, code); }
 	void RecBegin();
@@ -231,6 +232,8 @@ private:
 	int lasttxdone;				// 最後に送信を終えた時刻 (10us 単位)
 	std::string filename;		// 開いている T88
 	bool writeprotect;			// 書き込み禁止
+	int cmtmark;				// .cmt: モーターを回し直したので、データの途中に挟んでいる (0: なし 1: SPACE 2: MARK)
+	bool cmt;					// .cmt (バイト列だけ) を開いている: 速さは PC 側の設定 (ポート 30h の bit4) に合わせる
 	bool hasdata;				// 開いている T88 に DATA がある
 	bool recarm;				// Record がオン
 	bool recording;				// 録音中 (Record がオンでモーターが回っている)

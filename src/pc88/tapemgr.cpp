@@ -58,6 +58,8 @@ TapeManager::TapeManager()
 	lasttxdone = 0;
 	writeprotect = false;
 	hasdata = false;
+	cmt = false;
+	cmtmark = 0;
 	appendok = false;
 	recarm = false;
 	recording = false;
@@ -130,6 +132,19 @@ bool TapeManager::Open(const char* file, bool readonly)
 		return Rewind();
 	}
 
+	// 拡張子が .cmt ならバイト列だけ (ベタ形式)。書き込みはできない
+	if (len >= 4 && !_stricmp(file + len - 4, ".cmt"))
+	{
+		if (!LoadCmt(file))
+		{
+			Close();
+			return false;
+		}
+		filename = file;
+		writeprotect = true;
+		return Rewind();
+	}
+
 	if (!LoadTags(file))
 	{
 		Close();
@@ -193,6 +208,199 @@ bool TapeManager::LoadTags(const char* file)
 }
 
 // ---------------------------------------------------------------------------
+//	.cmt (テープから読んだバイトを並べただけのベタ形式) を、T88 のタグにして読む。
+//	PicoCmt の .cmt の再生と同じ形にする: SPACE 2 秒、MARK 3 秒、ダミーの 0x00 x8、データ、MARK 2 秒、END。
+//	データの中のヘッダー (BASIC の D3 x10 + 名前 6 バイト、N88-BASIC のモニターの $$$ + 名前 6 バイト。$$$ は
+//	ファイルの先頭か 00 の直後だけ) の後に、MARK を約 0.2 秒入れる (実機のセーブではヘッダーの後にピー音がある)。
+//	速さの情報は無いので、送るときの PC 側の設定に合わせる (Send)
+//
+bool TapeManager::LoadCmt(const char* file)
+{
+	FileIO fio;
+	if (!fio.Open(file, FileIO::readonly))
+		return false;
+	fio.Seek(0, FileIO::end);
+	int32 size = fio.Tellp();
+	fio.Seek(0, FileIO::begin);
+	if (size <= 0)
+		return false;
+	std::vector<uint8> buf(8 + size, 0);		// 先頭はダミーの 0x00 x8
+	if (fio.Read(&buf[8], size) != size)
+		return false;
+	size += 8;
+
+	Tag* prv = 0;
+	uint32 tpos = 0;
+	auto add = [&](uint16 id, uint16 length) -> Tag*
+	{
+		Tag* tag = (Tag*) new uchar[sizeof(Tag)-1+length];
+		tag->prev = prv;
+		tag->next = 0;
+		(prv ? prv->next : tags) = tag;
+		tag->id = id;
+		tag->length = length;
+		prv = tag;
+		return tag;
+	};
+	auto gap = [&](uint16 id, uint32 ticks)
+	{
+		BlankTag* b = (BlankTag*) add(id, sizeof(BlankTag))->data;
+		b->pos = tpos, b->tick = ticks;
+		tpos += ticks;
+	};
+	auto data = [&](int from, int to)
+	{
+		while (from < to)
+		{
+			int n = Min(to - from, 0xfff0);
+			DataTag* d = (DataTag*) add(T_DATA, uint16(sizeof(DataTag) - 1 + n))->data;
+			d->pos = tpos;
+			d->tick = n * 44;
+			d->length = uint16(n);
+			d->type = 0x01cc;
+			memcpy(d->data, &buf[from], n);
+			tpos += n * 44;
+			from += n;
+		}
+	};
+
+	*(uint16*) add(T_VERSION, 2)->data = T88VER;		// Rewind は最初のタグがバージョンであることを確かめる
+	gap(T_SPACE, 9600);
+	gap(T_MARK, 14400);
+
+	// マシン語 (モニターの形式: 3A 番地 2 バイト チェックサム、3A 長さ データ チェックサムのブロック、3A 00 00 で終わり) を
+	// チェックサムを確かめながらたどり、終わりの後に段の間の信号 (MARK・SPACE・無音・SPACE・MARK) を入れる。多段のローダーで、前の段を読み終えた ROM が
+	// モーターを止める前に、次の段の先頭が送られて取りこぼすのを防ぐ (実物のテープでは段の間に間がある)
+	std::vector<int> ends;
+	for (int i = 8; i + 4 <= size; )
+	{
+		if (buf[i] == 0x3a && uint8(buf[i + 1] + buf[i + 2] + buf[i + 3]) == 0)
+		{
+			int j = i + 4, blocks = 0, end = 0;
+			while (j + 1 < size && buf[j] == 0x3a)
+			{
+				int n = buf[j + 1];
+				if (n == 0)
+				{
+					end = Min(j + 3, size);
+					break;
+				}
+				if (j + n + 3 > size)
+					break;
+				uint8 s = 0;
+				for (int k = j + 1; k < j + n + 3; k++)
+					s += buf[k];
+				if (s)
+					break;
+				blocks++;
+				j += n + 3;
+			}
+			if (end && blocks)
+			{
+				ends.push_back(end);
+				i = end;
+				continue;
+			}
+		}
+		i++;
+	}
+
+	// BASIC のプログラム (D3 x10 + 名前 6 バイトのヘッダーの後) は、行の先頭の「次の行の番地」をたどって終わり
+	// (番地 0000) を探し、後ろの 00 を含めた所を終わりとする。最初の行の番地は分からないので、最初の行の終わりの 00 の
+	// 候補ごとに番地を決め、最後までつながったものを使う (行の中の数値に 00 があっても、つながりで見分ける)
+	for (int i = 8, run = 0; i < size; i++)
+	{
+		run = (buf[i] == 0xd3) ? run + 1 : 0;
+		if (run < 10 || i + 7 >= size)
+			continue;
+		run = 0;
+		int s = i + 7;							// 名前の後
+		int link1 = buf[s] | (buf[s + 1] << 8);
+		for (int p = s + 4; p < Min(size, s + 256); p++)
+		{
+			if (buf[p] != 0)
+				continue;
+			int addr = link1 - (p + 1 - s), off = s, end = 0;
+			for (int n = 0; n < 20000; n++)
+			{
+				if (off + 2 > size)
+					break;
+				int link = buf[off] | (buf[off + 1] << 8);
+				if (link == 0)
+				{
+					end = off + 2;
+					while (end < size && buf[end] == 0)
+						end++;
+					break;
+				}
+				int len = link - addr;
+				if (len < 5 || len > 300 || off + len > size || buf[off + len - 1] != 0)
+					break;
+				off += len, addr = link;
+			}
+			if (end)
+			{
+				if (end < size)
+					ends.push_back(end);
+				i = end - 1;
+				break;
+			}
+		}
+	}
+	std::sort(ends.begin(), ends.end());
+
+	// ヘッダーを探して、その後に MARK を入れる (PicoCmt の track_header と同じ決まり)
+	int start = 0;
+	size_t ei = 0;
+	int d3run = 0, dollarrun = 0, nameleft = -1;
+	bool prevzero = true;
+	for (int i = 8; i < size; i++)
+	{
+		if (ei < ends.size() && ends[ei] == i)
+		{
+			while (ei < ends.size() && ends[ei] == i)
+				ei++;
+			data(start, i);
+			// 段の間: MARK 1.3 秒、SPACE 2.5 秒、無音 3.4 秒、SPACE 1 秒、MARK 2.5 秒 (ALPHOS の T88 と同じ。
+			// bosconia の録音は 0.9・1・0.9・1・1 秒で、キャリアが一度切れるのを待つローダーがある)
+			gap(T_MARK, 6240);
+			gap(T_SPACE, 12000);
+			gap(T_BLANK, 16320);
+			gap(T_SPACE, 4800);
+			gap(T_MARK, 12000);
+			start = i;
+		}
+		uint8 c = buf[i];
+		bool pz = prevzero;
+		prevzero = (c == 0);
+		if (nameleft > 0)
+		{
+			if (--nameleft == 0)
+			{
+				nameleft = -1;
+				data(start, i + 1);
+				gap(T_MARK, 1000);
+				start = i + 1;
+			}
+			continue;
+		}
+		d3run = (c == 0xd3) ? d3run + 1 : 0;
+		dollarrun = (c == 0x24 && (dollarrun > 0 || pz)) ? dollarrun + 1 : 0;
+		if (d3run == 10 || dollarrun == 3)
+		{
+			d3run = dollarrun = 0;
+			nameleft = 6;
+		}
+	}
+	data(start, size);
+	gap(T_MARK, 9600);
+	add(T_END, 0);
+	hasdata = true;
+	cmt = true;
+	return true;
+}
+
+// ---------------------------------------------------------------------------
 //	空の T88 (ヘッダー・バージョン・END だけ) を作る
 //
 bool TapeManager::CreateNew(const char* file)
@@ -220,6 +428,8 @@ bool TapeManager::Close()
 	filename.clear();
 	writeprotect = false;
 	hasdata = false;
+	cmt = false;
+	cmtmark = 0;
 	appendok = false;
 	if (scheduler)
 		SetTimer(0);
@@ -248,6 +458,7 @@ bool TapeManager::Rewind(bool timer)
 	}
 	pos = tags;
 	scheduler->DelEvent(event), event = 0;
+	cmtmark = 0;
 	if (pos)
 	{
 		tick = 0;
@@ -398,6 +609,29 @@ void TapeManager::PlayStart()
 	}
 	gapfast = false;
 	time = scheduler->GetTime();
+	// データの残りが 2 バイト以下で、後ろが BLANK / SPACE / MARK なら、残りは送らずに捨てる。ファイルの終わりの印の
+	// 後ろに余分なバイトがあるテープ (ALPHOS の 2 段目は 3A 00 3A で、ROM は 3A 00 を読むとモーターを止める) で、
+	// 実機ではモーターが止まるまでに流れ去る。止めた後に送ると、次の段のローダーが先頭を取り違える
+	if (mode == T_DATA && datasize > 0 && datasize <= 2 && pos && pos->id != T_DATA)
+	{
+		tick += datasize * (cmt ? 44 : ByteTicks(datatype));
+		data += datasize;
+		datasize = 0;
+		waitremain = 0;
+		Proceed(true);
+		return;
+	}
+	// .cmt は中身から区切りが分からない所 (独自の形式のローダー) に間が無いので、データの途中でモーターを回し直したら
+	// (多段のローダーが次のファイルを読むとき)、SPACE 1 秒・MARK 2.5 秒を挟んでから続きを送る (Timer で T_DATA に戻す。
+	// キャリアが一度切れるのを待つローダーがある)
+	if (cmt && mode == T_DATA && datasize > 0 && !cmtmark)
+	{
+		cmtmark = 1;
+		mode = T_SPACE;
+		waitremain = 0;
+		SetTimer(4800, Wait(4800));
+		return;
+	}
 	if (waitremain > 0)
 		event = scheduler->AddEvent(waitremain, this, STATIC_CAST(TimeFunc, &TapeManager::Timer));
 	waitremain = 0;
@@ -494,7 +728,8 @@ void TapeManager::Proceed(bool timer)
 
 			data = t->data;
 			datasize = t->length;
-			datatype = t->type;
+			// .cmt は速さの情報が無いので、PC 側の設定 (ポート 30h の bit4) に合わせる
+			datatype = cmt ? ((port30 & 0x10) ? 0x01cc : 0x00cc) : t->type;
 			offset = 0;
 
 			if (!datasize)
@@ -522,8 +757,31 @@ void IOCALL TapeManager::Timer(uint)
 {
 	event = 0;			// 発火したイベントの枠は空きになっている
 	SoundFlush();
-	tick += timercount;
+	// テープの上の位置を進める。.cmt では、モーターを回し直したときに挟んだ信号は位置に足さず、データの 1 バイトは
+	// タグを作ったときと同じ 44 で数える (600ボーで送っても)。足すと、後ろの BLANK / SPACE / MARK (タグの位置 + 長さ
+	// － 今の位置) が短くなったり無くなったりする
+	if (!cmtmark)
+		tick += (cmt && mode == T_DATA) ? 44 : timercount;
 	statusdisplay.Show(50, 0, "tape: %d", tick);
+
+	if (cmtmark == 1)
+	{
+		// .cmt: 挟んだ SPACE が終わったので MARK
+		cmtmark = 2;
+		mode = T_MARK;
+		SetTimer(12000, Wait(12000));
+		SoundState();
+		return;
+	}
+	if (cmtmark == 2)
+	{
+		// .cmt: 挟んだ MARK が終わったので、データの続きを送る
+		cmtmark = 0;
+		mode = T_DATA;
+		SetTimer(ByteTicks(datatype));
+		SoundState();
+		return;
+	}
 	
 	if (mode == T_DATA)
 	{
@@ -645,6 +903,11 @@ int TapeManager::ByteTicks(int type)
 inline void TapeManager::Send(uint byte)
 {
 	LOG1("%.2x ", byte);
+
+	// .cmt は速さの情報が無いので、1 バイトごとに PC 側の設定 (ポート 30h の bit4) に合わせる
+	// (途中で速さを切り替える多段のローダーのため。次のバイトまでの間隔もこれで決まる)
+	if (cmt)
+		datatype = (port30 & 0x10) ? 0x01cc : 0x00cc;
 
 	// テープの速さ (DATA の type) と PC 側の設定 (ポート 30h の bit4) が違うときは渡さない。
 	// 実機では正しいバイトにならず、ヘッダーが見つからないまま探し続ける

@@ -118,6 +118,7 @@ public:
 	int softkbddpi;			// softkbdx/y/w を書いたときの画面の DPI (0: 1.1.0 までの値 = 96 DPI 換算)
 	int fddvolume;			// フロッピーのドライブの音 (シーク) の音量 (0～100%)
 	int tapespeed;			// テープのロードの速さ (1: 実機どおり、2/4/8: 倍率)
+	int screenrotate;		// 画面の回転 (0: なし 1: 右に 90° 2: 180° 3: 右に 270°。Direct3D 11 で描くときだけ)
 	int screenscale;		// ウィンドウの表示の倍率 (1～4。0: 決めていない (画面の DPI から決める))
 	int crtscan;			// CRT 風のフィルター: 走査線 (0: なし 1: 弱 2: 中 3: 強)
 	int crtmask;			// CRT 風のフィルター: マスク (0: なし 1: アパーチャグリル 2: シャドウマスク 3: スロットマスク)
@@ -125,6 +126,8 @@ public:
 	int crtbright;			// CRT 風のフィルター: 明るさの補正 (0: Low 1: Normal 2: High)
 	int crtdirect;			// CRT 風のフィルターを掛けずに出す (1: Direct。ほかの CRT の設定は残す)
 	int crtpitch;			// CRT 風のフィルター: マスクの間隔 (0: Pixel 1: 0.25mm 2: 0.31mm 3: 0.39mm)
+	int crtbreathexp;		// CRT 風のフィルター: 伸び縮みの基準 (0: 真っ白で本来の大きさ、暗いと縮む 1: 中間の明るさで本来の大きさ、暗いと縮み明るいと膨らむ)
+	int crtbreath;			// CRT 風のフィルター: 画面全体の明るさで絵が伸び縮みする (0: Off 1: Weak 2: Normal 3: Strong)
 	int crtglow;			// CRT 風のフィルター: 明るい所の周りの丸いぼけ (0: Off 1: Weak 2: Normal 3: Strong)
 
 	BASICMode basicmode;

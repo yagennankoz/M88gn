@@ -19,6 +19,8 @@ cbuffer CB : register(b0)
 	float4 Scan;						// 走査線の数 (200 / 400), 走査線の鋭さ (0: 走査線なし), 横のにじみの鋭さ, 明るさの補正
 	float4 Mask;						// マスクの種類 (0: なし 1: アパーチャグリル 2: シャドウマスク 3: スロットマスク), 暗い所, 明るい所, フィルター (0: なし 1: あり)
 	float4 Glow;						// ぼけの広さ (元の画素), ぼけの量 (0: なし), ぼかす向き (drawd3d11_glow.hlsl), マスクの蛍光体の 1 組の幅 (出力のピクセル。0: ピクセル単位のマスク)
+	float4 Breath;						// 伸び縮み: 偏向の角度に掛ける倍率 (1: なし), 画面の端の偏向の角度の tan (横, 縦), アパーチャグリルのワイヤーの影の太さ (出力のピクセル。0: なし)
+	float4 View;						// 画面の回転 (0～3、右に 90° ずつ), 未使用, 未使用, 未使用
 };
 
 static const int2 SrcSize = int2(640, 400);
@@ -143,9 +145,110 @@ float3 MaskAt(float2 pos)
 	return Glow.w > 0 ? MaskPhys(pos) : MaskPixel(pos);
 }
 
+// 管の画面の形: 画面の上の位置 = (1 - f) × 角度 + f × tan(角度)。f = 1 は平らな画面 (外周ほど大きく動く)、
+// 小さいほど偏向の中心を中心とした球面に近い (全体がそろって動く)。曲率半径 0.7m で約 0.6、1.0m で約 0.7 (14 インチ、
+// 偏向の中心から画面まで 0.15m で計算)。アパーチャグリル (トリニトロン) は円筒の画面で、横は曲面・縦は平ら。
+// ほかの管は球面
+float2 Flatness()
+{
+	return Mask.x == 1 ? float2(0.7, 1.0) : float2(0.6, 0.6);
+}
+
+float2 Bend(float2 th, float2 f)
+{
+	return (1 - f) * th + f * tan(th);
+}
+
+// 伸び縮みした絵の位置 p (-1～1) に来る、元の絵の位置を求める
+float2 Unbend(float2 p, float g)
+{
+	float2 f = Flatness();
+	float2 thmax = atan(Breath.yz);
+	float2 pmax = Bend(thmax, f);
+	// 画面の位置から偏向の角度を求める (ニュートン法)
+	float2 target = p * pmax;
+	float2 th = atan(target);
+	[unroll] for (int i = 0; i < 4; i++)
+	{
+		float2 c = cos(th);
+		th -= (Bend(th, f) - target) / ((1 - f) + f / (c * c));
+	}
+	// 倍率を戻した角度の位置
+	return Bend(th / g, f) / pmax;
+}
+
+float Bend1(float th, float f)
+{
+	return (1 - f) * th + f * tan(th);
+}
+
+// 球面の管: 偏向は画面の中心からの向きに放射状に効くので、角は辺の中ほどより大きく動き、縮むと太鼓型になる。
+// 画面の端の tan (Breath.yz) で縦横の比を合わせ、中心からの距離で角度を逆算する。太鼓型が分かるように、
+// 縮んだ分 (1 - g) に比例して、中心からの距離の 2 乗で外側ほど余分に縮める (角で 1 - g)
+float2 UnbendRadial(float2 p, float g)
+{
+	float f = 0.6;
+	float2 tp = p * Breath.yz;					// 平らな画面の tan の単位
+	float rc = length(Breath.yz);				// 角までの距離
+	float r = length(tp);
+	if (r < 1e-5)
+		return p / g;
+	float pc = Bend1(atan(rc), f);
+	float target = r / rc * pc;
+	float th = atan(target);
+	[unroll] for (int i = 0; i < 4; i++)
+	{
+		float c = cos(th);
+		th -= (Bend1(th, f) - target) / ((1 - f) + f / (c * c));
+	}
+	float r2 = Bend1(th / g, f) / pc * rc;
+	float rn = r / rc;
+	r2 *= 1 + (1 - g) * rn * rn;
+	return tp * (r2 / r) / Breath.yz;
+}
+
+// アパーチャグリルの横のワイヤーの影 (高さの 1/3 と 2/3、ガラスに付いているので伸び縮みしない)。
+// 太さ Breath.w の帯が出力のピクセルに占める割合で暗くする (帯の中は 75% 暗い) (細いときは薄くなる)
+float Wires(float y)
+{
+	float w = Breath.w;
+	float y0 = y - 0.5, y1 = y + 0.5;
+	float k = 1;
+	[unroll] for (int i = 1; i <= 2; i++)
+	{
+		float yc = Dst.w * i / 3;
+		float cov = max(0, min(y1, yc + w / 2) - max(y0, yc - w / 2));
+		k *= 1 - min(cov, 1) * 0.75;
+	}
+	return k;
+}
+
+// 画面の回転: 出力の画素の位置から、回す前の絵の上の位置を求める (Dst は回す前の絵の大きさ。出力の上では、
+// 90°・270° なら縦横が入れ替わる)。マスク・走査線などもいっしょに回る (ブラウン管ごと回したのと同じ)
+float2 Unrotate(float2 pos)
+{
+	float2 o = pos - Dst.xy;
+	int r = (int) View.x;
+	float2 l = r == 1 ? float2(o.y, Dst.w - o.x)
+			 : r == 2 ? float2(Dst.z - o.x, Dst.w - o.y)
+			 : r == 3 ? float2(Dst.z - o.y, o.x)
+			 :          o;
+	return Dst.xy + l;
+}
+
 float4 main(float4 pos : SV_Position) : SV_Target
 {
+	pos.xy = Unrotate(pos.xy);
 	float2 uv = (pos.xy - Dst.xy) / Dst.zw;
+	if (Breath.x != 1)
+	{
+		// 伸び縮み: 角度が Breath.x 倍になった絵の、この位置に来る元の位置を求める (中央を原点に -1～1、横と縦は別々に)。
+		// 外に出た所は黒
+		float2 p = Mask.x == 1 ? Unbend(uv * 2 - 1, Breath.x) : UnbendRadial(uv * 2 - 1, Breath.x);
+		if (abs(p.x) > 1 || abs(p.y) > 1)
+			return float4(0, 0, 0, 1);
+		uv = (p + 1) / 2;
+	}
 
 	if (Mask.w == 0)
 	{
@@ -178,6 +281,8 @@ float4 main(float4 pos : SV_Position) : SV_Target
 
 	if (Mask.x != 0)
 		c *= MaskAt(pos.xy - Dst.xy);
+	if (Breath.w > 0)
+		c *= Wires(pos.y - Dst.y);
 	c *= Scan.w;
 	if (Glow.y > 0)
 		c += GlowTex.Sample(Lin, uv).rgb * Glow.y;		// 明るい所の周りの丸いぼけ

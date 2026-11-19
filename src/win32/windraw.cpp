@@ -46,6 +46,8 @@ WinDraw::WinDraw()
 	crtscan = crtmask = 0;
 	crtsharp = crtbright = 1;
 	crtglow = 0;
+	crtbreath = 0;
+	rotation = 0;
 	crtpitch = 0;
 
 }
@@ -326,12 +328,23 @@ void WinDraw::SetLines(int l)
 // ---------------------------------------------------------------------------
 //	CRT 風のフィルター (D3D11 で描くときだけ効く)
 //
-void WinDraw::SetCrtFilter(int scan, int mask, int sharp, int bright, int glow, int pitch)
+void WinDraw::SetRotation(int rot)
 {
 	CriticalSection::Lock lock(csdraw);
-	crtscan = scan, crtmask = mask, crtsharp = sharp, crtbright = bright, crtglow = glow, crtpitch = pitch;
+	rotation = rot;
 	if (draw)
-		draw->SetCrtFilter(scan, mask, sharp, bright, glow, pitch);
+		draw->SetRotation(rot);
+	drawall = true;
+	drawing = true;
+	PaintWindow();
+}
+
+void WinDraw::SetCrtFilter(int scan, int mask, int sharp, int bright, int glow, int pitch, int breath)
+{
+	CriticalSection::Lock lock(csdraw);
+	crtscan = scan, crtmask = mask, crtsharp = sharp, crtbright = bright, crtglow = glow, crtpitch = pitch, crtbreath = breath;
+	if (draw)
+		draw->SetCrtFilter(scan, mask, sharp, bright, glow, pitch, breath);
 	drawall = true;
 	drawing = true;
 	PaintWindow();
@@ -433,7 +446,8 @@ bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480, int scale)
 			newdraw->SetFlipMode(flipmode);
 			newdraw->SetGUIMode(false);
 			newdraw->SetLines(lines);
-			newdraw->SetCrtFilter(crtscan, crtmask, crtsharp, crtbright, crtglow, crtpitch);
+			newdraw->SetCrtFilter(crtscan, crtmask, crtsharp, crtbright, crtglow, crtpitch, crtbreath);
+			newdraw->SetRotation(rotation);
 		}
 		
 		// 新しいドライバを使用可能にする

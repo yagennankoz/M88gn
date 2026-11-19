@@ -93,6 +93,7 @@ bool WinUI::InitM88(const char* cmdline)
 {
 	active = false;
 	tapetitle[0] = 0;
+	appliedrot = 0;
 	
 	//	設定読み込み
 	LOG1("%d\tLoadConfig\n", timeGetTime());
@@ -659,6 +660,14 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 			ChangeDisplayType(true);	// 全画面のときは、ウィンドウに戻ったときに効く
 		break;
 
+	case IDM_ROTATE_0:
+	case IDM_ROTATE_90:
+	case IDM_ROTATE_180:
+	case IDM_ROTATE_270:
+		config.screenrotate = wid - IDM_ROTATE_0;
+		SetCrtFilter();
+		break;
+
 	case IDM_CRTSCAN_0:
 	case IDM_CRTSCAN_1:
 	case IDM_CRTSCAN_2:
@@ -671,6 +680,19 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 	case IDM_CRTSHARP_1:
 	case IDM_CRTSHARP_2:
 		config.crtsharp = wid - IDM_CRTSHARP_0;
+		SetCrtFilter();
+		break;
+
+	case IDM_CRTBREATH_0:
+	case IDM_CRTBREATH_1:
+	case IDM_CRTBREATH_2:
+	case IDM_CRTBREATH_3:
+		config.crtbreath = wid - IDM_CRTBREATH_0;
+		SetCrtFilter();
+		break;
+
+	case IDM_CRTBREATH_EXPAND:
+		config.crtbreathexp = !config.crtbreathexp;
 		SetCrtFilter();
 		break;
 
@@ -1129,13 +1151,19 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 	static const UINT scaleid[4] = { IDM_SCALE_1, IDM_SCALE_2, IDM_SCALE_3, IDM_SCALE_4 };
 	for (int s = 0; s < 4; s++)
 		CheckMenuItem(hmenu, scaleid[s], (config.screenscale == s + 1) ? MF_CHECKED : MF_UNCHECKED);
+	// 画面の回転は Direct3D 11 で描くときだけ
+	for (int r = 0; r < 4; r++)
+	{
+		CheckMenuItem(hmenu, IDM_ROTATE_0 + r, (config.screenrotate == r) ? MF_CHECKED : MF_UNCHECKED);
+		EnableMenuItem(hmenu, IDM_ROTATE_0 + r, draw.CanCrtFilter() ? MF_ENABLED : MF_GRAYED);
+	}
 	// CRT 風のフィルターは Direct3D 11 で描くときだけ。Direct (フィルター無し) のときは各項目を灰色にする (値は残す)
 	CheckMenuItem(hmenu, IDM_CRTDIRECT, config.crtdirect ? MF_CHECKED : MF_UNCHECKED);
 	EnableMenuItem(hmenu, IDM_CRTDIRECT, draw.CanCrtFilter() ? MF_ENABLED : MF_GRAYED);
 	{
 		// Scanlines・Mask などのサブメニューそのものを灰色にする
 		// (メニューバーの各メニューの中で、最初の項目が CRT の項目のサブメニューを探す)
-		static const UINT crtfirst[6] = { IDM_CRTSCAN_0, IDM_CRTMASK_0, IDM_CRTPITCH_0, IDM_CRTSHARP_0, IDM_CRTBRIGHT_0, IDM_CRTGLOW_0 };
+		static const UINT crtfirst[7] = { IDM_CRTSCAN_0, IDM_CRTMASK_0, IDM_CRTPITCH_0, IDM_CRTSHARP_0, IDM_CRTBRIGHT_0, IDM_CRTGLOW_0, IDM_CRTBREATH_0 };
 		UINT en = (draw.CanCrtFilter() && !config.crtdirect) ? MF_ENABLED : MF_GRAYED;
 		int nbar = GetMenuItemCount(hmenu);
 		for (int b = 0; b < nbar; b++)
@@ -1150,7 +1178,7 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 				if (!sub)
 					continue;
 				UINT first = GetMenuItemID(sub, 0);
-				for (int k = 0; k < 6; k++)
+				for (int k = 0; k < 7; k++)
 					if (first == crtfirst[k])
 						EnableMenuItem(pop, i, MF_BYPOSITION | en);
 			}
@@ -1167,6 +1195,13 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 		EnableMenuItem(hmenu, IDM_CRTPITCH_0 + c, en);
 		CheckMenuItem(hmenu, IDM_CRTGLOW_0 + c, (config.crtglow == c) ? MF_CHECKED : MF_UNCHECKED);
 		EnableMenuItem(hmenu, IDM_CRTGLOW_0 + c, en);
+		CheckMenuItem(hmenu, IDM_CRTBREATH_0 + c, (config.crtbreath == c) ? MF_CHECKED : MF_UNCHECKED);
+		EnableMenuItem(hmenu, IDM_CRTBREATH_0 + c, en);
+		if (c == 0)
+		{
+			CheckMenuItem(hmenu, IDM_CRTBREATH_EXPAND, config.crtbreathexp ? MF_CHECKED : MF_UNCHECKED);
+			EnableMenuItem(hmenu, IDM_CRTBREATH_EXPAND, en);
+		}
 		if (c < 3)
 		{
 			CheckMenuItem(hmenu, IDM_CRTSHARP_0 + c, (config.crtsharp == c) ? MF_CHECKED : MF_UNCHECKED);
@@ -1283,10 +1318,21 @@ LRESULT WinUI::M88ApplyConfig(HWND, WPARAM newconfig, LPARAM)
 //
 void WinUI::SetCrtFilter()
 {
+	// 画面の回転。窓の大きさに使った向きと変われば、窓の大きさを直す (全画面なら描く範囲だけ)
+	draw.SetRotation(Limit(config.screenrotate, 3, 0));
+	int rot = draw.CanCrtFilter() ? Limit(config.screenrotate, 3, 0) : 0;
+	if ((rot & 1) != (appliedrot & 1))
+	{
+		if (fullscreen)
+			appliedrot = rot;
+		else
+			ResizeWindow(640, 400);
+	}
 	if (config.crtdirect)
-		draw.SetCrtFilter(0, 0, config.crtsharp, config.crtbright, 0, config.crtpitch);	// 走査線・マスク・ぼけが無ければ、フィルター無し (最近傍)
+		draw.SetCrtFilter(0, 0, config.crtsharp, config.crtbright, 0, config.crtpitch, 0);	// 走査線・マスク・ぼけが無ければ、フィルター無し (最近傍)
 	else
-		draw.SetCrtFilter(config.crtscan, config.crtmask, config.crtsharp, config.crtbright, config.crtglow, config.crtpitch);
+		draw.SetCrtFilter(config.crtscan, config.crtmask, config.crtsharp, config.crtbright, config.crtglow, config.crtpitch,
+			config.crtbreath | (config.crtbreathexp ? 0x10 : 0));	// 0x10: 明るいと膨らむ
 }
 
 // ---------------------------------------------------------------------------
@@ -1659,8 +1705,9 @@ void WinUI::ChangeTapeImage()
 	filename[0] = 0;
 	
 	ofn.hwndOwner = hwnd;
-	ofn.lpstrFilter = "Tape image (*.t88;*.raw)\0*.t88;*.raw\0"
+	ofn.lpstrFilter = "Tape image (*.t88;*.cmt;*.raw)\0*.t88;*.cmt;*.raw\0"
 					  "T88 tape image (*.t88)\0*.t88\0"
+					  "CMT tape image (*.cmt)\0*.cmt\0"
 					  "PicoCmt RAW (*.raw)\0*.raw\0"
 					  "All Files (*.*)\0*.*\0";
 	ofn.lpstrFile = filename;
@@ -1680,8 +1727,8 @@ void WinUI::ChangeTapeImage()
 		if (GetFileAttributes(filename) == INVALID_FILE_ATTRIBUTES)
 		{
 			size_t len = strlen(filename);
-			if (len >= 4 && !_stricmp(filename + len - 4, ".raw"))
-				ok = false;		// RAW は作れない (T88 だけ)
+			if (len >= 4 && (!_stricmp(filename + len - 4, ".raw") || !_stricmp(filename + len - 4, ".cmt")))
+				ok = false;		// RAW・CMT は作れない (T88 だけ)
 			else
 				ok = TapeManager::CreateNew(filename);
 			if (!ok)
@@ -1911,6 +1958,12 @@ LRESULT WinUI::WmDpiChanged(HWND hwnd, WPARAM, LPARAM lp)
 //
 void WinUI::ResizeWindow(uint width, uint height)
 {
+	appliedrot = draw.CanCrtFilter() ? Limit(config.screenrotate, 3, 0) : 0;
+	if (appliedrot & 1)
+	{
+		uint t = width;
+		width = height, height = t;
+	}
 	int scale = Limit(config.screenscale, 4, 1);
 	width *= scale;
 	height *= scale;
@@ -2183,7 +2236,7 @@ LRESULT WinUI::WmDropFiles(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		// 正常にマウントできたらリセット
 		if (diskinfo[0].filename[0])
 		  Reset();
-	} else if (strcmpi(ext, ".t88") == 0 || strcmpi(ext, ".raw") == 0) {
+	} else if (strcmpi(ext, ".t88") == 0 || strcmpi(ext, ".cmt") == 0 || strcmpi(ext, ".raw") == 0) {
 		OpenTapeImage(path);
 	} else {
 		statusdisplay.Show(50, 3000, "非対応のファイルです.");

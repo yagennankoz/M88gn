@@ -123,6 +123,13 @@ BEGIN
             MENUITEM "x&3",                         IDM_SCALE_3
             MENUITEM "x&4",                         IDM_SCALE_4
         END
+        POPUP "&Rotation"
+        BEGIN
+            MENUITEM "&0Åã",                         IDM_ROTATE_0
+            MENUITEM "&90Åã (clockwise)",            IDM_ROTATE_90
+            MENUITEM "&180Åã",                       IDM_ROTATE_180
+            MENUITEM "&270Åã (clockwise)",           IDM_ROTATE_270
+        END
         MENUITEM SEPARATOR
         MENUITEM "&Direct (no filter)",         IDM_CRTDIRECT
         POPUP "Scan&lines"
@@ -164,6 +171,15 @@ BEGIN
             MENUITEM "&Weak",                       IDM_CRTGLOW_1
             MENUITEM "&Normal",                     IDM_CRTGLOW_2
             MENUITEM "&Strong",                     IDM_CRTGLOW_3
+        END
+        POPUP "B&reathing"
+        BEGIN
+            MENUITEM "&Off",                        IDM_CRTBREATH_0
+            MENUITEM "&Weak",                       IDM_CRTBREATH_1
+            MENUITEM "&Normal",                     IDM_CRTBREATH_2
+            MENUITEM "&Strong",                     IDM_CRTBREATH_3
+            MENUITEM SEPARATOR
+            MENUITEM "&Expand when bright (mid = normal size)", IDM_CRTBREATH_EXPAND
         END
     END
     POPUP "&Tools"

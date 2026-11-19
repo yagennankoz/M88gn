@@ -36,7 +36,8 @@ public:
 	bool Lock(uint8** pimage, int* pbpl);
 	bool Unlock();
 	void SetLines(int lines);
-	void SetCrtFilter(int scan, int mask, int sharp, int bright, int glow, int pitch);
+	void SetCrtFilter(int scan, int mask, int sharp, int bright, int glow, int pitch, int breath);
+	void SetRotation(int rot);
 
 private:
 	enum { srcw = 640, srch = 400 };
@@ -46,6 +47,8 @@ private:
 	void ReleaseDevice();
 	void Render();
 	void RenderGlow(const float* cbdata);
+	float MeasureLuminance();
+	float BreathScale(float gain);
 
 	HWND hwndparent;
 	HWND hwnd;						// 描く子の窓
@@ -66,6 +69,13 @@ private:
 	int crtsharp;					// 横のシャープさ (0: Sharp 1: Normal 2: Soft)
 	int crtbright;					// 明るさの補正 (0: Low 1: Normal 2: High)
 	int crtpitch;					// マスクの間隔 (0: ピクセル単位 1: 0.25mm 2: 0.31mm 3: 0.39mm)
+	int crtbreath;					// 画面全体の明るさで絵が伸び縮みする (bit1-0 = 0: なし 1: 弱 2: 中 3: 強、bit4 = 1: 中間の明るさで本来の大きさ、明るいと膨らむ)
+	float lumtarget;				// 画面全体の平均の明るさ (リニア、0～1。-1: まだ測っていない)
+	float lumgain;					// 出す明るさ / 絵の明るさ (走査線・マスク・明るさの補正・ぼけ。Render で求める)
+	float lumnow;					// 遅れを付けた明るさ (伸び縮みに使う)
+	DWORD lumtime;					// lumnow を進めた時刻 (ms)
+	bool lumdirty;					// 絵かパレットが変わったので測り直す
+	int rotation;					// 画面の回転 (0～3、右に 90° ずつ)
 	int crtglow;					// 明るい所の周りの丸いぼけ (0: なし 1: 弱 2: 中 3: 強)
 
 	HMODULE hd3d11;

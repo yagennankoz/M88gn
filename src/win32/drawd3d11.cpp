@@ -50,6 +50,13 @@ WinDrawD3D11::WinDrawD3D11()
 	crtbright = 1;
 	crtglow = 0;
 	crtpitch = 0;
+	crtbreath = 0;
+	rotation = 0;
+	lumtarget = -1;
+	lumnow = 0;
+	lumgain = 1;
+	lumtime = 0;
+	lumdirty = true;
 	hd3d11 = 0;
 	device = 0;
 	context = 0;
@@ -229,7 +236,7 @@ bool WinDrawD3D11::CreateDevice()
 
 	D3D11_BUFFER_DESC bd;
 	memset(&bd, 0, sizeof(bd));
-	bd.ByteWidth = 64;
+	bd.ByteWidth = 96;
 	bd.Usage = D3D11_USAGE_DEFAULT;
 	bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 	if (FAILED(device->CreateBuffer(&bd, 0, &cb)))
@@ -353,6 +360,20 @@ void WinDrawD3D11::DrawScreen(const RECT& _rect, bool refresh)
 		SetRect(&rc, 0, 0, srcw, srch);
 		valid = true;
 	}
+	if (valid || palchanged)
+		lumdirty = true;
+	// 伸び縮み: 明るさが変わったら測り直し、遅れを付けた明るさが追いつくまで描き直し続ける
+	if ((crtbreath & 3) > 0)
+	{
+		if (lumdirty)
+		{
+			lumdirty = false;
+			lumtarget = MeasureLuminance();
+		}
+		float eff = lumtarget * lumgain;
+		if (fabsf(lumnow - (eff < 1 ? eff : 1)) > 0.0005f)
+			needrender = true;
+	}
 	if (!valid && !palchanged && !needrender)
 		return;
 	needrender = false;
@@ -378,16 +399,20 @@ void WinDrawD3D11::DrawScreen(const RECT& _rect, bool refresh)
 void WinDrawD3D11::Render()
 {
 	// 描く範囲: ウィンドウなら倍率どおり、全画面なら縦横比を保っていっぱいに
-	float dx = 0, dy = 0, dw = float(srcw * mag), dh = float(srch * mag);
+	// 90°・270° に回すときは、出力の上で縦横が入れ替わる (ow, oh)。dw, dh は回す前の絵の大きさ
+	bool side = (rotation & 1) != 0;
+	uint sw = side ? srch : srcw, sh = side ? srcw : srch;
+	float dx = 0, dy = 0, ow = float(sw * mag), oh = float(sh * mag);
 	if (fit)
 	{
-		if (bufw * srch <= bufh * srcw)
-			dw = float(bufw), dh = float(bufw * srch / srcw);
+		if (bufw * sh <= bufh * sw)
+			ow = float(bufw), oh = float(bufw * sh / sw);
 		else
-			dh = float(bufh), dw = float(bufh * srcw / srch);
-		dx = float(int((bufw - dw) / 2));
-		dy = float(int((bufh - dh) / 2));
+			oh = float(bufh), ow = float(bufh * sw / sh);
+		dx = float(int((bufw - ow) / 2));
+		dy = float(int((bufh - oh) / 2));
 	}
+	float dw = side ? oh : ow, dh = side ? ow : oh;
 
 	// フィルターの定数 (drawd3d11_ps.hlsl の CB)
 	//	走査線の鋭さ: ガウスの指数。線のすき間の明るさは、弱で中央の約 8 割、中で約半分、強で約 1 割
@@ -424,12 +449,21 @@ void WinDrawD3D11::Render()
 	float bright = powf(1 / (mean > 0.1f ? mean : 0.1f), brightexp[Limit(crtbright, 2, 0)]);
 	float hpix = hardpix[sharp];
 
-	float cbdata[16] =
+	// 伸び縮み: 偏向の角度に掛ける倍率 (真っ白で 1)。画面の端の偏向の角度の tan は、14 インチの 90° の管 (4:3) を想定して
+	// 横 0.8・縦 0.6。シェーダーが出力の画素ごとに元の位置を逆算する (外周ほど大きく動く。画面の形はマスクで決める)
+	// アパーチャグリルの横のワイヤーの影: 太さ 0.09mm を、14 インチの画面の高さ 180mm として出力のピクセルに直す
+	// 伸び縮みの元の明るさは、フィルターで出す明るさ (走査線・マスクで落ちる分 × 明るさの補正、ぼけの足し分)
+	float bs = BreathScale(filter ? mean * bright * (1 + gamount) : 1);
+	float wire = (mtype == 1) ? 0.09f * dh / 180.0f : 0;
+
+	float cbdata[24] =
 	{
 		dx, dy, dw, dh,
 		float(lines == 200 ? 200 : 400), hscan, hpix, bright,
 		float(mtype), mdark, mlight, filter ? 1.0f : 0.0f,
 		sharp == 2 ? 2.0f : 1.0f, gamount, 0, ppitch,
+		bs, 0.8f, 0.6f, wire,
+		float(rotation & 3), 0, 0, 0,
 	};
 
 	context->IASetInputLayout(0);
@@ -443,7 +477,7 @@ void WinDrawD3D11::Render()
 	static const float black[4] = { 0, 0, 0, 1 };
 	context->OMSetRenderTargets(1, &rtv, 0);
 	context->ClearRenderTargetView(rtv, black);
-	D3D11_VIEWPORT vp = { dx, dy, dw, dh, 0, 1 };
+	D3D11_VIEWPORT vp = { dx, dy, ow, oh, 0, 1 };
 	context->RSSetViewports(1, &vp);
 	context->PSSetShader(ps, 0, 0);
 	ID3D11ShaderResourceView* srv[3] = { srcsrv, palsrv, glowsrv[1] };
@@ -466,7 +500,7 @@ void WinDrawD3D11::Render()
 //
 void WinDrawD3D11::RenderGlow(const float* cbdata)
 {
-	float c[16];
+	float c[24];
 	memcpy(c, cbdata, sizeof(c));
 	D3D11_VIEWPORT vp = { 0, 0, float(srcw), float(srch), 0, 1 };
 	context->RSSetViewports(1, &vp);
@@ -517,11 +551,147 @@ void WinDrawD3D11::SetLines(int l)
 // ---------------------------------------------------------------------------
 //	CRT 風のフィルター
 //
-void WinDrawD3D11::SetCrtFilter(int scan, int mask, int sharp, int bright, int glow, int pitch)
+void WinDrawD3D11::SetRotation(int rot)
 {
-	if (scan != crtscan || mask != crtmask || sharp != crtsharp || bright != crtbright || glow != crtglow || pitch != crtpitch)
+	if (rot != rotation)
 	{
-		crtscan = scan, crtmask = mask, crtsharp = sharp, crtbright = bright, crtglow = glow, crtpitch = pitch;
+		rotation = rot;
 		needrender = true;
 	}
+}
+
+void WinDrawD3D11::SetCrtFilter(int scan, int mask, int sharp, int bright, int glow, int pitch, int breath)
+{
+	if (scan != crtscan || mask != crtmask || sharp != crtsharp || bright != crtbright || glow != crtglow || pitch != crtpitch || breath != crtbreath)
+	{
+		crtscan = scan, crtmask = mask, crtsharp = sharp, crtbright = bright, crtglow = glow, crtpitch = pitch;
+		if (breath != crtbreath)
+		{
+			crtbreath = breath;
+			lumtarget = -1;			// 次に測った明るさから始める (いきなり伸び縮みしない)
+			lumdirty = true;
+		}
+		needrender = true;
+	}
+}
+
+// ---------------------------------------------------------------------------
+//	画面全体の平均の明るさ (リニア、0～1)。ブラウン管のビームの電流に比例するものとして、
+//	パレットの色を sRGB からリニアに直し、輝度の重みで足す。200 ラインなら偶数の行だけ (描くのと同じ)
+//
+float WinDrawD3D11::MeasureLuminance()
+{
+	if (!image)
+		return 0;
+	uint hist[256];
+	memset(hist, 0, sizeof(hist));
+	int step = (lines == 200) ? 2 : 1;
+	uint n = 0;
+	for (uint y = 0; y < srch; y += step)
+	{
+		const uint8* src = image + y * srcw;
+		for (uint x = 0; x < srcw; x++)
+			hist[src[x]]++;
+		n += srcw;
+	}
+	double sum = 0;
+	for (int i = 0; i < 256; i++)
+	{
+		if (!hist[i])
+			continue;
+		uint32 c = palette[i];
+		double r = pow((c & 0xff) / 255.0, 2.2);
+		double g = pow(((c >> 8) & 0xff) / 255.0, 2.2);
+		double b = pow(((c >> 16) & 0xff) / 255.0, 2.2);
+		sum += hist[i] * (0.2126 * r + 0.7152 * g + 0.0722 * b);
+	}
+	return n ? float(sum / n) : 0;
+}
+
+// ---------------------------------------------------------------------------
+//	伸び縮みしたときに、左右の辺の中ほどが内側に動く割合 (画面の中心から端までに対して)。
+//	drawd3d11_ps.hlsl の Unbend (アパーチャグリル) / UnbendRadial (ほか) と同じ計算で、元の絵の端が来る位置を二分法で求める
+//
+static double BreathBend(double th, double f)
+{
+	return (1 - f) * th + f * tan(th);
+}
+
+static double BreathUnbend(double target, double f)
+{
+	double th = atan(target);
+	for (int i = 0; i < 8; i++)
+	{
+		double c = cos(th);
+		th -= (BreathBend(th, f) - target) / ((1 - f) + f / (c * c));
+	}
+	return th;
+}
+
+static double BreathEdgeShrink(double g, bool grille)
+{
+	const double tx = 0.8;							// 画面の端の偏向の角度の tan (横)
+	double lo = 0.5, hi = 1;						// 出力の位置 (中心 0、端 1)
+	for (int i = 0; i < 40; i++)
+	{
+		double pm = (lo + hi) / 2, src;
+		if (grille)
+		{
+			double pmax = BreathBend(atan(tx), 0.7);
+			src = BreathBend(BreathUnbend(pm * pmax, 0.7) / g, 0.7) / pmax;
+		}
+		else
+		{
+			const double rc = 1.0;					// 角までの距離 (tan の単位、0.8 と 0.6 の斜辺)
+			double r = pm * tx;
+			double pc = BreathBend(atan(rc), 0.6);
+			double r2 = BreathBend(BreathUnbend(r / rc * pc, 0.6) / g, 0.6) / pc * rc;
+			double rn = r / rc;
+			r2 *= 1 + (1 - g) * rn * rn;
+			src = r2 / tx;
+		}
+		if (src > 1)
+			hi = pm;
+		else
+			lo = pm;
+	}
+	return 1 - lo;
+}
+
+// ---------------------------------------------------------------------------
+//	伸び縮みの倍率 (偏向の角度に掛ける)。出す明るさ (絵の明るさ × gain) に遅れ (時定数 0.03 秒、ブラウン管の高圧の電源の応答) を付ける。
+//	強さは、真っ黒と真っ白の間で左右の辺の中ほどが動く割合 (弱 1%・中 2%・強 3%。強は伸び縮みの目立つ管のつもり)。
+//	角度の倍率は、管の形 (マスク) ごとに辺の動きと倍率の比を求めて逆算する (角は辺の中ほどより大きく動く)
+//
+float WinDrawD3D11::BreathScale(float gain)
+{
+	static const float amount[4] = { 0, 0.01f, 0.02f, 0.03f };
+	static float ratio[2] = { 0, 0 };				// 辺の中ほどの動き / (1 - 倍率)。0: ほかの管 1: アパーチャグリル
+	float k = amount[crtbreath & 3];
+	lumgain = gain;
+	DWORD now = timeGetTime();
+	if (k == 0 || lumtarget < 0)
+	{
+		lumtime = 0;			// 次に測れたら、その明るさから始める
+		return 1;
+	}
+	if (lumtime == 0)
+		lumnow = (lumtarget * gain < 1 ? lumtarget * gain : 1), lumtime = now;
+	float dt = Min(int(now - lumtime), 500) / 1000.0f;
+	lumtime = now;
+	float eff = lumtarget * gain;
+	if (eff > 1)
+		eff = 1;
+	lumnow += (eff - lumnow) * (1 - expf(-dt / 0.03f));
+	float l = lumnow < 0 ? 0 : (lumnow > 1 ? 1 : lumnow);
+	int gi = (crtmask == 1) ? 1 : 0;
+	if (ratio[gi] == 0)
+		ratio[gi] = float(BreathEdgeShrink(0.98, gi == 1) / 0.02);
+	// 黒から明るくなり始めた所で大きく伸び、白に近づくほど緩やかにする (平方根)。
+	// 基準: 真っ白で本来の大きさ (暗いと縮む)、または中間の明るさ (平方根で半分、出す明るさ 0.25) で本来の大きさ
+	// (暗いと縮み、明るいと膨らむ。それぞれ強さの半分。膨らむと端の絵は少し切れる)。
+	// 膨らむときも縮むときの比を使う (動きが小さいので、ほぼ同じ)
+	if (crtbreath & 0x10)
+		return 1 + k / ratio[gi] * (sqrtf(l) - 0.5f);
+	return 1 - k / ratio[gi] * (1 - sqrtf(l));
 }

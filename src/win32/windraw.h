@@ -36,7 +36,8 @@ public:
 	virtual bool SetFlipMode(bool flip) { return false; }
 	virtual void WindowMoved(int cx, int cy) { return; }
 	virtual void SetLines(int lines) {}
-	virtual void SetCrtFilter(int scan, int mask, int sharp, int bright, int glow, int pitch) {}
+	virtual void SetCrtFilter(int scan, int mask, int sharp, int bright, int glow, int pitch, int breath) {}
+	virtual void SetRotation(int rot) {}
 
 protected:
 	uint status;
@@ -78,7 +79,8 @@ public:
 	bool ChangeDisplayMode(bool fullscreen, bool force480 = true, int scale = 1);
 	void Refresh() { refresh = 1; }
 	void WindowMoved(int cx, int cy);
-	void SetCrtFilter(int scan, int mask, int sharp, int bright, int glow, int pitch);
+	void SetCrtFilter(int scan, int mask, int sharp, int bright, int glow, int pitch, int breath);
+	void SetRotation(int rot);
 	bool CanCrtFilter() { return drawtype == D3D11; }
 
 	int CaptureScreen(uint8* dest);
@@ -137,6 +139,8 @@ private:
 	int crtsharp;		// CRT 風のフィルター: 横のシャープさ (0: Sharp 1: Normal 2: Soft)
 	int crtbright;		// CRT 風のフィルター: 明るさの補正 (0: Low 1: Normal 2: High)
 	int crtpitch;		// CRT 風のフィルター: マスクの間隔 (0: Pixel 1: 0.25mm 2: 0.31mm 3: 0.39mm)
+	int crtbreath;		// CRT 風のフィルター: 画面全体の明るさで絵が伸び縮みする (0: なし 1: 弱 2: 中 3: 強)
+	int rotation;		// 画面の回転 (0～3、右に 90° ずつ。D3D11 で描くときだけ効く)
 	int crtglow;		// CRT 風のフィルター: 明るい所の周りの丸いぼけ (0: なし 1: 弱 2: 中 3: 強)
 };
 

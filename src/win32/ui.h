@@ -121,6 +121,7 @@ private:
 	POINT point;
 	int clipmode;
 	bool guimodebymouse;
+	int appliedrot;			// 窓の大きさに使った画面の回転 (変わったら窓の大きさを直す)
 	bool cursorhidden;		// 全画面でマウスが止まっていたので、カーソルを消している
 	POINT cursorpos;		// カーソルが動いたかを見るための前の位置
 	enum { cursortimer = 10, cursorhidems = 3000 };
