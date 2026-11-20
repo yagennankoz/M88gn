@@ -107,6 +107,11 @@ bool PC88::Init(Draw* _draw, DiskManager* disk, TapeManager* tape)
 	if (!ConnectDevices() || !ConnectDevices2()) 
 		return false;
 
+	if (!debugger.Init(this))
+		return false;
+	cpu1.SetDebugHook(&debugger, PC8801::Debugger::cpu_main);
+	cpu2.SetDebugHook(&debugger, PC8801::Debugger::cpu_sub);
+
 	Reset();
 	region.Reset();
 	clock = 1;
@@ -115,6 +120,8 @@ bool PC88::Init(Draw* _draw, DiskManager* disk, TapeManager* tape)
 
 void PC88::DeInit()
 {
+	debugger.Cleanup();
+
 	delete beep;
 	delete opn1;
 	delete opn2;
@@ -136,6 +143,13 @@ int PC88::Proceed(uint ticks, uint clk, uint ecl)
 //
 int PC88::Execute(int ticks)
 {
+	// 既にブレーク中なら CPU を一切進めない。時間も進めず、Scheduler::Proceed のループもその場で打ち切る
+	if (debugger.IsBroken())
+	{
+		AbortProceed();
+		return 0;
+	}
+
 	LOADBEGIN("Core.CPU");
 	int exc = ticks * clock;
 	if (!(cpumode & stopwhenidle) || subsys->IsBusy() || fdc->IsBusy())
@@ -152,7 +166,21 @@ int PC88::Execute(int ticks)
 	exc += dexc;
 	dexc = exc % clock;
 	LOADEND("Core.CPU");
+
+	// ブレークポイント/ステップで止まったら、実際に実行した分だけを返し、残り時間は消化しない。
+	// 消化すると、1 回のステップでデバイスの時間だけが最大 1 フレーム分進み、VRTC やタイマーの割り込みが
+	// ステップのたびに起きてしまう
+	if (debugger.IsBroken())
+		AbortProceed();
 	return exc / clock;
+}
+
+// ---------------------------------------------------------------------------
+//	サブCPUが実際に駆動されているか (Execute の実行条件と同じ形にすること)
+//
+bool PC88::IsSubCPUActive()
+{
+	return !(cpumode & stopwhenidle) || subsys->IsBusy() || fdc->IsBusy();
 }
 
 // ---------------------------------------------------------------------------

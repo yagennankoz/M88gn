@@ -23,7 +23,8 @@ public:
 	MemViewMonitor();
 	~MemViewMonitor();
 
-	bool Init(LPCTSTR tmpl, PC88*);
+	bool Init(LPCTSTR tmpl, PC88*, const char* inisection = 0,
+			  int defcols = 0, int defrows = 0);
 
 protected:
 	MemoryBus* GetBus() { return bus; }
@@ -33,18 +34,37 @@ protected:
 	uint StatExec(uint a);
 	virtual void SetBank();
 
+	// 任意アドレスへ飛ぶ(ダイアログを出して JumpTo を呼ぶ)。Ctrl+G と
+	// メニューの Go to Address... の両方から呼ばれる
+	void GotoAddress();
+	// SetLine() に渡す行番号への換算。既定は CodeMonitor 相当(1行=1アドレス)。
+	// MemoryMonitor は 1行=16バイトなのでオーバーライドする
+	virtual void JumpTo(uint addr) { SetLine(addr); }
+
 	MemoryViewer mv;
 
 	MemoryViewer::Type GetA0() { return a0; }
+	void SetA0(MemoryViewer::Type t) { a0 = t; }
 	MemoryViewer::Type GetA6() { return a6; }
+	MemoryViewer::Type GetAc() { return ac; }
 	MemoryViewer::Type GetAf() { return af; }
 
+	// Auto: 0000～7FFF と F000～FFFF のバンクを、メイン CPU がいま見ているものに合わせる (M88gn)。
+	// メニューでバンクを選ぶと外れる。書き直す前 (UpdateText の初め) に呼ぶ。変わったら true
+	bool AutoBank();
+	bool IsAutoBank() { return autobank; }
+
 private:
+	BOOL GotoDlgProc(HWND, UINT, WPARAM, LPARAM);
+	static BOOL CALLBACK GotoDlgProcGate(HWND, UINT, WPARAM, LPARAM);
 
 	MemoryBus* bus;
 	MemoryViewer::Type a0;
 	MemoryViewer::Type a6;
+	MemoryViewer::Type ac;
 	MemoryViewer::Type af;
+	bool autobank;
+	PC8801::Memory* mem1;
 };
 
 }

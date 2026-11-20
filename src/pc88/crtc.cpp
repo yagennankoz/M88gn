@@ -23,6 +23,7 @@
 
 using namespace PC8801;
 
+
 // ---------------------------------------------------------------------------
 //	CRTC 部の機能
 //	・VSYNC 割り込み管理
@@ -68,6 +69,11 @@ using namespace PC8801;
 CRTC::CRTC(const ID& id)
 : Device(id)
 {
+	// Reset() -> HotReset() で入るが、それより前に GetFramePeriod() が
+	// 呼ばれても壊れないようにしておく
+	linetimeq = int(4.028*ltqunit + 0.5) * 16;
+	fracq = 0;
+	linetime = linetimeq >> ltqshift;
 	font = 0;
 	fontrom = 0;
 	cg80rom = 0;
@@ -136,6 +142,7 @@ bool CRTC::Init(IOBus* b, Scheduler* s, PD8257* d, Draw* _draw)
 	EnablePCG(true);
 
 	sev = 0;
+	nexttime = scheduler->GetTime();
 	return true;
 }
 
@@ -182,7 +189,12 @@ void CRTC::HotReset()
 //	screenwidth = 640;
 	screenheight = 400;
 
-	linetime = line200 ? int(6.258*8) : int(4.028*16);
+	// 15k = 6.258 tick/走査線、24k = 4.028 tick/走査線。
+	// リセット直後は 15k が 8 ライン/文字、24k が 16 ライン/文字
+	linetimeq = line200 ? int(6.258*ltqunit + 0.5) * 8
+						: int(4.028*ltqunit + 0.5) * 16;
+	fracq     = 0;
+	linetime  = linetimeq >> ltqshift;
 	height = 25; 
 	vretrace = line200 ? 7 : 3;
 	mode = clear | resize;
@@ -191,6 +203,7 @@ void CRTC::HotReset()
 	pcount[1] = 0;
 
 	scheduler->DelEvent(sev);
+	nexttime = scheduler->GetTime();
 	StartDisplay();
 }
 
@@ -279,7 +292,9 @@ uint CRTC::Command(bool a0, uint data)
 			cursormode = (data >> 5) & 3;
 			linesperchar = (data & 0x1f) + 1;
 			
-			linetime = (line200 ? int(6.258*1024) : int(4.028*1024)) * linesperchar / 1024;
+			linetimeq = (line200 ? int(6.258*ltqunit + 0.5)
+								 : int(4.028*ltqunit + 0.5)) * linesperchar;
+			linetime  = linetimeq >> ltqshift;
 			if (data & 0x80)
 				mode |= skipline;
 			if (line200)
@@ -304,6 +319,7 @@ uint CRTC::Command(bool a0, uint data)
 			attrperline = mode & attribute ? (data & 0x1f) + 1 : 0;
 			if (attrperline + width > 120)
 				mode &= ~enable;
+
 
 //			screenwidth = 640;
 			screenheight = Min(400, linesperchar * height);
@@ -331,8 +347,9 @@ uint CRTC::Command(bool a0, uint data)
 				{
 					status |= 0x10;
 					scheduler->DelEvent(sev);
+					nexttime = scheduler->GetTime();
 					event = -1;
-					sev = scheduler->AddEvent(linetime*vretrace, this, STATIC_CAST(TimeFunc, &CRTC::StartDisplay), 0);
+					AddLineEvent(vretrace, STATIC_CAST(TimeFunc, &CRTC::StartDisplay));
 				}
 			}
 			else
@@ -501,6 +518,52 @@ void CRTC::CreateGFont()
 }
 
 // ---------------------------------------------------------------------------
+//	rows 文字行ぶんの tick 数を返す (端数は次回へ繰り越す)
+//
+//	スケジューラの分解能は 1 tick = 10us しかないので、1 行の長さを
+//	そのまま整数に丸めると誤差が積み上がる。端数を持ち越すことで
+//	フレーム・秒の単位では正確な長さに収束する。
+//	1 行ごとには ±1 tick 揺れるが、これは分解能の限界である。
+//
+int CRTC::LineTicks(int rows)
+{
+	fracq += linetimeq * rows;
+	int t = fracq >> ltqshift;
+	fracq -= t << ltqshift;
+	return t;
+}
+
+// ---------------------------------------------------------------------------
+//	rows 文字行ぶん後にイベントを積む (発火の遅れを繰り越さない)
+//
+//	Scheduler::AddEvent は ev.count = GetTime() + count、つまり「今」からの
+//	相対でイベントを積む。ところが Execute は命令の切れ目まで走るので
+//	要求より数クロック多く進み、PC88::Execute の dexc がそれを tick へ
+//	繰り上げる。この遅れが次のイベント時刻に焼き込まれるため、
+//	1 行ごとに積み上がって 1 フレームで +1.9 tick (－0.1%) になる。
+//	実機の CRTC は CPU を待たないので、意図した時刻を絶対値で持ち、
+//	そこからの差分を積む。M88am の docs/spec-vrtc-timing.md §11
+//
+void CRTC::AddLineEvent(int rows, TimeFunc func, int arg)
+{
+	int nominal = LineTicks(rows);
+	if (nominal < 1)
+		nominal = 1;			// AddEvent は count > 0 を要求する
+	nexttime += nominal;
+
+	int count = nexttime - scheduler->GetTime();
+	if (count < 1 || count > nominal)
+	{
+		// 補正しきれないほどずれている (ブレーク明けや
+		// スナップショット復元)。取り戻そうとせず現在時刻で引き直す
+		count = nominal;
+		nexttime = scheduler->GetTime() + count;
+	}
+	sev = scheduler->AddEvent(count, this, func, arg);
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 //	画面表示開始のタイミング処理
 //
 void IOCALL CRTC::StartDisplay(uint)
@@ -518,25 +581,44 @@ void IOCALL CRTC::StartDisplay(uint)
 // ---------------------------------------------------------------------------
 //	１行分取得
 //
+//	★ 表示の最後の 1 行ぶんの時間を必ず待つこと。(M88gn: M88am から取り込んだ修正)
+//
+//	もとは ++column == height になった時点で ExpandLineEnd() を直接呼んで
+//	いたため、**表示の最後の 1 行が時間を消費しなかった。**
+//	1 フレームが (height - 1) + vretrace 文字行ぶんにしかならず、
+//	height + vretrace より 1 行短くなる。
+//
+//	24k の実測例: height=25 / vretrace=3 なので本来 28 行 = 448 走査線 =
+//	1804 tick = 55.43Hz のところ、27 行 = 1739 tick = 57.50Hz になっていた。
+//	VRTC を数えて時計を作るソフトが 3.7% 速く進む。
+//
+//	早期終了する側 (e != 0) も同じで、column から数えて残り
+//	(height - column) 行あるのに skip = height - column - 1 しか待っていない。
+//
+//	event は「待つ行数 + 1」という約束なので、LoadStatus の復元
+//	(event > 1 なら LineTicks(event-1) で ExpandLineEnd) とも整合する。
+//	本家 M88 2.21a (22f656b) からある不具合。M88am の docs/spec-vrtc-timing.md
+//
 void IOCALL CRTC::ExpandLine(uint)
 {
 	int e = ExpandLineSub();
 	if (e)
 	{
-		event = e+1;
-		sev = scheduler->AddEvent(linetime * e, this, 
-							STATIC_CAST(TimeFunc, &CRTC::ExpandLineEnd));
+		event = e+2;
+		AddLineEvent(e+1, STATIC_CAST(TimeFunc, &CRTC::ExpandLineEnd));
 	}
 	else
 	{
 		if (++column < height)
 		{
 			event = 1;
-			sev = scheduler->AddEvent(linetime, this, 
-								STATIC_CAST(TimeFunc, &CRTC::ExpandLine));
+			AddLineEvent(1, STATIC_CAST(TimeFunc, &CRTC::ExpandLine));
 		}
 		else
-			ExpandLineEnd();
+		{
+			event = 2;
+			AddLineEvent(1, STATIC_CAST(TimeFunc, &CRTC::ExpandLineEnd));
+		}
 	}
 }
 
@@ -608,7 +690,7 @@ inline void IOCALL CRTC::ExpandLineEnd(uint)
 //	LOG0("Vertical Retrace\n");
 	bus->Out(PC88::vrtc, 1);
 	event = -1;
-	sev = scheduler->AddEvent(linetime*vretrace, this, STATIC_CAST(TimeFunc, &CRTC::StartDisplay), 0);
+	AddLineEvent(vretrace, STATIC_CAST(TimeFunc, &CRTC::StartDisplay));
 }
 
 // ---------------------------------------------------------------------------
@@ -812,7 +894,11 @@ void CRTC::ExpandAttributes(uint8* dest, const uint8* src, uint y)
 
 	if (attrperline == 0)
 	{
-		memset(dest, 0xe0, 80);
+		// START DISPLAY の reverse ビットはアトリビュートと無関係に効く。
+		// アトリビュートを持たないテキストモード(1/4/5)ではここを通るので、
+		// ChangeAttr 任せにすると反転が丸ごと落ちる
+		// (M88am の docs/spec-crtc-inverse.md §4.1)
+		memset(dest, 0xe0 ^ (mode & inverse), 80);
 		return;
 	}
 	
@@ -833,7 +919,9 @@ void CRTC::ExpandAttributes(uint8* dest, const uint8* src, uint y)
 	{
 		if (dest[i])
 			ChangeAttr(*src), src+=2;
-		dest[i] = attr;
+		// 反転は attr へ畳み込まず、ここで毎回かける。
+		// 畳み込むとアトリビュートが変わった桁でしか反映されない
+		dest[i] = attr ^ (mode & inverse);
 	}
 
 	// カーソルの属性を反映
@@ -846,24 +934,23 @@ void CRTC::ExpandAttributes(uint8* dest, const uint8* src, uint y)
 //	
 void CRTC::ChangeAttr(uint8 code)
 {
+	// 反転(START DISPLAY の reverse)はここでは扱わない。
+	// ExpandAttributes が出力時にかける
 	if (mode & color)
 	{
 		if (code & 0x8)
 		{
 			attr = (attr & 0x0f) | (code & 0xf0);
-//			attr ^= mode & inverse;
 		}
 		else
 		{
 			attr = (attr & 0xf0) | ((code >> 2) & 0xd) | ((code & 1) << 1);
-			attr ^= mode & inverse;
 			attr ^= ((code & 2) && !(code & 1)) ? attr_blink : 0;
 		}
 	}
 	else
 	{
 		attr = 0xe0 | ((code >> 2) & 0x0d) | ((code & 1) << 1) | ((code & 0x80) >> 3);
-		attr ^= mode & inverse;
 		attr ^= ((code & 2) && !(code & 1)) ? attr_blink : 0;
 	}
 }
@@ -1229,13 +1316,23 @@ bool IFCALL CRTC::LoadStatus(const uint8* s)
 	event = st->event;
 	SetTextMode(st->color);
 	
+	// 版 2 以下は、画面の反転 (START DISPLAY の reverse) を属性の値に入れていた。
+	// 今は書き出すときにかけるので、そのまま読むと二重にかかる。属性から取り除く (M88gn)
+	if (st->rev < 3)
+		attr ^= mode & inverse;
+
+	// 端数はスナップショットに含めていない (形式を変えないため)。
+	// 復元時は 0 から数え直す。ずれても高々 1 tick = 10us
+	fracq = 0;
+
 	scheduler->DelEvent(sev);
+	nexttime = scheduler->GetTime();
 	if (event == 1)
-		sev = scheduler->AddEvent(linetime, this, STATIC_CAST(TimeFunc, &CRTC::ExpandLine));
+		AddLineEvent(1, STATIC_CAST(TimeFunc, &CRTC::ExpandLine));
 	else if (event > 1)
-		sev = scheduler->AddEvent(linetime * (event-1), this, STATIC_CAST(TimeFunc, &CRTC::ExpandLineEnd));
+		AddLineEvent(event-1, STATIC_CAST(TimeFunc, &CRTC::ExpandLineEnd));
 	else if (event == -1 || st->rev == 1)
-		sev = scheduler->AddEvent(linetime * vretrace, this, STATIC_CAST(TimeFunc, &CRTC::StartDisplay), 0);
+		AddLineEvent(vretrace, STATIC_CAST(TimeFunc, &CRTC::StartDisplay));
 	
 	return true;
 }

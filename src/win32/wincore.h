@@ -53,6 +53,26 @@ public:
 	void IFCALL Lock() { seq.Lock(); }
 	void IFCALL Unlock() { seq.Unlock(); }
 
+	// デバッガの実行の制御 (M88am から)
+	void Pause(bool pause);
+	bool IsPaused() const { return paused; }
+	// UI から見た「止まっている」状態。paused は WM_M88_DEBUGBREAK を UI のスレッドが処理して初めて立つので、
+	// VM のスレッドですぐに立つデバッガの broken と OR を取る
+	bool IsStopped() { return paused || GetDebugger()->IsBroken(); }
+	// ステップイン/ステップオーバーの実行中か (戻ってこないステップオーバーの間だけ true)
+	bool IsStepping() { return GetDebugger()->IsStepping(); }
+	void CancelStep() { GetDebugger()->CancelStep(); }
+	// 止めている間だけ。1 命令だけ実行してまた止める
+	void StepIn(PC8801::Debugger::CpuTarget cpu);
+	// CALL/RST/ブロック転送の命令なら戻り番地まで、それ以外は StepIn と同じ
+	void StepOver(PC8801::Debugger::CpuTarget cpu);
+	// 呼び出し元に戻ったところで止める。[SP] が戻り番地に見えなければ何もせず false
+	bool StepOut(PC8801::Debugger::CpuTarget cpu);
+
+private:
+	void ResumeForStep();
+public:
+
 private:
 //	Snapshot ヘッダー
 	enum
@@ -93,6 +113,7 @@ private:
 
 	Sequencer seq;
 	WinPadIF padif;
+	bool paused;
 
 	typedef vector<PC8801::ExtendModule*> ExtendModules;
 	ExtendModules extmodules;

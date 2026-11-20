@@ -107,6 +107,8 @@ public:
 	bool AddDisk(uint dr, const char* title, uint type);
 	bool IsImageOpen(const char* filename);
 	bool FormatDisk(uint dr);
+	// ドライブに入れずに、空のディスクイメージ (1 枚) を作る。format なら N88-BASIC のフォーマットを掛ける (2D だけ。M88gn)
+	bool CreateImage(const char* filename, const char* title, uint type, bool format);
 
 	void Update();
 
@@ -132,6 +134,7 @@ private:
 	Scheduler *scheduler;
 
 	bool ReadDiskImage(FileIO* fio, Drive* drive);
+	bool FormatDrive(Drive* drv);
 	bool ReadDiskImageRaw(FileIO* fio, Drive* drive);
 	bool WriteDiskImage(FileIO* fio, Drive* drive);
 	bool WriteTrackImage(FileIO* fio, Drive* drive, int track);

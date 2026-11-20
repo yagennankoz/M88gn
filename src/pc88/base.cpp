@@ -37,11 +37,15 @@ Base::~Base()
 bool Base::Init(PC88* pc88)
 {
 	pc = pc88;
-	RTC();
+	rtcfracq = 0;
+	rtcnext = pc->GetTime();
 	sw30 = 0xcb;
 	sw31 = 0x79;
 	sw6e = 0xff;
-	pc->AddEvent(167, this, STATIC_CAST(TimeFunc, &Base::RTC), 0, true);
+	// RTC() が割り込みを1回出し、次回のイベントも自分で積む。
+	// 繰り返しイベント (repeat = true) では間隔を一定にしかできず、
+	// 端数を散らせないため、毎回積み直す形にしている
+	RTC();
 	return true;
 }
 
@@ -98,6 +102,27 @@ void IOCALL Base::RTC(uint)
 {
 	pc->bus1.Out(PC88::pint2, 1);
 //	LOG0("RTC\n");
+
+	// (M88gn: M88am から取り込んだ修正)
+	// 次回を端数込みで積み直す。600Hz = 166.6667 tick なので、
+	// 167 に丸め続けると 598.802Hz (-0.2%) になる。
+	// 端数を繰り越すと 167,167,166,167,167,166,... と並び、平均が正しくなる
+	rtcfracq += rtcperiodq;
+	int t = rtcfracq >> 10;
+	rtcfracq -= t << 10;
+
+	// 発火の遅れを繰り越さない。CRTC::AddLineEvent と同じ理由で、
+	// AddEvent は「今」からの相対で積むため、Execute の行き過ぎぶんが
+	// 積み上がって 600Hz が遅くなる。M88am の docs/spec-vrtc-timing.md §11
+	rtcnext += t;
+	int count = rtcnext - pc->GetTime();
+	if (count < 1 || count > t)
+	{
+		// 補正しきれないほどずれている。現在時刻で引き直す
+		count = t;
+		rtcnext = pc->GetTime() + count;
+	}
+	pc->AddEvent(count, this, STATIC_CAST(TimeFunc, &Base::RTC), 0, false);
 }
 
 // ---------------------------------------------------------------------------

@@ -9,7 +9,6 @@
 #include "headers.h"
 #include "resource.h"
 #include "newdisk.h"
-#include "dpi.h"
 
 // ---------------------------------------------------------------------------
 //	\’z/Á–Å
@@ -27,7 +26,6 @@ bool WinNewDisk::Show(HINSTANCE hinst, HWND hwndparent)
 	info.title[0] = 0;
 	info.type = MD2D;
 	info.basicformat = 0;
-	Dpi::UnawareScope dpiscope;		// –{‘Ì‚Ì‘‹‚Ì‚Ù‚©‚Í DPI ”ñ‘Î‰ž‚Ì‚Ü‚Ü
 	return DialogBoxParam(hinst, MAKEINTRESOURCE(IDD_NEWDISK), 
 				hwndparent, DLGPROC((void*)DlgProcGate), (LPARAM)this) > 0; 
 }

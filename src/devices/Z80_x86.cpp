@@ -2196,6 +2196,19 @@ process:
 		PCINC1
 	nohalt:
 		mov WAITSTATE, 0
+
+		// デバッガ用の記録: 戻り番地 (今の PC)、push する直前の SP、push したか (IM0 はしない)
+		mov edx,INSTBASE
+		add edx,INST
+		and edx,0ffffh
+		mov CPU.intackpc,edx
+		movzx edx,word ptr SP
+		mov CPU.intacksp,edx
+		inc CPU.intackcount
+		xor edx,edx
+		cmp byte ptr INTMODE,0
+		setnz dl
+		mov CPU.intackpushed,dl
 		
 		add eax,1000000h		// R++
 		xor ecx,ecx
@@ -2392,6 +2405,38 @@ void __declspec(naked) Z80_x86::TestIntr()
 }
 
 // ---------------------------------------------------------------------------
+//	デバッガのフック (M88gn)
+//	DbgCheck: 命令を実行する前に呼ぶ (esi = this、eax = AF・R、edi = INST、ebp = CLOCKCOUNT)。
+//	AF・PC・クロックをメモリに書き戻してから CheckExecBreak を呼び、止めるならキャリーを立てて返す。
+//	レジスターはすべて元のまま (C の関数は ebx・esi・edi・ebp を壊さない)
+//
+int __cdecl Z80x86DebugEntry(Z80_x86* cpu)
+{
+	return (cpu->debughook && cpu->debughook->CheckExecBreak(cpu->debugcpuid, cpu->GetPC())) ? 1 : 0;
+}
+
+static void __declspec(naked) DbgCheck()
+{
+	__asm 
+	{
+		push eax
+		push ecx
+		push edx
+		mov CPU.reg.r.w.af,eax
+		mov CPU.inst,INST
+		mov CPU.clockcount,CLOCKCOUNT
+		push esi
+		call Z80x86DebugEntry
+		add esp,4
+		neg eax				// CF = 1: 止める
+		pop edx
+		pop ecx
+		pop eax
+		ret
+	}
+}
+
+// ---------------------------------------------------------------------------
 //	命令処理
 //	ecx = stop;
 //	edx = delay;
@@ -2418,6 +2463,9 @@ static void __declspec(naked) Exec0()
 		mov eax,CPU.reg.r.w.af
 		jnz exec_1
 exec_0:
+		cmp byte ptr CPU.dbgactive,0
+		jnz dbg_0
+dbgret_0:
 		cmp INST,INSTLIM
 		jnb indirect_0
 		movzx edx,byte ptr [INST]
@@ -2430,6 +2478,9 @@ fetchend_0:
 		jmp exec_e
 
 exec_1:
+		cmp byte ptr CPU.dbgactive,0
+		jnz dbg_1
+dbgret_1:
 	}
 	FETCHCODE(1)
 	__asm 
@@ -2446,6 +2497,25 @@ exec_e:
 
 		mov ecx,CPU.stopcount
 dontexec:
+		ret
+
+		// デバッガ: 止めるなら、この命令を実行せずに抜ける。止める時刻 (stopcount) を今にするので、
+		// ExecDual などの 2 つの CPU を交互に回すループも止まる
+dbg_0:
+		call DbgCheck
+		jnc dbgret_0
+		jmp dbgbrk
+dbg_1:
+		call DbgCheck
+		jnc dbgret_1
+dbgbrk:
+		add CPU.execcount, CLOCKCOUNT
+		xor ecx,ecx
+		mov CPU.clockcount, ecx
+		mov CPU.reg.r.w.af,eax
+		mov CPU.inst,INST
+		mov ecx,CPU.execcount
+		mov CPU.stopcount,ecx
 		ret
 	}
 	FETCHSUB(0);
@@ -2480,6 +2550,9 @@ static void __declspec(naked) Exec1()
 		mov eax,CPU.reg.r.w.af
 		jnz exec_1
 exec_0:
+		cmp byte ptr CPU.dbgactive,0
+		jnz dbg_0
+dbgret_0:
 		cmp INST,INSTLIM
 		jnb indirect_0
 		movzx edx,byte ptr [INST]
@@ -2492,6 +2565,9 @@ fetchend_0:
 		jmp exec_e
 
 exec_1:
+		cmp byte ptr CPU.dbgactive,0
+		jnz dbg_1
+dbgret_1:
 	}
 	FETCHCODE(1)
 	__asm 
@@ -2509,6 +2585,25 @@ exec_e:
 
 		mov ecx,CPU.stopcount
 dontexec:
+		ret
+
+		// デバッガ: Exec0 と同じ (ebp は半分なので戻してから足す)
+dbg_0:
+		call DbgCheck
+		jnc dbgret_0
+		jmp dbgbrk
+dbg_1:
+		call DbgCheck
+		jnc dbgret_1
+dbgbrk:
+		sal ebp,1
+		add CPU.execcount, ebp
+		xor ecx,ecx
+		mov CPU.clockcount, ecx
+		mov CPU.reg.r.w.af,eax
+		mov CPU.inst,INST
+		mov ecx,CPU.execcount
+		mov CPU.stopcount,ecx
 		ret
 	}
 	FETCHSUB(0);
@@ -2547,8 +2642,17 @@ int __declspec(naked) __stdcall Z80_x86::ExecDual(Z80_x86* first, Z80_x86* secon
 			mov currentz80, esi
 			mov eax, CPU.reg.r.w.af
 			mov INST, CPU.inst
+			// デバッガが有効な間は、先に 1 命令を実行せず、割り込みの受け付けだけをする。命令は Exec0/Exec1 の
+			// ループで判定してから実行する (先に実行した命令の時間は、返す「実行した時間」に入らないので、
+			// ステップのたびにここで 1 命令だけ実行すると時刻が進まず、割り込みも起きない)
+			cmp byte ptr CPU.dbgactive,0
+			jz prime_1
+			call O_INTR
+			jmp primeskip_1
+prime_1:
 			FETCHCODE(0)
 			call O_INTR
+primeskip_1:
 			mov CPU.inst, INST
 			mov CPU.reg.r.w.af, eax
 		mov ebx, CPU.execcount
@@ -2569,8 +2673,17 @@ int __declspec(naked) __stdcall Z80_x86::ExecDual(Z80_x86* first, Z80_x86* secon
 		mov INSTWAIT,ecx
 			mov currentz80, esi
 			mov eax, CPU.reg.r.w.af
+			// デバッガが有効な間は、先に 1 命令を実行せず、割り込みの受け付けだけをする。命令は Exec0/Exec1 の
+			// ループで判定してから実行する (先に実行した命令の時間は、返す「実行した時間」に入らないので、
+			// ステップのたびにここで 1 命令だけ実行すると時刻が進まず、割り込みも起きない)
+			cmp byte ptr CPU.dbgactive,0
+			jz prime_2
+			call O_INTR
+			jmp primeskip_2
+prime_2:
 			FETCHCODE(1)
 			call O_INTR
+primeskip_2:
 			mov CPU.inst, INST
 			mov CPU.reg.r.w.af, eax
 		mov ebx,CPU.execcount
@@ -2669,8 +2782,17 @@ int __declspec(naked) __stdcall Z80_x86::ExecDual2(Z80_x86* first, Z80_x86* seco
 //		mov INSTWAIT,ecx
 			mov currentz80, esi
 			mov eax, CPU.reg.r.w.af
+			// デバッガが有効な間は、先に 1 命令を実行せず、割り込みの受け付けだけをする。命令は Exec0/Exec1 の
+			// ループで判定してから実行する (先に実行した命令の時間は、返す「実行した時間」に入らないので、
+			// ステップのたびにここで 1 命令だけ実行すると時刻が進まず、割り込みも起きない)
+			cmp byte ptr CPU.dbgactive,0
+			jz prime_3
+			call O_INTR
+			jmp primeskip_3
+prime_3:
 			FETCHCODE(0)
 			call O_INTR
+primeskip_3:
 			mov CPU.inst, INST
 			mov CPU.reg.r.w.af, eax
 		mov ebx, CPU.execcount
@@ -2691,8 +2813,17 @@ int __declspec(naked) __stdcall Z80_x86::ExecDual2(Z80_x86* first, Z80_x86* seco
 		mov INSTWAIT,ecx
 			mov currentz80, esi
 			mov eax, CPU.reg.r.w.af
+			// デバッガが有効な間は、先に 1 命令を実行せず、割り込みの受け付けだけをする。命令は Exec0/Exec1 の
+			// ループで判定してから実行する (先に実行した命令の時間は、返す「実行した時間」に入らないので、
+			// ステップのたびにここで 1 命令だけ実行すると時刻が進まず、割り込みも起きない)
+			cmp byte ptr CPU.dbgactive,0
+			jz prime_4
+			call O_INTR
+			jmp primeskip_4
+prime_4:
 			FETCHCODE(1)
 			call O_INTR
+primeskip_4:
 			mov CPU.inst, INST
 			mov CPU.reg.r.w.af, eax
 		mov ebx,CPU.execcount
@@ -2789,8 +2920,17 @@ Z80_x86::ExecSingle(Z80_x86* first, Z80_x86* second, int clocks)
 		mov INSTWAIT,ecx
 		mov currentz80, esi
 		mov eax, CPU.reg.r.w.af
+		// デバッガが有効な間は、先に 1 命令を実行せず、割り込みの受け付けだけをする。命令は Exec0/Exec1 の
+		// ループで判定してから実行する (先に実行した命令の時間は、返す「実行した時間」に入らないので、
+		// ステップのたびにここで 1 命令だけ実行すると時刻が進まず、割り込みも起きない)
+		cmp byte ptr CPU.dbgactive,0
+		jz prime_5
+		call O_INTR
+		jmp primeskip_5
+prime_5:
 		FETCHCODE(0)
 		call O_INTR
+primeskip_5:
 		mov CPU.inst, INST
 		mov CPU.reg.r.w.af, eax
 		
@@ -2938,6 +3078,13 @@ Z80_x86::Z80_x86(const ID& id)
 	delaycount = 0;
 	stopcount = 0;
 	eshift = 0;
+	debughook = 0;
+	debugcpuid = 0;
+	dbgactive = 0;
+	intackcount = 0;
+	intackpc = 0;
+	intacksp = 0;
+	intackpushed = 0;
 	memset(waittable, 0, sizeof(int) * (0x10000 >> MemoryManager::pagebits));
 }
 

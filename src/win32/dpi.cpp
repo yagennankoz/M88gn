@@ -13,10 +13,12 @@
 typedef void* (WINAPI* PFSetThreadDpiAwarenessContext)(void*);
 typedef UINT (WINAPI* PFGetDpiForWindow)(HWND);
 typedef BOOL (WINAPI* PFAdjustWindowRectExForDpi)(LPRECT, DWORD, BOOL, DWORD, UINT);
+typedef BOOL (WINAPI* PFSystemParametersInfoForDpi)(UINT, UINT, PVOID, UINT, UINT);
 
 static PFSetThreadDpiAwarenessContext pSetThreadDpiAwarenessContext = 0;
 static PFGetDpiForWindow pGetDpiForWindow = 0;
 static PFAdjustWindowRectExForDpi pAdjustWindowRectExForDpi = 0;
+static PFSystemParametersInfoForDpi pSystemParametersInfoForDpi = 0;
 static bool aware = false;
 
 bool Dpi::Init()
@@ -27,6 +29,7 @@ bool Dpi::Init()
 	pSetThreadDpiAwarenessContext = (PFSetThreadDpiAwarenessContext) GetProcAddress(user32, "SetThreadDpiAwarenessContext");
 	pGetDpiForWindow = (PFGetDpiForWindow) GetProcAddress(user32, "GetDpiForWindow");
 	pAdjustWindowRectExForDpi = (PFAdjustWindowRectExForDpi) GetProcAddress(user32, "AdjustWindowRectExForDpi");
+	pSystemParametersInfoForDpi = (PFSystemParametersInfoForDpi) GetProcAddress(user32, "SystemParametersInfoForDpi");
 	if (!pSetThreadDpiAwarenessContext || !pGetDpiForWindow || !pAdjustWindowRectExForDpi)
 		return false;
 	// Per Monitor v2 ‚ªŽg‚¦‚È‚¢ Windows (1703 ‚æ‚è‘O) ‚Å‚Í 0 ‚ª•Ô‚é
@@ -62,6 +65,37 @@ void Dpi::AdjustWindowRect(RECT* rect, DWORD style, bool menu, DWORD exstyle, HW
 		pAdjustWindowRectExForDpi(rect, style, menu, exstyle, GetForWindow(hwnd));
 	else
 		AdjustWindowRectEx(rect, style, menu, exstyle);
+}
+
+void Dpi::AdjustWindowRectForDpi(RECT* rect, DWORD style, bool menu, DWORD exstyle, UINT dpi)
+{
+	if (aware && dpi)
+		pAdjustWindowRectExForDpi(rect, style, menu, exstyle, dpi);
+	else
+		AdjustWindowRectEx(rect, style, menu, exstyle);
+}
+
+void Dpi::GetNonClientMetrics(NONCLIENTMETRICSW* ncm, UINT dpi)
+{
+	// SystemParametersInfoForDpi ‚Í Vista ˆÈ~‚Ì‘å‚«‚³ (iPaddedBorderWidth ‚ðŠÜ‚Þ) ‚Å‚È‚¢‚ÆŽ¸”s‚·‚éB
+	// headers.h ‚Ì _WIN32_WINNT (0x500) ‚Å‚Í\‘¢‘Ì‚É‚»‚Ì—“‚ª–³‚¢‚Ì‚ÅA‘«‚µ‚Ä“n‚·
+	struct
+	{
+		NONCLIENTMETRICSW m;
+		int iPaddedBorderWidth;
+	} full;
+	memset(&full, 0, sizeof(full));
+	full.m.cbSize = sizeof(full);
+	if (aware && dpi && pSystemParametersInfoForDpi
+		&& pSystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(full), &full, 0, dpi))
+	{
+		*ncm = full.m;
+		ncm->cbSize = sizeof(NONCLIENTMETRICSW);
+		return;
+	}
+	memset(ncm, 0, sizeof(NONCLIENTMETRICSW));
+	ncm->cbSize = sizeof(NONCLIENTMETRICSW);
+	SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICSW), ncm, 0);
 }
 
 Dpi::UnawareScope::UnawareScope()

@@ -16,6 +16,9 @@
 #ifndef WM_DPICHANGED
 #define WM_DPICHANGED	0x02e0
 #endif
+#ifndef WM_GETDPISCALEDSIZE
+#define WM_GETDPISCALEDSIZE	0x02e4
+#endif
 #include "about.h"
 #include "misc.h"
 #include "file.h"
@@ -60,6 +63,7 @@ WinUI::WinUI(HINSTANCE hinstance)
 	diskinfo[1].filename[0] = 0;
 	diskinfo[1].idchgdisk = IDM_CHANGEDISK_2;
 	capturemouse = true;
+	hmenumain = 0;
 	resetwindowsize = 0;
 	hmenuss[0] = 0;
 	hmenuss[1] = 0;
@@ -94,6 +98,7 @@ bool WinUI::InitM88(const char* cmdline)
 	active = false;
 	tapetitle[0] = 0;
 	appliedrot = 0;
+	dpimoved = false;
 	
 	//	設定読み込み
 	LOG1("%d\tLoadConfig\n", timeGetTime());
@@ -143,6 +148,8 @@ bool WinUI::InitM88(const char* cmdline)
 	if (!core.Init(this, hwnd, &draw, diskmgr, &keyif, &winconfig, tapemgr))
 		return false;
 	tapemgr->SetNotify(TapeNotify, this);
+	tapewin.Init(hinst, hwnd, &core);
+	tapewin.SetTape(tapemgr);
 
 	
 	//	debug 用クラス初期化
@@ -154,6 +161,12 @@ bool WinUI::InitM88(const char* cmdline)
 	regmon.Init(&core);
 	loadmon.Init();
 	iomon.Init(&core);
+	bpmon.Init(&core);
+	watchmon.Init(&core);
+	tracemon.Init(&core);
+	debugnodiskwarned = false;
+	debugkey[0] = 0;
+	tapefile[0] = 0;
 	core.GetSound()->SetSoundMonitor(&opnmon);
 
 	//	実行ファイル改変チェック
@@ -185,6 +198,9 @@ bool WinUI::InitM88(const char* cmdline)
 	softkbd.SetPlacement(config.softkbdx, config.softkbdy, config.softkbdw);
 	if (config.softkbdshow)
 		softkbd.Show(true);
+	tapewin.SetPlacement(config.tapewinx, config.tapewiny, config.tapewinw, config.tapewinh);
+	if (config.tapewinshow)
+		tapewin.Show(true);
 	
 	//	リセット
 	LOG1("%d\treset\n", timeGetTime());
@@ -205,9 +221,14 @@ bool WinUI::InitM88(const char* cmdline)
 //
 void WinUI::CleanupM88()
 {
+	// 今のイメージ (ドライブ 1 のディスクかテープ) のデバッガの設定を保存する (Save Settings per Disk/Tape のとき)
+	SyncDebugSettings(debugkey, "");
+
 	softkbd.GetPlacement(&config.softkbdx, &config.softkbdy, &config.softkbdw);
 	config.softkbddpi = Dpi::IsAware() ? Dpi::GetForWindow(hwnd) : 0;	// 値は物理ピクセル
 	config.softkbdshow = softkbd.IsShown();
+	tapewin.GetPlacement(&config.tapewinx, &config.tapewiny, &config.tapewinw, &config.tapewinh);
+	config.tapewinshow = tapewin.IsShown();
 	PC8801::Config cfg = config;
 	PC8801::SaveConfig(&cfg, m88ini, true);
 	core.Cleanup();
@@ -239,6 +260,7 @@ bool WinUI::InitWindow(int nwinmode)
 	accel = LoadAccelerators(hinst, MAKEINTRESOURCE(IDR_ACC_M88UI));
 	accelnoalt = LoadAccelerators(hinst, MAKEINTRESOURCE(IDR_ACC_M88UI_NOALT));
 	appswallow = 0;
+	debugswallow = 0;
 
 	if (!RegisterClass(&wcl)) 
 		return false;
@@ -259,6 +281,7 @@ bool WinUI::InitWindow(int nwinmode)
 		hinst,
 		(LPVOID)this
 		);
+	hmenumain = hwnd ? GetMenu(hwnd) : 0;
 
 //	SetLayeredWindowAttributes(hwnd, RGB(0, 0, 0), 0xc0, LWA_ALPHA);
 	
@@ -337,7 +360,7 @@ int WinUI::Main(const char* cmdline)
 		}
 
 		// ショートカット: Alt (Windows のアクセラレーター) か、アプリケーションキー (AppShortcut)
-		if (AppShortcut(msg))
+		if (AppShortcut(msg) || DebugKey(msg))
 			continue;
 		if (!TranslateAccelerator(msg.hwnd, (config.flag2 & Config::appshortcut) ? accelnoalt : accel, &msg))
 		{
@@ -385,6 +408,7 @@ LRESULT WinUI::WinProc(HWND hwnd, UINT umsg, WPARAM wp, LPARAM lp)
 	PROC_MSG(WM_SYSKEYDOWN,			WmSysKeyDown);
 	PROC_MSG(WM_SIZE,				WmSize);
 	PROC_MSG(WM_DPICHANGED,			WmDpiChanged);
+	PROC_MSG(WM_GETDPISCALEDSIZE,	WmGetDpiScaledSize);
 	PROC_MSG(WM_MOVE,				WmMove);
 	PROC_MSG(WM_DRAWITEM,			WmDrawItem);
 	PROC_MSG(WM_MEASUREITEM,		WmMeasureItem);
@@ -396,6 +420,7 @@ LRESULT WinUI::WinProc(HWND hwnd, UINT umsg, WPARAM wp, LPARAM lp)
 	PROC_MSG(WM_LBUTTONUP,			WmLButtonUp);
 	PROC_MSG(WM_RBUTTONDOWN,		WmRButtonDown);
 	PROC_MSG(WM_RBUTTONUP,			WmRButtonUp);
+	PROC_MSG(WM_CONTEXTMENU,		WmContextMenu);
 	PROC_MSG(WM_ENTERSIZEMOVE,		WmEnterSizeMove);
 	PROC_MSG(WM_EXITSIZEMOVE,		WmExitSizeMove);
 	PROC_MSG(WM_M88_SENDKEYSTATE,	M88SendKeyState);
@@ -404,6 +429,7 @@ LRESULT WinUI::WinProc(HWND hwnd, UINT umsg, WPARAM wp, LPARAM lp)
 	PROC_MSG(WM_M88_CHANGEVOLUME,	M88ChangeVolume);
 	PROC_MSG(WM_M88_CLIPCURSOR,		M88ClipCursor);
 	PROC_MSG(WM_M88_TAPERECORD,		M88TapeNotify);
+	PROC_MSG(WM_M88_DEBUGBREAK,		M88DebugBreak);
 	PROC_MSG(WM_M88_STATUSMENU,		M88StatusMenu);
 	case WM_CTLCOLORSTATIC:
 		// 知らせの色 (黄色の地に黒い字)
@@ -627,6 +653,22 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		ChangeDiskImage(hwnd, 1);
 		break;
 
+	case IDM_NEWDISK_1:
+		NewDiskImage(0);
+		break;
+
+	case IDM_NEWDISK_2:
+		NewDiskImage(1);
+		break;
+
+	case IDM_NEWDISK_NONE:
+		NewDiskImage(-1);
+		break;
+
+	case IDM_TAPE_NEW:
+		NewTapeImage();
+		break;
+
 	case IDM_BOTHDRIVE:
 		if (DiskMounted(1))
 			core.FDDMechSound(false);
@@ -648,6 +690,30 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 
 	case IDM_TOGGLEDISPLAY:
 		ToggleDisplayMode();
+		break;
+
+	case IDM_SHOWMENU:
+		// キーボードでメニューを出す (メニューバーを隠していると、ほかにはマウスの右クリックしかない)。
+		// 窓の中の左上 1/3 の所に出す (サブメニューが右下に開けるように)。項目は ↓ や下線の字で選ぶ
+		{
+			RECT r;
+			GetClientRect(hwnd, &r);
+			POINT pt = { r.right / 3, r.bottom / 3 };
+			ClientToScreen(hwnd, &pt);
+			ShowFullScreenMenu(pt.x, pt.y);
+		}
+		break;
+
+	case IDM_FULLHIDEMENU:
+		config.fullhidemenu = !config.fullhidemenu;
+		if (fullscreen)
+			ApplyFullScreenMenu();
+		break;
+
+	case IDM_WINHIDEMENU:
+		config.winhidemenu = !config.winhidemenu;
+		if (!fullscreen)
+			ShowStatusWindow();			// メニューバーを出す・隠して、窓の大きさを直す
 		break;
 
 	case IDM_SCALE_1:
@@ -766,6 +832,10 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		softkbd.Show(!softkbd.IsShown());
 		break;
 
+	case IDM_TAPEWIN:
+		tapewin.Show(!tapewin.IsShown());
+		break;
+
 	case IDM_FDC_STATUS:
 		config.flags ^= PC8801::Config::showfdcstatus;
 		ApplyConfig();
@@ -780,7 +850,49 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		break;
 
 	case IDM_CODEMON:
-		codemon.Show(hinst, hwnd, !codemon.IsOpen());
+		{
+			bool open = !codemon.IsOpen();
+			codemon.Show(hinst, hwnd, open);
+			// 止まっている間に開いたら、止まっている所に合わせる
+			if (open && core.IsStopped())
+			{
+				codemon.ShowCpu(GetStepTarget());
+				codemon.FollowPC();
+			}
+		}
+		break;
+
+	case IDM_BPMON:
+		bpmon.Show(hinst, hwnd, !bpmon.IsOpen());
+		break;
+
+	case IDM_WATCHMON:
+		watchmon.Show(hinst, hwnd, !watchmon.IsOpen());
+		break;
+
+	case IDM_TRACEMON:
+		tracemon.Show(hinst, hwnd, !tracemon.IsOpen());
+		break;
+
+	case IDM_DBG_TRACE:
+		core.Lock();
+		core.GetDebugger()->SetTraceEnabled(!core.GetDebugger()->IsTraceEnabled());
+		core.Unlock();
+		break;
+
+	case IDM_DBG_TRACECLEAR:
+		core.Lock();
+		core.GetDebugger()->ClearTrace();
+		core.Unlock();
+		tracemon.Refresh();
+		break;
+
+	case IDM_DBG_SAVESETTINGS:
+		config.flag2 ^= PC8801::Config::savedebugperdisk;
+		break;
+
+	case IDM_MON_FONT:
+		WinMonitor::ChooseMonitorFont(hwnd);
 		break;
 
 	case IDM_BASMON:
@@ -914,20 +1026,50 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		LoadSnapshot(wid - IDM_SNAPSHOT_LOAD_0);
 		break;
 
-	case IDM_DBG_RUN:
-		if (exec) {
-			exec = false;
-			core.Wait(true);
-		} else {
-			exec = true;
-			core.Wait(false);
+	// デバッガ (M88am から)
+	case IDM_DBG_PAUSE:
+		core.Pause(true);
+		statusdisplay.SetStopped(true);
+		ShowPauseStatus();
+		codemon.ShowCpu(GetStepTarget());
+		codemon.FollowPC();
+		tracemon.Refresh();			// トレースの窓はブレークのときしか書き直さないので、Pause でも書き直す (M88gn)
+		break;
+
+	case IDM_DBG_PLAY:
+		if (core.IsStopped())
+			core.Pause(false);				// 止まっている: 実行に戻す
+		else if (core.IsStepping())
+			core.CancelStep();				// 戻ってこないステップオーバーを打ち切って、そのまま走らせる
+		statusdisplay.SetStopped(false);
+		statusdisplay.Update();
+		break;
+
+	case IDM_DBG_STEPIN:
+	case IDM_DBG_STEPOVER:
+	case IDM_DBG_STEPOUT:
+		// ステップが終わった後の表示は WM_M88_DEBUGBREAK (M88DebugBreak) で直す
+		{
+			PC8801::Debugger::CpuTarget t = GetStepTarget();
+			if (t == PC8801::Debugger::cpu_sub && !core.IsSubCPUActive())
+			{
+				// サブCPU は駆動を制御する設定のとき、FDC などが動いていないと 1 命令も実行しないので、
+				// ステップが終わらずに走り続けてしまう
+				statusdisplay.Show(70, 3000, "サブCPUは停止中です.");
+				break;
+			}
+			if (wid == IDM_DBG_STEPIN)
+				core.StepIn(t);
+			else if (wid == IDM_DBG_STEPOVER)
+				core.StepOver(t);
+			else if (!core.StepOut(t))
+				statusdisplay.Show(70, 3000, "呼び出し元を特定できません.");
 		}
 		break;
 
-	case IDM_DBG_STEP:
-		if (!exec) {
-			core.ExecOne();
-		}
+	case IDM_DBG_SKIPINT:
+		config.flag2 ^= PC8801::Config::disableintskip;
+		ApplyConfig();
 		break;
 
 	default:
@@ -989,6 +1131,11 @@ LRESULT WinUI::WmCreate(HWND hwnd, WPARAM wparam, LPARAM lparam)
 LRESULT WinUI::WmDestroy(HWND hwnd, WPARAM wparam, LPARAM lparam)
 {
 	SaveWindowPosition();
+	statusdisplay.DisableOverlay();
+	// 全画面でメニューバーを隠していると、窓と一緒には消えないので消す
+	if (hmenumain && GetMenu(hwnd) != hmenumain)
+		DestroyMenu(hmenumain);
+	hmenumain = 0;
 	PostQuitMessage(0);
 	return 0;
 }
@@ -1009,10 +1156,8 @@ LRESULT WinUI::WmClose(HWND hwnd, WPARAM wparam, LPARAM lparam)
 			return 0;
 	}
 	
-	if (!exec) {
-		exec = true;
-		core.Wait(false);
-	}
+	if (core.IsStopped())
+		core.Pause(false);			// デバッガで止めていたら動かしてから終わる
 
 	// タイマー破棄
 	KillTimer(hwnd, timerid);
@@ -1025,10 +1170,10 @@ LRESULT WinUI::WmClose(HWND hwnd, WPARAM wparam, LPARAM lparam)
 	mii.fMask = MIIM_SUBMENU;
 	mii.hSubMenu = 0;
 	
-	SetMenuItemInfo(GetMenu(hwnd), IDM_DRIVE_1, false, &mii);
-	SetMenuItemInfo(GetMenu(hwnd), IDM_DRIVE_2, false, &mii);
-	SetMenuItemInfo(GetMenu(hwnd), IDM_SNAPSHOT_LOAD, false, &mii);
-	SetMenuItemInfo(GetMenu(hwnd), IDM_SNAPSHOT_SAVE, false, &mii);
+	SetMenuItemInfo(hmenumain, IDM_DRIVE_1, false, &mii);
+	SetMenuItemInfo(hmenumain, IDM_DRIVE_2, false, &mii);
+	SetMenuItemInfo(hmenumain, IDM_SNAPSHOT_LOAD, false, &mii);
+	SetMenuItemInfo(hmenumain, IDM_SNAPSHOT_SAVE, false, &mii);
 	
 	int i;
 	for (i=0; i<2; i++)
@@ -1061,6 +1206,11 @@ LRESULT WinUI::WmTimer(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		// 実効周波数,表示フレーム数を取得
 		int	fcount = draw.GetDrawCount();
 		int	icount = core.GetExecCount();
+
+		// デバッガ: 止まっている間は PC を出し続け、ステータスバーの色を今の状態に合わせる
+		if (core.IsPaused())
+			ShowPauseStatus();
+		statusdisplay.SetStopped(core.IsStopped());
 		
 		// レポートする場合はタイトルバーを更新
 		if (report)
@@ -1148,6 +1298,8 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 
 	CheckMenuItem(hmenu, IDM_CPU_BURST, (config.flags & Config::cpuburst) ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_TOGGLEDISPLAY, fullscreen ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_FULLHIDEMENU, config.fullhidemenu ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_WINHIDEMENU, config.winhidemenu ? MF_CHECKED : MF_UNCHECKED);
 	static const UINT scaleid[4] = { IDM_SCALE_1, IDM_SCALE_2, IDM_SCALE_3, IDM_SCALE_4 };
 	for (int s = 0; s < 4; s++)
 		CheckMenuItem(hmenu, scaleid[s], (config.screenscale == s + 1) ? MF_CHECKED : MF_UNCHECKED);
@@ -1226,12 +1378,25 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 
 	CheckMenuItem(hmenu, IDM_WATCHREGISTER, (config.dipsw != 1 && regmon.IsOpen()) ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_STATUSBAR, (config.flags & Config::showstatusbar) ? MF_CHECKED : MF_UNCHECKED);
+	// デバッガ
+	EnableMenuItem(hmenu, IDM_DBG_PAUSE, !core.IsStopped() ? MF_ENABLED : MF_GRAYED);
+	EnableMenuItem(hmenu, IDM_DBG_PLAY, (core.IsStopped() || core.IsStepping()) ? MF_ENABLED : MF_GRAYED);
+	EnableMenuItem(hmenu, IDM_DBG_STEPIN, core.IsStopped() ? MF_ENABLED : MF_GRAYED);
+	EnableMenuItem(hmenu, IDM_DBG_STEPOVER, core.IsStopped() ? MF_ENABLED : MF_GRAYED);
+	EnableMenuItem(hmenu, IDM_DBG_STEPOUT, core.IsStopped() ? MF_ENABLED : MF_GRAYED);
+	CheckMenuItem(hmenu, IDM_DBG_SKIPINT, (config.flag2 & PC8801::Config::disableintskip) ? MF_UNCHECKED : MF_CHECKED);
 	CheckMenuItem(hmenu, IDM_SOFTKBD, softkbd.IsShown() ? MF_CHECKED : MF_UNCHECKED);
-	EnableMenuItem(hmenu, IDM_STATUSBAR, fullscreen ? MF_GRAYED : MF_ENABLED);
+	CheckMenuItem(hmenu, IDM_TAPEWIN, tapewin.IsShown() ? MF_CHECKED : MF_UNCHECKED);
+	EnableMenuItem(hmenu, IDM_STATUSBAR, MF_ENABLED);		// 全画面でも切り替えられる (メニューバーの右の端か、画面の右下に出す。M88gn)
 	CheckMenuItem(hmenu, IDM_FDC_STATUS, (config.flags & Config::showfdcstatus) ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_SOUNDMON, opnmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_MEMMON, memmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_CODEMON, codemon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_BPMON, bpmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_WATCHMON, watchmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_TRACEMON, tracemon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_DBG_TRACE, core.GetDebugger()->IsTraceEnabled() ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_DBG_SAVESETTINGS, (config.flag2 & PC8801::Config::savedebugperdisk) ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_BASMON, basmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_LOADMON, loadmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_IOMON, iomon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
@@ -1262,9 +1427,8 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 //
 LRESULT WinUI::WmSize(HWND hwnd, WPARAM wp, LPARAM lp)
 {
-	HWND hwndstatus = statusdisplay.GetHWnd();
-	if (hwndstatus)
-		PostMessage(hwndstatus, WM_SIZE, wp, lp);
+	if (wp != SIZE_MINIMIZED)
+		statusdisplay.Layout();
 	active = wp != SIZE_MINIMIZED;
 	draw.Activate(active);
 	if (fullscreen && active)
@@ -1352,6 +1516,7 @@ void WinUI::ApplyConfig()
 	keyif.ApplyConfig(&config);
 	draw.SetPriorityLow((config.flags & Config::drawprioritylow) != 0);
 	SetCrtFilter();
+	core.GetDebugger()->SetIntSkipEnabled(!(config.flag2 & PC8801::Config::disableintskip));
 
 	MENUITEMINFO mii;
 	memset(&mii, 0, sizeof(mii));
@@ -1359,7 +1524,7 @@ void WinUI::ApplyConfig()
 	mii.fMask = MIIM_TYPE;
 	mii.fType = MFT_STRING;
 	mii.dwTypeData = (config.flags & Config::disablef12reset) ? "&Reset" : "&Reset\tF12";
-	SetMenuItemInfo(GetMenu(hwnd), IDM_RESET, false, &mii);
+	SetMenuItemInfo(hmenumain, IDM_RESET, false, &mii);
 	ShowStatusWindow();
 
 	if (config.dipsw == 1)
@@ -1372,7 +1537,7 @@ void WinUI::ApplyConfig()
 			mii.fType = MFT_STRING;
 			mii.dwTypeData = "Control &Plane";
 			mii.hSubMenu = hmenudbg;
-			SetMenuItemInfo(GetMenu(hwnd), IDM_WATCHREGISTER, false, &mii);
+			SetMenuItemInfo(hmenumain, IDM_WATCHREGISTER, false, &mii);
 		}
 	}
 	else
@@ -1381,7 +1546,7 @@ void WinUI::ApplyConfig()
 		mii.fType = MFT_STRING;
 		mii.dwTypeData = "Show &Register";
 		mii.hSubMenu = 0;
-		SetMenuItemInfo(GetMenu(hwnd), IDM_WATCHREGISTER, false, &mii);
+		SetMenuItemInfo(hmenumain, IDM_WATCHREGISTER, false, &mii);
 		hmenudbg = 0;
 	}
 }
@@ -1571,8 +1736,55 @@ bool WinUI::OpenDiskImage
 	if (!result)
 		dinfo.filename[0] = 0;
 
+	// デバッガの設定: ドライブ 1 にディスクを入れたらそのディスク、取り出したらテープ (開いていれば) に切り替える
+	if (drive == 0)
+		SetDebugKey(dinfo.filename[0] ? dinfo.filename : tapefile);
+
 	CreateDiskMenu(drive);
 	return true;
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::SetDebugKey
+//	デバッガの設定を保存・読み込みするイメージを切り替える。最後に入れた (開いた) ほう (ドライブ 1 のディスクか
+//	テープ) に合わせ、取り出したら残っているほうに戻す
+//
+void WinUI::SetDebugKey(const char* newkey)
+{
+	SyncDebugSettings(debugkey, newkey);
+	strncpy_s(debugkey, sizeof(debugkey), newkey, _TRUNCATE);
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::SyncDebugSettings
+//	イメージ (ドライブ 1 のディスクかテープ) が入れ替わったときに、ブレークポイント・ウォッチを
+//	「イメージの名前.m88dbg」へ保存・読み込みする (Save Settings per Disk/Tape がオンのときだけ。
+//	オフなら今のリストに触らない。M88am から。テープは M88gn で足した)
+//
+void WinUI::SyncDebugSettings(const char* oldkey, const char* newkey)
+{
+	if (oldkey[0] && !strcmp(oldkey, newkey))
+		return;		// 同じイメージを入れ直しただけ
+	if (!(config.flag2 & PC8801::Config::savedebugperdisk))
+		return;
+
+	core.Lock();
+	PC8801::Debugger* dbg = core.GetDebugger();
+	if (oldkey[0])
+	{
+		if (!PC8801::SaveDebugSettings(dbg, oldkey))
+			statusdisplay.Show(90, 3000, "デバッグ設定を保存できません: %s", oldkey);
+	}
+	else if (!debugnodiskwarned && (dbg->GetBreakPointCount() || dbg->GetWatchCount()))
+	{
+		statusdisplay.Show(90, 4000, "ディスク・テープが無いため保存されません.");
+		debugnodiskwarned = true;
+	}
+	dbg->DeleteAllBreakPoints();
+	dbg->DeleteAllWatches();
+	if (newkey[0])
+		PC8801::LoadDebugSettings(dbg, newkey);
+	core.Unlock();
 }
 
 // ---------------------------------------------------------------------------
@@ -1745,6 +1957,127 @@ void WinUI::ChangeTapeImage()
 	snapshotchanged = true;
 }
 
+// ---------------------------------------------------------------------------
+//	WinUI::AskNewImageName
+//	新しく作るイメージの名前を、保存の窓で聞く (M88gn)。既にある名前なら置き換えるか聞く (OFN_OVERWRITEPROMPT)
+//
+bool WinUI::AskNewImageName(char* filename, const char* filter, const char* defext, const char* title)
+{
+	OFNV5 ofn;
+	memset(&ofn, 0, sizeof(ofn));
+	ofn.lStructSize = WINVAR(OFNSIZE);
+	ofn.FlagsEx = 0;
+
+	filename[0] = 0;
+	ofn.hwndOwner = hwnd;
+	ofn.lpstrFilter = filter;
+	ofn.lpstrFile = filename;
+	ofn.nMaxFile = MAX_PATH;
+	ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOREADONLYRETURN;
+	ofn.lpstrDefExt = defext;
+	ofn.lpstrTitle = title;
+
+	(*EnableIME)(hwnd, true);
+	bool r = !!GetSaveFileName(&ofn);
+	(*EnableIME)(hwnd, false);
+	return r;
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::NewDiskImage
+//	新しいディスクイメージを作る (M88gn)。drive に入れる (-1 なら入れない)。
+//	既にある名前は、置き換えてよいと答えたら消してから作る (ドライブに入っているイメージは置き換えない)
+//
+void WinUI::NewDiskImage(int drive)
+{
+	HANDLE hthread = GetCurrentThread();
+	int prev = GetThreadPriority(hthread);
+	SetThreadPriority(hthread, THREAD_PRIORITY_ABOVE_NORMAL);
+	SetGUIFlag(true);
+
+	char filename[MAX_PATH];
+	if (AskNewImageName(filename, "D88 disk image (*.d88)\0*.d88\0"
+								  "FDX disk image (*.fdx)\0*.fdx\0",
+						"d88", "New disk image"))
+	{
+		char ext[_MAX_EXT];
+		_splitpath(filename, NULL, NULL, NULL, ext);
+		bool fdx = !_stricmp(ext, ".fdx");
+		if (_stricmp(ext, ".d88") && !fdx)
+			MessageBox(hwnd, "拡張子はd88またはfdxを指定して下さい", "M88", MB_ICONERROR | MB_OK);
+		else if (diskmgr->IsImageOpen(filename))
+			MessageBox(hwnd, "このディスクイメージはドライブに入っているため、置き換えられません。", "M88", MB_ICONERROR | MB_OK);
+		else if (newdisk.Show(hinst, hwnd))
+		{
+			bool ok = true;
+			if (GetFileAttributes(filename) != INVALID_FILE_ATTRIBUTES && !DeleteFile(filename))
+				ok = false;
+			if (ok)
+				ok = diskmgr->CreateImage(filename, newdisk.GetTitle(), newdisk.GetType(),
+										  newdisk.DoFormat() && !fdx);
+			if (!ok)
+				MessageBox(hwnd, "ディスクイメージを作れませんでした。", "M88", MB_ICONERROR | MB_OK);
+			else if (drive >= 0)
+			{
+				bool was = DiskMounted(drive);
+				if (!diskmgr->Unmount(drive))
+					MessageBox(hwnd, "DiskManger::Unmount failed\nディスクの取り外しに失敗しました.", "M88", MB_ICONERROR | MB_OK);
+				if (was)
+					core.FDDMechSound(false);		// 取り出す音
+				OpenDiskImage(drive, filename, false, 0, false);
+				if (DiskMounted(drive))
+					core.FDDMechSound(true);		// 入れる音
+				snapshotchanged = true;
+			}
+			else
+				statusdisplay.Show(70, 3000, "ディスクイメージを作りました.");
+			if (ok && fdx && newdisk.DoFormat())
+				statusdisplay.Show(70, 5000, "FDXのディスクはフォーマットしていません.");
+		}
+	}
+
+	SetGUIFlag(false);
+	SetThreadPriority(hthread, prev);
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::NewTapeImage
+//	空の T88 を作って開く (M88gn)。前のテープは閉じる。既にある名前は、置き換えてよいと答えたら作り直す
+//
+void WinUI::NewTapeImage()
+{
+	HANDLE hthread = GetCurrentThread();
+	int prev = GetThreadPriority(hthread);
+	SetThreadPriority(hthread, THREAD_PRIORITY_ABOVE_NORMAL);
+	SetGUIFlag(true);
+
+	char filename[MAX_PATH];
+	if (AskNewImageName(filename, "T88 tape image (*.t88)\0*.t88\0", "t88", "New tape image"))
+	{
+		char ext[_MAX_EXT];
+		_splitpath(filename, NULL, NULL, NULL, ext);
+		if (_stricmp(ext, ".t88"))
+			MessageBox(hwnd, "拡張子はt88を指定して下さい", "M88", MB_ICONERROR | MB_OK);
+		else
+		{
+			core.Lock();
+			tapemgr->Close();			// 開いているテープを置き換えることもあるので、先に閉じる
+			core.Unlock();
+			if (TapeManager::CreateNew(filename))
+				OpenTapeImage(filename, false);
+			else
+			{
+				OpenTapeImage("", false);
+				MessageBox(hwnd, "ファイルを作れませんでした。", "M88", MB_OK | MB_ICONERROR);
+			}
+			snapshotchanged = true;
+		}
+	}
+
+	SetGUIFlag(false);
+	SetThreadPriority(hthread, prev);
+}
+
 void WinUI::OpenTapeImage(const char* filename, bool readonly)
 {
 	char buf[MAX_PATH+32];
@@ -1758,6 +2091,10 @@ void WinUI::OpenTapeImage(const char* filename, bool readonly)
 	bool r = *filename && tapemgr->Open(filename, readonly);
 	bool wp = tapemgr->IsWriteProtected();
 	core.Unlock();
+
+	// デバッガの設定: テープを開いたらそのテープ、閉じたら (開けなかったら) ドライブ 1 のディスクに切り替える
+	strncpy_s(tapefile, sizeof(tapefile), r ? filename : "", _TRUNCATE);
+	SetDebugKey(r ? filename : diskinfo[0].filename);
 	if (r)
 	{
 		GetFileNameTitle(tapetitle, sizeof(tapetitle), filename);
@@ -1768,7 +2105,7 @@ void WinUI::OpenTapeImage(const char* filename, bool readonly)
 	{
 		mii.dwTypeData = "&Open...";
 	}
-	SetMenuItemInfo(GetMenu(hwnd), IDM_TAPE, false, &mii);
+	SetMenuItemInfo(hmenumain, IDM_TAPE, false, &mii);
 }
 
 // ---------------------------------------------------------------------------
@@ -1779,6 +2116,80 @@ void WinUI::TapeNotify(void* ctx, int code)
 {
 	WinUI* ui = reinterpret_cast<WinUI*>(ctx);
 	PostMessage(ui->hwnd, WM_M88_TAPERECORD, code, 0);
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::M88DebugBreak
+//	デバッガがブレークポイントやステップで止めたときに Sequencer から届く。
+//	VM のスレッドから UI を触らないよう、ここでまとめて直す (M88am から)
+//
+LRESULT WinUI::M88DebugBreak(HWND, WPARAM, LPARAM)
+{
+	// 知らせが届くまでの間に次のステップが始まっていたら捨てる (走り出したステップを止めないため)
+	if (!core.GetDebugger()->IsBroken())
+		return 0;
+	if (!core.IsPaused())
+		core.Pause(true);
+	statusdisplay.SetStopped(true);
+	ShowPauseStatus();
+	codemon.ShowCpu(core.GetDebugger()->GetBreakCpu());
+	codemon.FollowPC();
+	tracemon.Refresh();
+	return 0;
+}
+
+void WinUI::ShowPauseStatus()
+{
+	statusdisplay.Show(20, 0, "PAUSED  PC:%.4x/%.4x", core.GetCPU1()->GetPC(), core.GetCPU2()->GetPC());
+	statusdisplay.Update();
+}
+
+// ---------------------------------------------------------------------------
+//	ステップの対象の CPU: ブレークしていれば、ブレークした CPU。そうでなければメイン
+//
+PC8801::Debugger::CpuTarget WinUI::GetStepTarget()
+{
+	if (!core.IsStopped())
+		return PC8801::Debugger::cpu_main;
+	PC8801::Debugger* dbg = core.GetDebugger();
+	if (dbg->IsBroken())
+		return dbg->GetBreakCpu();
+	if (codemon.IsOpen() && codemon.GetShownCpu() == PC8801::Debugger::cpu_sub && core.IsSubCPUActive())
+		return PC8801::Debugger::cpu_sub;
+	return PC8801::Debugger::cpu_main;
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::DebugKey
+//	デバッガのキー: 止まっている間 (ステップ中を含む) だけ F5 = Play、F11 = Step In、F10 = Step Over、
+//	Shift+F11 = Step Out。動いている間は PC-8801 のキーとして渡す。押したキーは離したのも渡さない
+//
+bool WinUI::DebugKey(const MSG& msg)
+{
+	if (msg.message == WM_KEYUP || msg.message == WM_SYSKEYUP)
+	{
+		if (debugswallow && msg.wParam == debugswallow)
+		{
+			debugswallow = 0;
+			return true;
+		}
+		return false;
+	}
+	if (msg.message != WM_KEYDOWN && msg.message != WM_SYSKEYDOWN)
+		return false;
+	uint vk = (uint) msg.wParam;
+	if (vk != VK_F5 && vk != VK_F10 && vk != VK_F11)
+		return false;
+	if (GetKeyState(VK_MENU) < 0)
+		return false;						// Alt+F10 などはほかのショートカット
+	// IsStopped は VM のスレッドでブレークした瞬間から立つ (知らせを UI が処理するまでの隙間も含める)
+	if (!core.IsStopped() && !core.IsStepping())
+		return false;
+	uint id = vk == VK_F5 ? IDM_DBG_PLAY : vk == VK_F10 ? IDM_DBG_STEPOVER
+			: GetKeyState(VK_SHIFT) < 0 ? IDM_DBG_STEPOUT : IDM_DBG_STEPIN;
+	SendMessage(hwnd, WM_COMMAND, MAKEWPARAM(id, 1), 0);
+	debugswallow = vk;
+	return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1864,7 +2275,8 @@ static const struct { uint vk; uint id; const char* name; } appshortcuts[] =
 	{ VK_F1,		IDM_SNAPSHOT_LOAD,	"F1" },
 	{ VK_F2,		IDM_CAPTURE,		"F2" },
 	{ VK_F10,		IDM_SNAPSHOT_SAVE,	"F10" },
-	{ VK_F12,		IDM_DBG_STEP,		"F12" },
+	{ VK_F5,		IDM_DBG_PAUSE,		"F5" },			// デバッガ: 止める
+	{ 'M',			IDM_SHOWMENU,		"M" },			// メニューを出す (メニューバーを隠しているとき。M88gn)
 };
 
 bool WinUI::AppShortcut(const MSG& msg)
@@ -1944,12 +2356,63 @@ LRESULT WinUI::WmDpiChanged(HWND hwnd, WPARAM, LPARAM lp)
 {
 	if (!fullscreen)
 	{
+		// 勧めの大きさは WM_GETDPISCALEDSIZE で返した大きさ
 		const RECT* r = (const RECT*) lp;
-		SetWindowPos(hwnd, 0, r->left, r->top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-		ResizeWindow(640, 400);
-		ShowStatusWindow();			// ランプの欄の幅を DPI に合わせ直す
+		SetWindowPos(hwnd, 0, r->left, r->top, r->right - r->left, r->bottom - r->top,
+					 SWP_NOZORDER | SWP_NOACTIVATE);
+		// ステータスバーの字と高さは作ったときの DPI のままなので、作り直す
+		statusdisplay.Disable();
+		ShowStatusWindow();			// ステータスバーを作り直し、窓の大きさも直す
+		statusdisplay.Update();		// 作り直したステータスバーに知らせを出し直す
+		dpimoved = true;
+	}
+	else
+	{
+		// 全画面: メニューバーの右の端か右下に重ねた知らせとランプの字を、新しい DPI で作り直す (M88gn)
+		ApplyFullScreenMenu();
+		statusdisplay.Update();
 	}
 	return 0;
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::WmGetDpiScaledSize
+//	DPI の違う画面に移る前に、移った後の窓の大きさを Windows に知らせる。
+//	答えないと Windows は DPI の比で縮めた大きさにし、窓をドラッグしている間は
+//	WM_DPICHANGED で直した大きさもその大きさで上書きされる
+//
+LRESULT WinUI::WmGetDpiScaledSize(HWND hwnd, WPARAM wp, LPARAM lp)
+{
+	UINT newdpi = (UINT) wp;
+	UINT olddpi = Dpi::GetForWindow(hwnd);
+	if (fullscreen || !newdpi || !olddpi)
+		return FALSE;
+
+	uint width, height;
+	GetClientSize(width, height);
+	RECT rect;
+	rect.left = 0;	rect.right = width;
+	rect.top  = 0;	rect.bottom = height + MulDiv(statusdisplay.GetHeight(), newdpi, olddpi);
+	Dpi::AdjustWindowRectForDpi(&rect, wstyle, GetMenu(hwnd) != 0, 0, newdpi);
+
+	SIZE* size = (SIZE*) lp;
+	size->cx = rect.right - rect.left;
+	size->cy = rect.bottom - rect.top;
+	return TRUE;
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::GetClientSize
+//	画面の部分の大きさ (表示の倍率・回転を入れる。ステータスバーは含まない)
+//
+void WinUI::GetClientSize(uint& width, uint& height)
+{
+	width = 640, height = 400;
+	if (draw.CanCrtFilter() && (Limit(config.screenrotate, 3, 0) & 1))
+		width = 400, height = 640;
+	int scale = Limit(config.screenscale, 4, 1);
+	width *= scale;
+	height *= scale;
 }
 
 // ---------------------------------------------------------------------------
@@ -1972,7 +2435,7 @@ void WinUI::ResizeWindow(uint width, uint height)
 	rect.left = 0;	rect.right = width;
 	rect.top  = 0;  rect.bottom = height + statusdisplay.GetHeight();
 
-	Dpi::AdjustWindowRect(&rect, wstyle, true, 0, hwnd);
+	Dpi::AdjustWindowRect(&rect, wstyle, GetMenu(hwnd) != 0, 0, hwnd);		// メニューバーは隠していることがある
 	SetWindowPos(hwnd, 0, 0, 0, rect.right-rect.left, rect.bottom-rect.top,
 				 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 	PostMessage(hwnd, WM_SIZE, SIZE_RESTORED, MAKELONG(width, height));
@@ -1990,8 +2453,11 @@ void WinUI::ShowStatusWindow()
 			statusdisplay.Enable((config.flags & PC8801::Config::showfdcstatus) != 0);
 		else
 			statusdisplay.Disable();
+		SetMenuBar(!HideMenuBar());
 		ResizeWindow(640, 400);
 	}
+	else
+		ApplyFullScreenMenu();		// PC-8801 のマウスの設定が変わったときなど
 }
 
 // ---------------------------------------------------------------------------
@@ -2026,6 +2492,7 @@ LRESULT WinUI::WmMeasureItem(HWND hwnd, WPARAM wparam, LPARAM lparam)
 LRESULT WinUI::M88StatusMenu(HWND, WPARAM, LPARAM)
 {
 	statusdisplay.RedrawMenu();
+	statusdisplay.RedrawOverlay();
 	return 0;
 }
 
@@ -2099,7 +2566,9 @@ LRESULT WinUI::M88ChangeDisplay(HWND hwnd, WPARAM, LPARAM)
 //		SetCapture(hwnd);
 		SetWindowLongPtr(hwnd, GWL_STYLE, wstyle);
 		SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
+		statusdisplay.DisableOverlay();
 		statusdisplay.DisableMenu();
+		SetMenuBar(!HideMenuBar());		// ウィンドウ表示の設定に合わせる
 		ResizeWindow(640, 400);
 		SetWindowPos(hwnd, HWND_NOTOPMOST, point.x, point.y, 0, 0, SWP_NOSIZE | SWP_FRAMECHANGED);
 		ShowStatusWindow();
@@ -2127,9 +2596,9 @@ LRESULT WinUI::M88ChangeDisplay(HWND hwnd, WPARAM, LPARAM)
 		SetWindowPos(hwnd, HWND_TOPMOST, mr.left, mr.top, mr.right - mr.left, mr.bottom - mr.top,
 					 SWP_FRAMECHANGED | SWP_SHOWWINDOW);
 		draw.Resize(640, 400);
-		// ステータスバーの代わりに、メニューバーの右の端に知らせとランプを出す
-		if (config.flags & PC8801::Config::showstatusbar)
-			statusdisplay.EnableMenu((config.flags & PC8801::Config::showfdcstatus) != 0);
+		// メニューバーを隠すか。ステータスバーの代わりに、知らせとランプをメニューバーの右の端
+		// (隠しているなら画面の右下に重ねて) 出す
+		ApplyFullScreenMenu();
 
 		report = false;
 	}
@@ -2339,11 +2808,139 @@ LRESULT WinUI::WmRButtonDown(HWND hwnd, WPARAM wparam, LPARAM lparam)
 LRESULT WinUI::WmRButtonUp(HWND hwnd, WPARAM wparam, LPARAM lparam)
 {
 	if (capturemouse)
-	{
 		mousebutton &= ~2;
+
+	// 右クリックで本体のメニューを出す (PC-8801 のマウスを使う設定なら、右ボタンは PC-8801 のもの)。
+	// 描画の子の窓の上で離したときは、子の窓の WM_CONTEXTMENU が届く (WmContextMenu)
+	if (!(config.flags & Config::enablemouse))
+	{
+		POINT pt;
+		GetCursorPos(&pt);
+		ShowFullScreenMenu(pt.x, pt.y);
 		return 0;
 	}
+	if (capturemouse)
+		return 0;
 	return DefWindowProc(hwnd, WM_LBUTTONDOWN, wparam, lparam);
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::WmContextMenu
+//	描画の子の窓 (D3D11・D2D) の上で右ボタンを離すと、子の窓の DefWindowProc が親に送ってくる
+//
+LRESULT WinUI::WmContextMenu(HWND hwnd, WPARAM wparam, LPARAM lparam)
+{
+	// キーボード (Shift+F10・アプリケーションキー) からのものは使わない (アプリケーションキーはショートカットに使うため)。
+	// タイトルバー・メニューバーの上 (窓の中でない所) は Windows に任せる (タイトルバーならシステムメニュー)
+	if (!(config.flags & Config::enablemouse) && lparam != (LPARAM) -1
+		&& DefWindowProc(hwnd, WM_NCHITTEST, 0, lparam) == HTCLIENT)
+	{
+		ShowFullScreenMenu((short) LOWORD(lparam), (short) HIWORD(lparam));
+		return 0;
+	}
+	return DefWindowProc(hwnd, WM_CONTEXTMENU, wparam, lparam);
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::ShowFullScreenMenu
+//	右クリック: 本体のメニューバーと同じ中身 (Control・Disk・…) をポップアップで出す (M88gn)
+//
+void WinUI::ShowFullScreenMenu(int x, int y)
+{
+	if (!hmenumain)
+		return;
+	HMENU hpopup = CreatePopupMenu();
+	if (!hpopup)
+		return;
+
+	// メニューバーの各項目のサブメニューを、そのまま借りて並べる (知らせ・ランプの項目は飛ばす)
+	int n = GetMenuItemCount(hmenumain);
+	int added = 0;
+	for (int i=0; i<n; i++)
+	{
+		HMENU sub = GetSubMenu(hmenumain, i);
+		char text[64];
+		if (!sub || !GetMenuString(hmenumain, i, text, sizeof(text), MF_BYPOSITION))
+			continue;
+		if (AppendMenu(hpopup, MF_POPUP | MF_STRING, (UINT_PTR) sub, text))
+			added++;
+	}
+
+	// メニューの間は PC-8801 にキーを渡さず、エミュレーションを止める (メニューバーのときと同じ)
+	keyif.Activate(false);
+	SetGUIFlag(true);
+	if (cursorhidden)
+		SetCursor(LoadCursor(0, IDC_ARROW));
+
+	// オーナーがフォアグラウンドでないと、出た直後に消えることがある (TrackPopupMenu の決まりごと)
+	SetForegroundWindow(hwnd);
+	// 選んだ項目はメニューが WM_COMMAND で送る (TPM_RETURNCMD は使わない。設定 (IDM_CONFIG) の ID は 0 で、
+	// 返り値では「何も選ばなかった」と区別できないため)
+	TrackPopupMenu(hpopup, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON, x, y, 0, hwnd, 0);
+	PostMessage(hwnd, WM_NULL, 0, 0);
+
+	// 借りたサブメニューは外してから消す (DestroyMenu はサブメニューも消すため)
+	while (added-- > 0)
+		RemoveMenu(hpopup, 0, MF_BYPOSITION);
+	DestroyMenu(hpopup);
+
+	SetGUIFlag(false);
+	keyif.Activate(true);
+	RestartCursorTimer();
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::ApplyFullScreenMenu
+//	全画面: 設定に合わせてメニューバーを隠す・出す。知らせとランプは、メニューバーを出しているなら
+//	その右の端に、隠しているなら画面の右下に重ねて出す (M88gn)
+//
+void WinUI::ApplyFullScreenMenu()
+{
+	if (!fullscreen || !hmenumain)
+		return;
+	bool show = (config.flags & PC8801::Config::showstatusbar) != 0;
+	bool showfd = (config.flags & PC8801::Config::showfdcstatus) != 0;
+	if (HideMenuBar())
+	{
+		statusdisplay.DisableMenu();
+		SetMenuBar(false);
+		if (show)
+			statusdisplay.EnableOverlay(showfd);
+		else
+			statusdisplay.DisableOverlay();
+	}
+	else
+	{
+		statusdisplay.DisableOverlay();
+		SetMenuBar(true);
+		if (show)
+			statusdisplay.EnableMenu(showfd);
+		else
+			statusdisplay.DisableMenu();
+	}
+}
+
+// ---------------------------------------------------------------------------
+//	WinUI::HideMenuBar
+//	今の表示 (全画面・ウィンドウ) でメニューバーを隠すか (M88gn)。
+//	PC-8801 のマウスを使う設定では、右クリックでメニューを出せないので隠さない
+//
+bool WinUI::HideMenuBar()
+{
+	if (config.flags & Config::enablemouse)
+		return false;
+	return (fullscreen ? config.fullhidemenu : config.winhidemenu) != 0;
+}
+
+bool WinUI::SetMenuBar(bool show)
+{
+	if (!hmenumain)
+		return false;
+	HMENU want = show ? hmenumain : 0;
+	if (GetMenu(hwnd) == want)
+		return false;
+	SetMenu(hwnd, want);
+	return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -2358,6 +2955,13 @@ LRESULT WinUI::WmEnterSizeMove(HWND hwnd, WPARAM, LPARAM)
 LRESULT WinUI::WmExitSizeMove(HWND hwnd, WPARAM, LPARAM)
 {
 //	core.ActivateMouse(true);
+	// ドラッグの間に DPI が変わったら、動かし終えたところで大きさを確かめ直す
+	if (dpimoved)
+	{
+		dpimoved = false;
+		if (!fullscreen)
+			ResizeWindow(640, 400);
+	}
 	return 0;
 }
 
@@ -2615,8 +3219,8 @@ bool WinUI::MakeSnapshotMenu()
 		mii.cbSize = WINVAR(MIISIZE);
 		mii.fMask = MIIM_SUBMENU;
 		mii.hSubMenu = 0;
-		SetMenuItemInfo(GetMenu(hwnd), IDM_SNAPSHOT_LOAD, false, &mii);
-		SetMenuItemInfo(GetMenu(hwnd), IDM_SNAPSHOT_SAVE, false, &mii);
+		SetMenuItemInfo(hmenumain, IDM_SNAPSHOT_LOAD, false, &mii);
+		SetMenuItemInfo(hmenumain, IDM_SNAPSHOT_SAVE, false, &mii);
 		
 		// メニュー作成
 		for (i=0; i<2; i++)
@@ -2660,11 +3264,11 @@ bool WinUI::MakeSnapshotMenu()
 		SetMenuDefaultItem(hmenuss[0], IDM_SNAPSHOT_SAVE_0 + currentsnapshot, FALSE );
 		
 		mii.hSubMenu = hmenuss[0];
-		SetMenuItemInfo(GetMenu(hwnd), IDM_SNAPSHOT_SAVE, false, &mii);
+		SetMenuItemInfo(hmenumain, IDM_SNAPSHOT_SAVE, false, &mii);
 		if (entries)
 		{
 			mii.hSubMenu = hmenuss[1];
-			SetMenuItemInfo(GetMenu(hwnd), IDM_SNAPSHOT_LOAD, false, &mii);
+			SetMenuItemInfo(hmenumain, IDM_SNAPSHOT_LOAD, false, &mii);
 		}
 	}
 	return true;

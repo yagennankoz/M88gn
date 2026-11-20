@@ -39,6 +39,10 @@ public:
 		return INT_MAX;
 	}
 
+	// デバッガで止めている間の無音。止まっている間はバッファが空になって異音が出るため、
+	// 元の音源には触れずに無音を返す (M88am から)
+	void SetMuted(bool mute) { muted_ = mute; }
+
 	bool DumpStart(char* filename);
 	bool DumpStop();
 	bool IsDumping() { return dumpstate_ != IDLE; }
@@ -52,6 +56,7 @@ private:
 	void Dump(Sample* dest, int samples);
 
 	SoundSource* source_;
+	bool muted_;
 	string dumpfile_;
 
 	HMMIO hmmio_;					// mmio handle
@@ -84,6 +89,7 @@ public:
 	bool DumpBegin(char* filename);
 	bool DumpEnd();
 	bool IsDumping() { return dumper.IsDumping(); }
+	void Mute(bool mute) { dumper.SetMuted(mute); }
 	
 	void SetSoundMonitor(OPNMonitor* mon) { soundmon = mon; }
 	

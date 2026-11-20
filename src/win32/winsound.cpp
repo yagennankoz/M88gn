@@ -198,6 +198,7 @@ bool WinSound::DumpEnd()
 
 SoundDumpPipe::SoundDumpPipe()
 	: source_(0)
+	, muted_(false)
 	, dumpstate_(IDLE)
 	, hmmio_(0)
 {
@@ -279,7 +280,7 @@ bool SoundDumpPipe::DumpStop()
 
 		int curtime = dumpedsample_ / dumprate_;
 		statusdisplay.Show
-			(100, 2500, "˜^‰¹I—¹ %s [%.2d:%.2d]", dumpfile_.c_str(), curtime/60, curtime%60);
+			(100, 2500, "˜^‰¹I—¹ [%.2d:%.2d] %s", curtime/60, curtime%60, dumpfile_.c_str());
 	}
 	return true;
 }
@@ -289,6 +290,12 @@ int SoundDumpPipe::Get(Sample* dest, int samples)
 {
 	if (!source_)
 		return 0;
+
+	if (muted_)
+	{
+		memset(dest, 0, samples * GetChannels() * sizeof(Sample));
+		return samples;
+	}
 
 	if (dumpstate_ == IDLE)
 		return source_->Get(dest, samples);
@@ -338,7 +345,7 @@ void SoundDumpPipe::Dump(Sample* dest, int samples)
 		if (prevtime != curtime)
 		{
 			statusdisplay.Show
-				(101, 0, "˜^‰¹’† %s [%.2d:%.2d]", dumpfile_.c_str(), curtime / 60, curtime % 60);
+				(101, 0, "˜^‰¹’† [%.2d:%.2d] %s", curtime / 60, curtime % 60, dumpfile_.c_str());
 		}	
 	}
 }

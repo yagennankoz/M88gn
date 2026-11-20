@@ -26,5 +26,6 @@ private:
 	
 	static const char abouttext[];
 	uint32 crc;
+	HICON bigicon;		// ‰æ–Ê‚Ì DPI ‚É‡‚í‚¹‚Ä‘å‚«‚­‚µ‚½ƒAƒCƒRƒ“ (M88gn)
 };
 

@@ -9,6 +9,7 @@
 #include "schedule.h"
 #include "device.h"
 #include "draw.h"
+#include "debugger.h"
 
 // ---------------------------------------------------------------------------
 //	使用する Z80 エンジンの種類を決める
@@ -100,6 +101,11 @@ public:
 	bool IsN80Supported();
 	bool IsN80V2Supported();
 
+	// サブCPUが実際に駆動されているか (デバッガのステップ対象の判定用)。
+	// 「Sub CPU の駆動を制御する」設定が有効なとき、サブシステムも FDC も
+	// 動いていない間はサブCPUを1命令も実行しない (Execute 参照)
+	bool IsSubCPUActive();
+
 	PC8801::Memory* GetMem1() { return mem1; }
 	PC8801::SubSystem* GetMem2() { return subsys; }
 	PC8801::OPNIF*	GetOPN1() { return opn1; }
@@ -108,6 +114,11 @@ public:
 	Z80*			GetCPU2() { return &cpu2; }
 	PC8801::PD8257*	GetDMAC() { return dmac; }
 	PC8801::Beep*	GetBEEP() { return beep; }
+	PC8801::Debugger* GetDebugger() { return &debugger; }
+	IMemoryAccess* GetMemoryAccess1() { return &mm1; }
+	IMemoryAccess* GetMemoryAccess2() { return &mm2; }
+	IMemoryManager* GetMemoryManager1() { return &mm1; }
+	IMemoryManager* GetMemoryManager2() { return &mm2; }
 	TapeManager*	GetTapeManager() { return tapemgr; }
 	ISoundSource*	GetFDDSound();
 	void			FDDMechSound(bool insert);		// ディスクを入れる / 取り出す音
@@ -202,6 +213,7 @@ protected:
 private:
 	Z80 cpu1;
 	Z80 cpu2;
+	PC8801::Debugger debugger;
 
 	friend class PC8801::Base;
 };

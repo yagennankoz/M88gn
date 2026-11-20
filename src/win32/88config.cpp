@@ -9,6 +9,7 @@
 #include "misc.h"
 
 static const char* AppName = "M88p2 for Windows";
+extern char m88ini[MAX_PATH];		// main.cpp
 
 namespace PC8801
 {
@@ -16,6 +17,14 @@ namespace PC8801
 // ---------------------------------------------------------------------------
 //	LoadConfigEntry
 //	
+// ---------------------------------------------------------------------------
+//	GetM88IniPath
+//
+const char* GetM88IniPath()
+{
+	return m88ini;
+}
+
 static bool LoadConfigEntry
 (const char* inifile, const char* entry, int* value, int def, bool applydefault)
 {
@@ -150,6 +159,11 @@ void LoadConfig(Config* cfg, const char* inifile, bool applydefault)
 	LoadConfigEntry(inifile, "SoftKbdW", &cfg->softkbdw, 0, applydefault);
 	LoadConfigEntry(inifile, "SoftKbdShow", &cfg->softkbdshow, 0, applydefault);
 	LoadConfigEntry(inifile, "SoftKbdDpi", &cfg->softkbddpi, 0, applydefault);
+	LoadConfigEntry(inifile, "TapeWinX", &cfg->tapewinx, 0, applydefault);
+	LoadConfigEntry(inifile, "TapeWinY", &cfg->tapewiny, 0, applydefault);
+	LoadConfigEntry(inifile, "TapeWinW", &cfg->tapewinw, 0, applydefault);
+	LoadConfigEntry(inifile, "TapeWinH", &cfg->tapewinh, 0, applydefault);
+	LoadConfigEntry(inifile, "TapeWinShow", &cfg->tapewinshow, 0, applydefault);
 	if (LoadConfigEntry(inifile, "DiskVolume", &n, 100, applydefault))
 		cfg->fddvolume = Limit(n, 100, 0);
 	if (LoadConfigEntry(inifile, "TapeSpeed", &n, 1, applydefault))
@@ -171,6 +185,10 @@ void LoadConfig(Config* cfg, const char* inifile, bool applydefault)
 		cfg->crtbright = Limit(n, 2, 0);
 	if (LoadConfigEntry(inifile, "CrtDirect", &n, 0, applydefault))
 		cfg->crtdirect = n ? 1 : 0;
+	if (LoadConfigEntry(inifile, "FullScreenHideMenu", &n, 0, applydefault))
+		cfg->fullhidemenu = n ? 1 : 0;
+	if (LoadConfigEntry(inifile, "WindowHideMenu", &n, 0, applydefault))
+		cfg->winhidemenu = n ? 1 : 0;
 	if (LoadConfigEntry(inifile, "CrtMaskPitch", &n, 0, applydefault))
 		cfg->crtpitch = Limit(n, 3, 0);
 	if (LoadConfigEntry(inifile, "CrtGlow", &n, 0, applydefault))
@@ -268,11 +286,18 @@ void SaveConfig(Config* cfg, const char* inifile, bool writedefault)
 	SaveEntry(inifile, "CrtBreathExpand", cfg->crtbreathexp, writedefault);
 	SaveEntry(inifile, "CrtMaskPitch", cfg->crtpitch, writedefault);
 	SaveEntry(inifile, "CrtDirect", cfg->crtdirect, writedefault);
+	SaveEntry(inifile, "FullScreenHideMenu", cfg->fullhidemenu, writedefault);
+	SaveEntry(inifile, "WindowHideMenu", cfg->winhidemenu, writedefault);
 	SaveEntry(inifile, "SoftKbdX", cfg->softkbdx, writedefault);
 	SaveEntry(inifile, "SoftKbdY", cfg->softkbdy, writedefault);
 	SaveEntry(inifile, "SoftKbdW", cfg->softkbdw, writedefault);
 	SaveEntry(inifile, "SoftKbdShow", cfg->softkbdshow, writedefault);
 	SaveEntry(inifile, "SoftKbdDpi", cfg->softkbddpi, writedefault);
+	SaveEntry(inifile, "TapeWinX", cfg->tapewinx, writedefault);
+	SaveEntry(inifile, "TapeWinY", cfg->tapewiny, writedefault);
+	SaveEntry(inifile, "TapeWinW", cfg->tapewinw, writedefault);
+	SaveEntry(inifile, "TapeWinH", cfg->tapewinh, writedefault);
+	SaveEntry(inifile, "TapeWinShow", cfg->tapewinshow, writedefault);
 }
 
 }

@@ -33,6 +33,9 @@ TapeManager::TapeManager()
 	click = 0;
 	clickpos = 0;
 	speed = 1;
+	serial = 0;
+	recbegin = 0;
+	volpercent = 100;
 	lastsend = 0;
 	datastart = 0;
 	lastin40 = 0;
@@ -161,6 +164,7 @@ bool TapeManager::Open(const char* file, bool readonly)
 			writeprotect = true;
 	}
 
+	serial++;
 	if (!Rewind())
 		return false;
 	return true;
@@ -443,6 +447,7 @@ bool TapeManager::Close()
 	mode = T_BLANK;
 	WaveClear();
 	SoundState();
+	serial++;
 	return true;
 }
 
@@ -519,6 +524,174 @@ void TapeManager::GoTag(Tag* t)
 	pos = t;
 	Proceed();						// モーターが止まっていれば、残りの時間を持つだけ
 	SoundState();
+}
+
+// ---------------------------------------------------------------------------
+//	テープの窓 (M88gn)
+//
+//	頭出しできる所: テープの先頭と、区切り (IsCuePoint)。
+//	先頭から最初の区切りまでに DATA が無ければ (テープが区切りから始まる)、先頭は入れない
+//
+void TapeManager::CuePoints(std::vector<Tag*>& v)
+{
+	v.clear();
+	if (wave)
+	{
+		v.push_back(0);
+		return;
+	}
+	if (!tags)
+		return;
+	bool data = false;
+	bool first = true;
+	for (Tag* t = tags; t; t = t->next)
+	{
+		if (t->id == T_DATA && first)
+			data = true;
+		if (t->id != T_VERSION && IsCuePoint(t))
+		{
+			if (first && (data || TagPos(t) > 0))
+				v.push_back(0);
+			first = false;
+			v.push_back(t);
+		}
+	}
+	if (first)
+		v.push_back(0);
+}
+
+//	区切りの後のデータの見当 (最初の DATA の頭を見る)。detail に速さとバイト数
+std::string TapeManager::CueLabel(Tag* t, std::string* detail)
+{
+	Tag* n = t ? t->next : tags;
+	DataTag* first = 0;
+	int bytes = 0;
+	for (; n && !IsCuePoint(n); n = n->next)
+	{
+		if (n->id != T_DATA)
+			continue;
+		DataTag* d = (DataTag*) n->data;
+		if (!first)
+			first = d;
+		bytes += d->length;
+	}
+	char buf[64];
+	if (!first)
+	{
+		detail->clear();
+		return "";
+	}
+	if (cmt)
+		wsprintf(buf, "%d bytes", bytes);
+	else
+		wsprintf(buf, "%d baud, %d bytes", first->type & 0x100 ? 1200 : 600, bytes);
+	*detail = buf;
+
+	// 頭の 32 バイト (DATA が分かれていてもつなぐ)。頭の 00 は飛ばす (.cmt はダミーの 00 を入れている。
+	// 録音したテープでも、リーダーの終わりに 00 が入ることがある)
+	uint8 p[32];
+	int len = 0;
+	bool lead = true;
+	for (n = t ? t->next : tags; n && !IsCuePoint(n) && len < 32; n = n->next)
+	{
+		if (n->id != T_DATA)
+			continue;
+		DataTag* d = (DataTag*) n->data;
+		for (int i = 0; i < d->length && len < 32; i++)
+		{
+			if (lead && d->data[i] == 0)
+				continue;
+			lead = false;
+			p[len++] = d->data[i];
+		}
+	}
+	// BASIC (N88・N): D3 x 10 + 名前 6 文字
+	int k = 0;
+	while (k < len && k < 10 && p[k] == 0xd3)
+		k++;
+	if (k == 10 && len >= 16)
+	{
+		char name[8];
+		int m = 0;
+		for (int i = 0; i < 6; i++)
+		{
+			uint8 c = p[10 + i];
+			name[m++] = (c >= 0x20 && c < 0x7f) || (c >= 0xa1 && c <= 0xdf) ? char(c) : '.';
+		}
+		while (m > 0 && (name[m - 1] == ' ' || name[m - 1] == '.'))
+			m--;
+		name[m] = 0;
+		wsprintf(buf, "BASIC \"%s\"", name);
+		return buf;
+	}
+	// マシン語 (モニターの W の形式): 3A アドレス (上位・下位) チェックサム
+	if (len >= 4 && p[0] == 0x3a && uint8(p[1] + p[2] + p[3]) == 0)
+	{
+		wsprintf(buf, "Machine code %.2X%.2X", p[1], p[2]);
+		return buf;
+	}
+	return "Data";
+}
+
+void TapeManager::GetCueList(std::vector<CueInfo>& list)
+{
+	list.clear();
+	std::vector<Tag*> v;
+	CuePoints(v);
+	for (size_t i = 0; i < v.size(); i++)
+	{
+		CueInfo ci;
+		ci.ms = v[i] ? uint32((unsigned __int64)(TagPos(v[i])) * 1000 / 4800) : 0;
+		if (!wave)
+			ci.label = CueLabel(v[i], &ci.detail);
+		list.push_back(ci);
+	}
+}
+
+bool TapeManager::CueTo(int index)
+{
+	std::vector<Tag*> v;
+	CuePoints(v);
+	if (index < 0 || index >= int(v.size()) || recording || recarm)
+		return false;
+	if (!v[index])
+		return Rewind();
+	GoTag(v[index]);
+	return true;
+}
+
+uint TapeManager::GetTimeMs()
+{
+	if (wave)
+		return WaveNow() / 1000;
+	if (recording)
+		return GetLengthMs();		// 録音はテープの最後に足すので、位置は最後 (録音した時間を含む)
+	if (!tags)
+		return 0;
+	return uint((unsigned __int64)(GetPos()) * 1000 / 4800);
+}
+
+uint TapeManager::GetLengthMs()
+{
+	if (wave)
+		return wvhalf.empty() ? 0 : wvhalf.back() / 1000;
+	uint32 end = 0;
+	for (Tag* t = tags; t; t = t->next)
+	{
+		uint32 e = 0;
+		if (t->id == T_DATA)
+		{
+			DataTag* d = (DataTag*) t->data;
+			e = d->pos + d->length * (cmt ? 44 : ByteTicks(d->type));
+		}
+		else if (t->id == T_BLANK || t->id == T_SPACE || t->id == T_MARK)
+			e = TagPos(t) + ((BlankTag*) t->data)->tick;
+		end = Max(end, e);
+	}
+	uint ms = uint((unsigned __int64)(end) * 1000 / 4800);
+	if (recording)
+		ms += uint(scheduler->GetTime() - recbegin) / 100;		// 録音している時間 (書くのはモーターが止まってから)
+	return ms;
 }
 
 bool TapeManager::Cue(int dir)
@@ -1082,6 +1255,7 @@ void TapeManager::SetVolume(int percent)
 {
 	// 体感の大きさに合わせる (25% = -20dB、50% = -10dB、75% = -4dB。10dB で体感が半分)
 	percent = Limit(percent, 100, 0);
+	volpercent = percent;
 	amp = percent ? int(sndamp * pow(percent / 100.0, log(10.0) / log(2.0) / 2)) : 0;
 	clickamp = sndamp * percent / 100;	// リレーの音は比例にする
 }
@@ -1377,6 +1551,7 @@ void TapeManager::SetRecord(bool on)
 void TapeManager::RecBegin()
 {
 	recording = true;
+	recbegin = scheduler->GetTime();
 	RecStart();
 	statusdisplay.Show(20, 3000, "Tape: recording");
 }
@@ -1445,6 +1620,7 @@ void TapeManager::RecWriteAndReload(const std::vector<RecTag>& t)
 	ToEnd();
 	filename = file;
 	writeprotect = wp;
+	serial++;
 }
 
 // ---------------------------------------------------------------------------

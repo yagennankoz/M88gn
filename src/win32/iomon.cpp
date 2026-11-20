@@ -47,7 +47,7 @@ bool IOMonitor::Init(WinCore* _pc)
 {
 	pc = _pc;
 	bank = true;
-	if (!WinMonitor::Init(MAKEINTRESOURCE(IDD_IOVMON)))
+	if (!WinMonitor::Init(MAKEINTRESOURCE(IDD_IOVMON), "MonitorIO", 53, 17))
 		return false;
 	SetLines(0x10);
 	SetUpdateTimer(50);

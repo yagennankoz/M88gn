@@ -1,0 +1,157 @@
+// ---------------------------------------------------------------------------
+//	M88 - PC-8801 emulator
+//	デバッグ設定(ブレークポイント/ウォッチ)のディスクイメージ単位の保存
+//	Copyright (C) 2026
+//	2-clause BSD license
+// ---------------------------------------------------------------------------
+
+#include "headers.h"
+#include "dbgsettings.h"
+
+namespace
+{
+	// <diskimage> + ".m88dbg" を組み立てる
+	void MakePath(char* path, size_t pathsize, const char* diskimage)
+	{
+		strncpy_s(path, pathsize, diskimage, _TRUNCATE);
+		strncat_s(path, pathsize, ".m88dbg", _TRUNCATE);
+	}
+}
+
+namespace PC8801
+{
+
+// ---------------------------------------------------------------------------
+//	保存。書き込みに1つでも失敗したら false を返すが、
+//	書けるところまでは書く(全滅させない)
+//
+bool SaveDebugSettings(Debugger* dbg, const char* diskimage)
+{
+	if (!diskimage || !diskimage[0])
+		return false;
+
+	char path[MAX_PATH + 16];
+	MakePath(path, sizeof(path), diskimage);
+
+	bool ok = true;
+	char buf[16];
+
+	if (!WritePrivateProfileString("M88Debug", "Version", "1", path))
+		ok = false;
+
+	// 古いエントリが残らないよう、書き直す前にセクションごと消す
+	WritePrivateProfileString("Breakpoints", 0, 0, path);
+	int bpcount = dbg->GetBreakPointCount();
+	wsprintf(buf, "%d", bpcount);
+	if (!WritePrivateProfileString("Breakpoints", "Count", buf, path))
+		ok = false;
+	for (int i = 0; i < bpcount; i++)
+	{
+		Debugger::BreakPoint bp;
+		if (!dbg->GetBreakPoint(i, &bp))
+			continue;
+
+		char key[16], val[128];
+		wsprintf(key, "BP%d", i);
+		// addr,length,cpu,exec,read,write,enabled,comment (アドレスと長さは16進、他は0/1)
+		wsprintf(val, "%x,%x,%x,%d,%d,%d,%d,%s",
+				 bp.addr, bp.length, bp.cpu, bp.exec, bp.read, bp.write, bp.enabled,
+				 bp.comment);
+		if (!WritePrivateProfileString("Breakpoints", key, val, path))
+			ok = false;
+	}
+
+	WritePrivateProfileString("Watch", 0, 0, path);
+	int wcount = dbg->GetWatchCount();
+	wsprintf(buf, "%d", wcount);
+	if (!WritePrivateProfileString("Watch", "Count", buf, path))
+		ok = false;
+	for (int i = 0; i < wcount; i++)
+	{
+		Debugger::WatchEntry w;
+		if (!dbg->GetWatch(i, &w))
+			continue;
+
+		char key[16], val[80];
+		wsprintf(key, "W%d", i);
+		// addr,size,cpu,label
+		wsprintf(val, "%x,%x,%x,%s", w.addr, w.size, w.cpu, w.label);
+		if (!WritePrivateProfileString("Watch", key, val, path))
+			ok = false;
+	}
+
+	return ok;
+}
+
+// ---------------------------------------------------------------------------
+//	読み込み。既存の一覧は読み込み前に丸ごと消す
+//
+bool LoadDebugSettings(Debugger* dbg, const char* diskimage)
+{
+	if (!diskimage || !diskimage[0])
+		return false;
+
+	char path[MAX_PATH + 16];
+	MakePath(path, sizeof(path), diskimage);
+
+	int version = GetPrivateProfileInt("M88Debug", "Version", 0, path);
+	if (version <= 0 || version > 1)
+		return false;	// 保存されていない、または将来のバージョン
+
+	dbg->DeleteAllBreakPoints();
+	dbg->DeleteAllWatches();
+
+	int bpcount = GetPrivateProfileInt("Breakpoints", "Count", 0, path);
+	for (int i = 0; i < bpcount; i++)
+	{
+		char key[16], val[256];
+		wsprintf(key, "BP%d", i);
+		if (!GetPrivateProfileString("Breakpoints", key, "", val, sizeof(val), path) || !val[0])
+			continue;
+
+		unsigned int addr = 0, length = 1, cpu = 0;
+		int exec = 0, read = 0, write = 0, enabled = 1;
+		char comment[64] = "";		// 旧形式(コメント無し)を読んだときは空欄にする
+		sscanf_s(val, "%x,%x,%x,%d,%d,%d,%d,%63[^\r\n]",
+				 &addr, &length, &cpu, &exec, &read, &write, &enabled,
+				 comment, (unsigned)sizeof(comment));
+
+		Debugger::BreakPoint bp;
+		bp.addr = addr;
+		bp.length = length;
+		bp.cpu = uint8(cpu);
+		bp.exec = exec != 0;
+		bp.read = read != 0;
+		bp.write = write != 0;
+		// 復元した BP は必ず無効な状態から始める。有効なまま復元すると
+		// ROM のブート中に即ヒットして「起動が固まった」ように見える
+		// (特にメモリ BP)。有効化は BP 管理ウインドウで行う
+		bp.enabled = false;
+		strncpy_s(bp.comment, comment, _TRUNCATE);
+		dbg->AddBreakPoint(bp);
+	}
+
+	int wcount = GetPrivateProfileInt("Watch", "Count", 0, path);
+	for (int i = 0; i < wcount; i++)
+	{
+		char key[16], val[128];
+		wsprintf(key, "W%d", i);
+		if (!GetPrivateProfileString("Watch", key, "", val, sizeof(val), path) || !val[0])
+			continue;
+
+		unsigned int addr = 0, size = 1, cpu = 0;
+		char label[32] = "";
+		sscanf_s(val, "%x,%x,%x,%31[^\r\n]", &addr, &size, &cpu, label, (unsigned)sizeof(label));
+
+		Debugger::WatchEntry w;
+		w.addr = addr;
+		w.size = uint8(size);
+		w.cpu = uint8(cpu);
+		strncpy_s(w.label, sizeof(w.label), label, _TRUNCATE);
+		dbg->AddWatch(w);
+	}
+
+	return true;
+}
+
+}

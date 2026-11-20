@@ -422,11 +422,11 @@ void WinDrawD3D11::Render()
 	//	(補正は掛け算なので、上げるほど文字の横のにじみも明るくなり、白は飽和して線が太く見える)
 	//	マスクの間隔: 実在の CRT の蛍光体の 1 組の幅 (mm)。エミュレーターの画面の横 (640 ドット) を 14 インチのモニターの表示幅 240mm とみなし、
 	//	  出力のピクセルに直す (4K の全画面 3456 ピクセルで 0.31mm なら約 4.5 ピクセル)。Pixel なら今までどおり出力のピクセル単位の模様
-	//	丸いぼけ: 明るい所の周りに、ぼかした絵を足す。量は弱 0.15・中 0.3・強 0.5、広さは元の画素で 1 (Soft なら 2)
+	//	丸いぼけ: 明るい所の周りに、ぼかした絵を足す。量は弱 0.1・中 0.2・強 0.35、広さ (ガウスの σ) は元の画素で 0.7 (Soft なら 1.4)
 	static const float hardscan[4] = { 0, -5, -9, -16 };
 	static const float hardpix[3] = { -10, -6, -3 };
 	static const float brightexp[3] = { 0.35f, 0.7f, 1.0f };
-	static const float glowamount[4] = { 0, 0.15f, 0.3f, 0.5f };
+	static const float glowamount[4] = { 0, 0.1f, 0.2f, 0.35f };
 	float hscan = hardscan[Limit(crtscan, 3, 0)];
 	int mtype = Limit(crtmask, 3, 0);
 	int sharp = Limit(crtsharp, 2, 0);
@@ -461,7 +461,7 @@ void WinDrawD3D11::Render()
 		dx, dy, dw, dh,
 		float(lines == 200 ? 200 : 400), hscan, hpix, bright,
 		float(mtype), mdark, mlight, filter ? 1.0f : 0.0f,
-		sharp == 2 ? 2.0f : 1.0f, gamount, 0, ppitch,
+		sharp == 2 ? 1.4f : 0.7f, gamount, 0, ppitch,
 		bs, 0.8f, 0.6f, wire,
 		float(rotation & 3), 0, 0, 0,
 	};

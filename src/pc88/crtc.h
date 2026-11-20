@@ -94,7 +94,7 @@ private:
 private:
 	enum
 	{
-		ssrev = 2,
+		ssrev = 3,		// 3: 画面の反転を属性に入れなくなった (M88gn。2 以下を読むときは属性から反転を取り除く)
 	};
 	struct Status
 	{
@@ -164,7 +164,31 @@ private:
 	uint8 attr_blink;
 	uint status;
 	uint column;
-	int linetime;
+	int linetime;			// 1 文字行の長さ (tick)。ログと互換のため残す
+
+	// ★ (M88gn: M88am から取り込んだ修正) 1 文字行の長さを端数まで持つ。
+	//    linetime を整数 tick に丸めると、24k で 64.448 → 64 となり
+	//    フレームが 0.7% 速くなる (実測 55.804Hz / 正しくは 55.417Hz)。
+	//    VRTC を数えて時計を作るソフトで誤差が出る。
+	//    イベントを積むときに端数を fracq へ繰り越して誤差を散らす。
+	//    詳細は M88am の docs/spec-vrtc-timing.md
+	// 固定小数の分解能。1/1024 だと int(4.028*1024) = 4124 の切り捨てで
+	// －0.0163% 残る。1/65536 なら 4.028 をほぼそのまま表せる。
+	// 最悪ケース (linesperchar 32 / 72 行) でも
+	// int(6.258*65536)*32*72 = 9.4 億で int に収まる
+	enum { ltqshift = 16, ltqunit = 1 << ltqshift };
+
+	int linetimeq;			// 1 文字行の正確な長さ (1/65536 tick)
+	int fracq;				// 端数の繰り越し (0..ltqunit-1)
+	int LineTicks(int rows);	// rows 文字行ぶんの tick 数 (端数を繰り越す)
+
+	// ★ 次のイベントの「意図した」時刻 (スケジューラの絶対時刻)。
+	//    AddEvent は「今」からの相対で積むため、Execute の
+	//    行き過ぎぶんが次のイベント時刻に焼き込まれて積み上がる。
+	//    絶対時刻を持って差分を積むことで遅れを繰り越さない
+	int nexttime;
+	void AddLineEvent(int rows, TimeFunc func, int arg = 0);
+
 	uint frametime;
 	uint pcgadr;
 	uint pcgdat;
@@ -222,7 +246,9 @@ private:
 //
 inline int CRTC::GetFramePeriod()
 {
-	return linetime * (height + vretrace);
+	// 端数を含めた正確な平均を返す。ここが整数の linetime のままだと
+	// Sequencer のフレーム制御にだけ元の誤差が残る
+	return (linetimeq * (height + vretrace)) >> ltqshift;
 }
 
 }

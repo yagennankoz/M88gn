@@ -53,6 +53,14 @@ public:
 private:
 	PC88* pc;
 
+	// (M88gn: M88am ‚©‚çæ‚è‚ñ‚¾C³)
+	// 600Hz ‚ÌüŠú‚Í 166.667 tick ‚È‚Ì‚ÅA®” tick ‚ÉŠÛ‚ß‚é‚Æ
+	// 167 tick = 598.802Hz ‚É‚È‚è 0.2% ‚¸‚ê‚éB’[”‚ğŒJ‚è‰z‚µ‚ÄU‚ç‚·B
+	// Ú×‚Í M88am ‚Ì docs/spec-vrtc-timing.md
+	enum { rtcperiodq = 170667 };	// 1/1024 tick ’PˆÊ (= 166.6667 tick)
+	int rtcfracq;					// ’[”‚ÌŒJ‚è‰z‚µ (0..1023)
+	int rtcnext;					// Ÿ‰ñ‚ÌˆÓ}‚µ‚½ (â‘Î)
+
 	int dipsw;
 	int flags;
 	int clock;

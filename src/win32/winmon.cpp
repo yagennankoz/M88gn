@@ -5,28 +5,88 @@
 //	$Id: winmon.cpp,v 1.4 2002/04/07 05:40:11 cisc Exp $
 
 #include "headers.h"
+#include <climits>
 #include "resource.h"
 #include "winmon.h"
 #include "misc.h"
+#include "88config.h"
 #include "dpi.h"
+
+#ifndef WM_DPICHANGED
+#define WM_DPICHANGED	0x02e0
+#endif
+
+// フォントサイズの選択肢（IDM_MON_FONTSIZE_BASE からの連番に対応）
+static const int fontsizetable[] = { 10, 12, 14, 16, 18, 20, 24, 32 };
+static const int nfontsizes = sizeof(fontsizetable) / sizeof(fontsizetable[0]);
+static const int fontsizedefault = 18;
+
+// タイトルバーのメニュー (システムメニュー) に足す項目 (下の 4 ビットは Windows が使うので 0。M88gn)
+enum { sc_fontlarger = 0x1010, sc_fontsmaller = 0x1020, sc_fontdefault = 0x1030 };
+
+// デバッグの窓のフォント (すべての窓で共通。M88gn)
+static const char fontfacedefault[] = "ＭＳ ゴシック";		// Windows のフォントの名前 (M88am の「ＭＳゴシック」は空白が無く、似たフォントで代わりに描いていた)
+char WinMonitor::fontface[LF_FACESIZE] = "";
+BYTE WinMonitor::fontcharset = SHIFTJIS_CHARSET;
+WinMonitor* WinMonitor::instances[WinMonitor::maxinstances];
+
+// ---------------------------------------------------------------------------
+//	ウインドウが画面外に出ていたら、プライマリモニタの左上寄りに戻す
+//
+static void ClampToWorkArea(RECT* rect)
+{
+	POINT center;
+	center.x = (rect->left + rect->right) / 2;
+	center.y = (rect->top + rect->bottom) / 2;
+
+	HMONITOR hmon = MonitorFromPoint(center, MONITOR_DEFAULTTONULL);
+	if (hmon)
+		return;     // どこかのモニタ上にある。補正不要
+
+	RECT work;
+	SystemParametersInfo(SPI_GETWORKAREA, 0, &work, 0);
+
+	int w = rect->right - rect->left;
+	int h = rect->bottom - rect->top;
+
+	rect->left   = work.left + 64;
+	rect->top    = work.top + 64;
+	rect->right  = rect->left + w;
+	rect->bottom = rect->top + h;
+}
 
 // ---------------------------------------------------------------------------
 //	構築/消滅
 //
 WinMonitor::WinMonitor()
-: txtbuf(0), txpbuf(0), timerinterval(0), timer(0)
+: txtbuf(0), txpbuf(0), timerinterval(0), timer(0), wheeldelta(0), inisection(0),
+  defcols(0), defrows(0), savedpi(0)
 {
 	hwnd = 0;
+	hwndowner = 0;
 	hwndstatus = 0;
 	line = 0;
 	hfont = 0;
 	hbitmap = 0;
-	fontheight = 12;
-	wndrect.right = -1;
+	fontheight = fontsizedefault;
+	fontheightpx = fontsizedefault;
+	wndrect.left = wndrect.top = 0;
+	wndrect.right = wndrect.bottom = -1;
+	for (int i = 0; i < maxinstances; i++)
+	{
+		if (!instances[i])
+		{
+			instances[i] = this;
+			break;
+		}
+	}
 }
 
 WinMonitor::~WinMonitor()
 {
+	for (int i = 0; i < maxinstances; i++)
+		if (instances[i] == this)
+			instances[i] = 0;
 	if (hbitmap)
 		DeleteObject(hbitmap);
 	if (hfont)
@@ -37,13 +97,76 @@ WinMonitor::~WinMonitor()
 // ---------------------------------------------------------------------------
 //	初期化
 //
-bool WinMonitor::Init(LPCTSTR tmpl)
+bool WinMonitor::Init(LPCTSTR tmpl, const char* section, int _defcols, int _defrows)
 {
 	lptemplate = tmpl;
 	nlines = 0;
 	txcol = 0xffffff;
 	bkcol = 0x400000;
+	inisection = section;
+	defcols = _defcols;
+	defrows = _defrows;
+	LoadMonitorConfig();
 	return true;
+}
+
+// ---------------------------------------------------------------------------
+//	ウインドウ位置・サイズを M88.ini から読み込む
+//	(inisection が NULL なら何もしない)
+//
+//	M88gn: 文字の大きさ (FontSize、96 DPI での高さ) と、位置・大きさを保存したときの DPI (Dpi) も読む。
+//	Dpi が無ければ M88gn 1.3.0 まで (DPI 非対応の窓) の値なので、96 DPI 換算として窓を作るときに直す
+//
+void WinMonitor::LoadMonitorConfig()
+{
+	if (!inisection)
+		return;
+
+	const char* ini = PC8801::GetM88IniPath();
+
+	int x  = GetPrivateProfileInt(inisection, "PosX",   INT_MIN, ini);
+	int y  = GetPrivateProfileInt(inisection, "PosY",   INT_MIN, ini);
+	int w  = GetPrivateProfileInt(inisection, "Width",  0, ini);
+	int h  = GetPrivateProfileInt(inisection, "Height", 0, ini);
+	savedpi = GetPrivateProfileInt(inisection, "Dpi", 0, ini);
+	int fh = GetPrivateProfileInt(inisection, "FontSize", fontsizedefault, ini);
+	fontheight = fontsizedefault;
+	for (int i = 0; i < nfontsizes; i++)
+		if (fontsizetable[i] == fh)
+			fontheight = fh;
+
+	if (x != INT_MIN && y != INT_MIN && w > 0 && h > 0)
+	{
+		wndrect.left   = x;
+		wndrect.top    = y;
+		wndrect.right  = x + w;
+		wndrect.bottom = y + h;
+	}
+}
+
+// ---------------------------------------------------------------------------
+//	ウインドウ位置・サイズを M88.ini へ書き込む
+//	(inisection が NULL なら何もしない。M88gn: 文字の大きさと DPI も書く。位置・大きさは物理ピクセル)
+//
+void WinMonitor::SaveMonitorConfig()
+{
+	if (!inisection || !hwnd)
+		return;
+
+	RECT rect;
+	GetWindowRect(hwnd, &rect);
+
+	const char* ini = PC8801::GetM88IniPath();
+	char buf[32];
+
+	wsprintf(buf, "%d", rect.left);                 WritePrivateProfileString(inisection, "PosX",   buf, ini);
+	wsprintf(buf, "%d", rect.top);                  WritePrivateProfileString(inisection, "PosY",   buf, ini);
+	wsprintf(buf, "%d", rect.right - rect.left);    WritePrivateProfileString(inisection, "Width",  buf, ini);
+	wsprintf(buf, "%d", rect.bottom - rect.top);    WritePrivateProfileString(inisection, "Height", buf, ini);
+	wsprintf(buf, "%d", fontheight);                WritePrivateProfileString(inisection, "FontSize", buf, ini);
+	savedpi = Dpi::IsAware() ? Dpi::GetForWindow(hwnd) : 96;
+	wsprintf(buf, "%d", savedpi);                   WritePrivateProfileString(inisection, "Dpi",    buf, ini);
+	wndrect = rect;
 }
 
 // ---------------------------------------------------------------------------
@@ -51,6 +174,8 @@ bool WinMonitor::Init(LPCTSTR tmpl)
 //
 void WinMonitor::Show(HINSTANCE hinstance, HWND hwndparent, bool show)
 {
+	hwndowner = hwndparent;
+
 	if (show)
 	{
 		if (!hwnd)
@@ -58,16 +183,35 @@ void WinMonitor::Show(HINSTANCE hinstance, HWND hwndparent, bool show)
 			assert(!hwndstatus);
 
 			RECT rect = wndrect;
+			// M88gn: デバッグの窓は DPI 対応 (本体の窓と同じ Per Monitor v2)。M88gn 1.3.0 までの M88.ini の値は
+			// 96 DPI 換算なので、本体の窓の DPI で物理ピクセルに直す
+			if (savedpi == 0 && Dpi::IsAware() && rect.right > rect.left)
+			{
+				int d = Dpi::GetForWindow(hwndparent);
+				rect.left = MulDiv(rect.left, d, 96), rect.top = MulDiv(rect.top, d, 96);
+				rect.right = MulDiv(rect.right, d, 96), rect.bottom = MulDiv(rect.bottom, d, 96);
+				savedpi = d;
+			}
 			hinst = hinstance;
-			Dpi::UnawareScope dpiscope;		// 本体の窓のほかは DPI 非対応のまま
 			hwnd = CreateDialogParam(hinst, lptemplate, hwndparent, DLGPROC((void*)DlgProcGate), (LPARAM)this);
 			hwndstatus = 0;
 
-			if (rect.right > 0)
+			if (rect.right > rect.left && rect.bottom > rect.top)
 			{
-				SetWindowPos(hwnd, 0, 0, 0, 
-						rect.right-rect.left, rect.bottom - rect.top, 
-						SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+				// 画面外に飛んでいたら補正する
+				ClampToWorkArea(&rect);
+
+				SetWindowPos(hwnd, 0,
+						rect.left, rect.top,
+						rect.right - rect.left, rect.bottom - rect.top,
+						SWP_NOZORDER | SWP_NOACTIVATE);
+			}
+			else if (defcols > 0 && defrows > 0 && fontwidth > 0 && fontheightpx > 0)
+			{
+				// INI に保存された大きさが無いので、
+				// 「必要な文字数×行数」が入るサイズにしてやる。
+				// フォントサイズを変えてもこの計算が追従する
+				ApplyDefaultSize();
 			}
 			SetLines(nlines);
 			Start();
@@ -84,6 +228,30 @@ void WinMonitor::Show(HINSTANCE hinstance, HWND hwndparent, bool show)
 }
 
 // ---------------------------------------------------------------------------
+//	defcols × defrows の文字が収まるウインドウサイズにする
+//	(INI に保存されたサイズが無いときだけ呼ばれる)
+//
+void WinMonitor::ApplyDefaultSize()
+{
+	RECT r;
+	r.left = 0;
+	r.top  = 0;
+	r.right  = defcols * fontwidth;
+	r.bottom = defrows * fontheightpx;
+
+	DWORD style   = GetWindowLong(hwnd, GWL_STYLE);
+	DWORD exstyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+	Dpi::AdjustWindowRect(&r, style, GetMenu(hwnd) != 0, exstyle, hwnd);	// 窓の DPI の枠 (M88gn)
+
+	// AdjustWindowRectEx はスクロールバーを勘定に入れない
+	if (style & WS_VSCROLL)
+		r.right += GetSystemMetrics(SM_CXVSCROLL);
+
+	SetWindowPos(hwnd, 0, 0, 0, r.right - r.left, r.bottom - r.top,
+				 SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
+}
+
+// ---------------------------------------------------------------------------
 //	フォント高さの変更
 //
 bool WinMonitor::SetFont(HWND hwnd, int fh)
@@ -92,15 +260,25 @@ bool WinMonitor::SetFont(HWND hwnd, int fh)
 		DeleteObject(hfont);
 
 	fontheight = fh;
-	hfont = CreateFont(fontheight, 0, 0, 0, 0, 0, 0, 0, 
-					SHIFTJIS_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-					DEFAULT_QUALITY, FIXED_PITCH, "ＭＳゴシック");
+
+	// DPI スケールを反映(fontheight 自体はメニュー・INI 用の論理値のまま保つ)
+	// M88gn: 窓のある画面の DPI (Per Monitor v2。GetDeviceCaps の LOGPIXELSY はシステムの DPI しか返さない)
+	int dpi = Dpi::GetForWindow(hwnd);
+	int fhScaled = MulDiv(fh, dpi, 96);
+
+	LoadFontFace();
+	hfont = CreateFont(fhScaled, 0, 0, 0, 0, 0, 0, 0,
+					fontcharset, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+					DEFAULT_QUALITY, FIXED_PITCH, fontface);
 	if (!hfont)
 		return false;
 
 	HDC hdc = GetDC(hwnd);
 	HFONT hof = (HFONT) SelectObject(hdc, hfont);
 	GetCharWidth(hdc, '0', '0', &fontwidth);
+	TEXTMETRIC tm;
+	GetTextMetrics(hdc, &tm);
+	fontheightpx = tm.tmHeight;          // 実測値。ResizeWindow はこちらを使う
 	SelectObject(hdc, hof);
 	ReleaseDC(hwnd, hdc);
 	return true;
@@ -108,14 +286,14 @@ bool WinMonitor::SetFont(HWND hwnd, int fh)
 
 // ---------------------------------------------------------------------------
 //	窓の大きさに従いテキストバッファのサイズを変更
-//			
+//
 void WinMonitor::ResizeWindow(HWND hwnd)
 {
 	RECT rect;
 
 	GetWindowRect(hwnd, &wndrect);
 	GetClientRect(hwnd, &rect);
-	
+
 	clientwidth = rect.right;
 	clientheight = rect.bottom;
 	if (hwndstatus)
@@ -125,7 +303,7 @@ void WinMonitor::ResizeWindow(HWND hwnd)
 		clientheight -= rectstatus.bottom - rectstatus.top;
 	}
 	width = (clientwidth + fontwidth - 1) / fontwidth;
-	height = (clientheight + fontheight - 1) / fontheight;
+	height = (clientheight + fontheightpx - 1) / fontheightpx;
 
 	// 仮想 TVRAM のセットアップ
 	delete[] txtbuf;
@@ -136,7 +314,7 @@ void WinMonitor::ResizeWindow(HWND hwnd)
 	// DDB の入れ替え
 	HDC hdc = GetDC(hwnd);
 	HDC hmemdc = CreateCompatibleDC(hdc);
-	
+
 	if (hbitmap)
 		DeleteObject(hbitmap);
 	hbitmap = CreateCompatibleBitmap(hdc, rect.right, rect.bottom);
@@ -148,7 +326,7 @@ void WinMonitor::ResizeWindow(HWND hwnd)
 	DeleteObject(SelectObject(hmemdc, hbrush));
 	SelectObject(hmemdc, holdbmp);
 	DeleteDC(hmemdc);
-	
+
 	ReleaseDC(hwnd, hdc);
 
 	// スクロールバーの設定
@@ -180,7 +358,7 @@ static inline bool IsKan(int c)
 void WinMonitor::DrawMain(HDC _hdc, bool update)
 {
 	hdc = _hdc;
-	
+
 	Locate(0, 0);
 
 	assert(height>=0);
@@ -199,10 +377,10 @@ void WinMonitor::DrawMain(HDC _hdc, bool update)
 			{
 				// 同じ属性で何文字書けるか…？
 				int n;
-				
+
 				for (n=x; n<width; n++)
 				{
-					if (   txtbuf[c+x].txcol != txtbuf[c+n].txcol 
+					if (   txtbuf[c+x].txcol != txtbuf[c+n].txcol
 						|| txtbuf[c+x].bkcol != txtbuf[c+n].bkcol)
 						break;
 					buf[n-x] = txtbuf[c+n].ch;
@@ -215,7 +393,7 @@ void WinMonitor::DrawMain(HDC _hdc, bool update)
 				x = n;
 			}
 		}
-		c += width, y += fontheight;
+		c += width, y += fontheightpx;
 	}
 	delete[] buf;
 }
@@ -228,18 +406,18 @@ void WinMonitor::ScrollUp()
 	if (height > 2)
 	{
 		memmove(txtbuf, txtbuf + width, width * (height - 2) * sizeof(TXCHAR));
-		memset(txtbuf+width*(height-1), 0, width * sizeof(TXCHAR));	
+		memset(txtbuf+width*(height-1), 0, width * sizeof(TXCHAR));
 
 		HDC hdc = GetDC(hwnd);
 		HDC hmemdc = CreateCompatibleDC(hdc);
-		
+
 		HBITMAP holdbmp = (HBITMAP) SelectObject(hmemdc, hbitmap);
-		
+
 		RECT rect;
 		GetClientRect(hwnd, &rect);
-		BitBlt(hmemdc, 0, 0, rect.right, rect.bottom-fontheight,
-			   hmemdc, 0, fontheight, SRCCOPY);
- 		
+		BitBlt(hmemdc, 0, 0, rect.right, rect.bottom-fontheightpx,
+			   hmemdc, 0, fontheightpx, SRCCOPY);
+
 		SelectObject(hmemdc, holdbmp);
 		DeleteDC(hmemdc);
 
@@ -258,14 +436,14 @@ void WinMonitor::ScrollDown()
 
 		HDC hdc = GetDC(hwnd);
 		HDC hmemdc = CreateCompatibleDC(hdc);
-		
+
 		HBITMAP holdbmp = (HBITMAP) SelectObject(hmemdc, hbitmap);
-		
+
 		RECT rect;
 		GetClientRect(hwnd, &rect);
-		BitBlt(hmemdc, 0, fontheight, rect.right, rect.bottom-fontheight,
+		BitBlt(hmemdc, 0, fontheightpx, rect.right, rect.bottom-fontheightpx,
 			   hmemdc, 0, 0, SRCCOPY);
- 		
+
 		SelectObject(hmemdc, holdbmp);
 		DeleteDC(hmemdc);
 
@@ -298,7 +476,7 @@ void WinMonitor::Puts(const char* text)
 {
 	if (txp.y >= height)
 		return;
-	
+
 	int c;
 	char* txx;
 	while (c = *text++)
@@ -382,17 +560,17 @@ void WinMonitor::Draw(HWND hwnd, HDC hdc)
 		return;
 
 	HDC hmemdc = CreateCompatibleDC(hdc);
-	
+
 	HBITMAP holdbmp = (HBITMAP) SelectObject(hmemdc, hbitmap);
-	
+
 	SetTextColor(hmemdc, 0xffffff);
 	SetBkColor(hmemdc, bkcol);
 	HFONT holdfont = (HFONT) SelectObject(hmemdc, hfont);
-	
+
 	DrawMain(hmemdc);
-	
+
 	SelectObject(hmemdc, holdfont);
-	
+
 	BitBlt(hdc, 0, 0, clientwidth, clientheight, hmemdc, 0, 0, SRCCOPY);
 
 	SelectObject(hmemdc, holdbmp);
@@ -458,14 +636,14 @@ int WinMonitor::VerticalScroll(int msg)
 	switch (msg)
 	{
 	case SB_LINEUP:
-		if (--line < 0) 
+		if (--line < 0)
 			line = 0;
 		else
 			ScrollDown();
 		break;
 
 	case SB_LINEDOWN:
-		if (++line >= nlines) 
+		if (++line >= nlines)
 			line = Max(0, nlines - 1);
 		else
 			ScrollUp();
@@ -474,7 +652,7 @@ int WinMonitor::VerticalScroll(int msg)
 	case SB_PAGEUP:
 		line = Max(line - Max(1, height - 1), 0);
 		break;
-	
+
 	case SB_PAGEDOWN:
 		line = Min(line + Max(1, height - 1), nlines - 1);
 		break;
@@ -513,13 +691,159 @@ int WinMonitor::GetScrPos(bool track)
 //
 bool WinMonitor::GetTextPos(POINT* p)
 {
-	if (fontwidth && fontheight)
+	if (fontwidth && fontheightpx)
 	{
 		p->x /= fontwidth;
-		p->y /= fontheight;
+		p->y /= fontheightpx;
 		return true;
 	}
 	return false;
+}
+
+// ---------------------------------------------------------------------------
+//	マウスホイール処理
+//	・delta を累積して WHEEL_DELTA 単位で消化する（高精細ホイール対応）
+//	・OS のホイールスクロール行数設定を反映する
+//
+bool WinMonitor::ProcMouseWheel(WPARAM wp)
+{
+	if (LOWORD(wp) & MK_CONTROL)
+	{
+		int notch = static_cast<short>(HIWORD(wp)) / WHEEL_DELTA;
+		if (notch)
+		{
+			ChangeFontSize(notch > 0 ? +1 : -1);
+			return true;
+		}
+	}
+
+	if (!nlines)
+		return false;
+
+	// OS の設定行数を取得（0 = 設定なし、WHEEL_PAGESCROLL = ページ単位）
+	UINT lines = 3;
+	SystemParametersInfo(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
+
+	wheeldelta += static_cast<short>(HIWORD(wp));
+
+	int notches = wheeldelta / WHEEL_DELTA;
+	if (!notches)
+		return true;                    // 端数を貯めただけ。処理はした扱い
+	wheeldelta -= notches * WHEEL_DELTA;
+
+	if (lines == WHEEL_PAGESCROLL)
+	{
+		int msg = notches > 0 ? SB_PAGEUP : SB_PAGEDOWN;
+		int n = notches > 0 ? notches : -notches;
+		for (int i = 0; i < n; i++)
+			SendMessage(hwnd, WM_VSCROLL, MAKELONG(msg, 0), 0L);
+	}
+	else
+	{
+		if (lines < 1)
+			lines = 1;
+		int msg = notches > 0 ? SB_LINEUP : SB_LINEDOWN;
+		int n = (notches > 0 ? notches : -notches) * static_cast<int>(lines);
+
+		// 暴走防止（1回のホイールで動かす上限）
+		if (n > 256)
+			n = 256;
+
+		for (int i = 0; i < n; i++)
+			SendMessage(hwnd, WM_VSCROLL, MAKELONG(msg, 0), 0L);
+	}
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+//	Ctrl+ホイールでのフォントサイズ変更
+//
+void WinMonitor::ChangeFontSize(int dir)
+{
+	// 現在値に最も近いインデックスを求める
+	int idx = 0;
+	for (int i = 0; i < nfontsizes; i++)
+	{
+		if (fontsizetable[i] == fontheight) { idx = i; break; }
+		if (fontsizetable[i] < fontheight)  idx = i;
+	}
+	idx += dir;
+	if (idx < 0) idx = 0;
+	if (idx >= nfontsizes) idx = nfontsizes - 1;
+
+	SetFontSize(fontsizetable[idx]);
+}
+
+// ---------------------------------------------------------------------------
+//	デバッグの窓のフォント (M88gn)
+//	M88.ini の [Monitor] の FontFace・FontCharset。無ければ ＭＳゴシック
+//
+void WinMonitor::LoadFontFace()
+{
+	if (fontface[0])
+		return;
+	const char* ini = PC8801::GetM88IniPath();
+	GetPrivateProfileString("Monitor", "FontFace", fontfacedefault, fontface, sizeof(fontface), ini);
+	if (!fontface[0])
+		strncpy_s(fontface, sizeof(fontface), fontfacedefault, _TRUNCATE);
+	fontcharset = (BYTE) GetPrivateProfileInt("Monitor", "FontCharset", SHIFTJIS_CHARSET, ini);
+}
+
+bool WinMonitor::ChooseMonitorFont(HWND owner)
+{
+	LoadFontFace();
+
+	LOGFONT lf;
+	memset(&lf, 0, sizeof(lf));
+	lf.lfHeight = -MulDiv(12, Dpi::GetForWindow(owner), 72);
+	lf.lfCharSet = fontcharset;
+	lf.lfPitchAndFamily = FIXED_PITCH;
+	strncpy_s(lf.lfFaceName, sizeof(lf.lfFaceName), fontface, _TRUNCATE);
+
+	CHOOSEFONT cf;
+	memset(&cf, 0, sizeof(cf));
+	cf.lStructSize = sizeof(cf);
+	cf.hwndOwner = owner;
+	cf.lpLogFont = &lf;
+	// 等幅のフォントだけ。大きさは窓ごとに拡大縮小で変えるので、ここで選んだ大きさは使わない
+	cf.Flags = CF_SCREENFONTS | CF_FIXEDPITCHONLY | CF_INITTOLOGFONTSTRUCT | CF_NOVERTFONTS;
+	if (!ChooseFont(&cf))
+		return false;
+
+	strncpy_s(fontface, sizeof(fontface), lf.lfFaceName, _TRUNCATE);
+	fontcharset = lf.lfCharSet;
+
+	const char* ini = PC8801::GetM88IniPath();
+	char buf[16];
+	WritePrivateProfileString("Monitor", "FontFace", fontface, ini);
+	wsprintf(buf, "%d", fontcharset);
+	WritePrivateProfileString("Monitor", "FontCharset", buf, ini);
+
+	// 開いている窓を新しいフォントで書き直す
+	for (int i = 0; i < maxinstances; i++)
+	{
+		WinMonitor* m = instances[i];
+		if (m && m->hwnd)
+		{
+			m->SetFont(m->hwnd, m->fontheight);
+			m->ResizeWindow(m->hwnd);
+			m->Update();
+		}
+	}
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+//	文字の大きさを変えて、窓を書き直す (M88gn)
+//
+void WinMonitor::SetFontSize(int fh)
+{
+	if (!hwnd || fh == fontheight)
+		return;
+	fontheight = fh;
+	SetFont(hwnd, fontheight);
+	ResizeWindow(hwnd);
+	Update();
 }
 
 // ---------------------------------------------------------------------------
@@ -572,7 +896,7 @@ bool WinMonitor::PutStatus(const char* text, ...)
 	{
 		SendMessage(hwndstatus, SB_SETTEXT, SBT_OWNERDRAW, 0);
 		return true;
-	}		
+	}
 
 	va_list a;
 	va_start(a, text);
@@ -584,6 +908,169 @@ bool WinMonitor::PutStatus(const char* text, ...)
 }
 
 // ---------------------------------------------------------------------------
+//	文字列をクリップボードへ置く
+//
+//	★ SetClipboardData が成功したらメモリの所有権はクリップボードに移る。
+//	   GlobalFree してはいけない(失敗したときだけ解放する)
+//
+bool WinMonitor::SetClipboardText(const char* text, size_t len)
+{
+	if (!hwnd || !text)
+		return false;
+
+	HGLOBAL hmem = GlobalAlloc(GMEM_MOVEABLE, len + 1);
+	if (!hmem)
+		return false;
+
+	char* p = (char*) GlobalLock(hmem);
+	if (!p)
+	{
+		GlobalFree(hmem);
+		return false;
+	}
+
+	memcpy(p, text, len);
+	p[len] = 0;
+	GlobalUnlock(hmem);
+
+	if (!OpenClipboard(hwnd))
+	{
+		GlobalFree(hmem);
+		return false;
+	}
+	EmptyClipboard();
+	if (!SetClipboardData(CF_TEXT, hmem))
+	{
+		CloseClipboard();
+		GlobalFree(hmem);
+		return false;
+	}
+	CloseClipboard();
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+//	表示中の内容をクリップボードへコピーする(既定の実装)
+//
+//	txtbuf は「いま見えている1画面ぶん」なので、スクロールして見えていない
+//	部分は含まれない。行末の空白は落とす。改行は CRLF。
+//	全体をコピーしたい派生クラス(Memory/Code/BASIC)はこの関数を override する
+//
+bool WinMonitor::CopyToClipboard()
+{
+	if (!hwnd || !txtbuf)
+		return false;
+
+	// 1行あたり最大 width 文字 + CRLF、最後に終端
+	size_t size = size_t(width + 2) * height + 1;
+	char* buf = new char[size];
+	if (!buf)
+		return false;
+
+	char* d = buf;
+	for (int y = 0; y < height; y++)
+	{
+		const TXCHAR* src = txtbuf + y * width;
+
+		// 行末の空白を落とす
+		int len = width;
+		while (len > 0 && (src[len-1].ch == ' ' || src[len-1].ch == 0))
+			len--;
+
+		for (int x = 0; x < len; x++)
+			*d++ = src[x].ch ? src[x].ch : ' ';
+
+		*d++ = '\r';
+		*d++ = '\n';
+	}
+	*d = 0;
+
+	bool ok = SetClipboardText(buf, d - buf);
+	delete[] buf;
+	return ok;
+}
+
+// ---------------------------------------------------------------------------
+//	TextBuffer ― 伸びるテキストバッファ
+//
+namespace PC8801
+{
+
+TextBuffer::TextBuffer()
+: buf(0), len(0), cap(0), failed(false)
+{
+}
+
+TextBuffer::~TextBuffer()
+{
+	delete[] buf;
+}
+
+bool TextBuffer::Reserve(size_t need)
+{
+	if (failed)
+		return false;
+	if (need <= cap)
+		return true;
+
+	size_t newcap = cap ? cap : 0x10000;	// 初期容量 64KB
+	while (newcap < need)
+		newcap *= 2;
+
+	char* newbuf = new char[newcap];
+	if (!newbuf)
+	{
+		failed = true;
+		return false;
+	}
+	if (buf)
+		memcpy(newbuf, buf, len);
+	delete[] buf;
+	buf = newbuf;
+	cap = newcap;
+	return true;
+}
+
+bool TextBuffer::Add(const char* text)
+{
+	if (failed || !text)
+		return false;
+
+	size_t n = strlen(text);
+	if (!Reserve(len + n + 1))
+		return false;
+
+	memcpy(buf + len, text, n);
+	len += n;
+	buf[len] = 0;
+	return true;
+}
+
+bool TextBuffer::Addf(const char* fmt, ...)
+{
+	if (failed)
+		return false;
+
+	va_list a;
+	va_start(a, fmt);
+	int n = _vscprintf(fmt, a);
+	va_end(a);
+	if (n < 0)
+		return false;
+
+	if (!Reserve(len + size_t(n) + 1))
+		return false;
+
+	va_start(a, fmt);
+	vsprintf_s(buf + len, size_t(n) + 1, fmt, a);
+	va_end(a);
+	len += size_t(n);
+	return true;
+}
+
+}
+
+// ---------------------------------------------------------------------------
 //	ダイアログ処理
 //
 BOOL WinMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
@@ -591,12 +1078,23 @@ BOOL WinMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 	bool r = false;
 	int sn;
 	SCROLLINFO si;
-	
+
 	switch (msg)
 	{
 	case WM_INITDIALOG:
 		SetFont(hdlg, fontheight);
 		ResizeWindow(hdlg);
+		{
+			// タイトルバーのメニューに、文字の大きさを変える項目を足す (M88gn)
+			HMENU hsys = GetSystemMenu(hdlg, FALSE);
+			if (hsys)
+			{
+				AppendMenu(hsys, MF_SEPARATOR, 0, 0);
+				AppendMenu(hsys, MF_STRING, sc_fontlarger, "文字を大きく(&L)\tCtrl++");
+				AppendMenu(hsys, MF_STRING, sc_fontsmaller, "文字を小さく(&S)\tCtrl+-");
+				AppendMenu(hsys, MF_STRING, sc_fontdefault, "文字の大きさを元に戻す(&D)\tCtrl+0");
+			}
+		}
 
 		if (timerinterval && !timer)
 			timer = SetTimer(hdlg, 1, timerinterval, 0);
@@ -610,25 +1108,61 @@ BOOL WinMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 	case WM_INITMENU:
 		{
 			HMENU hmenu = (HMENU) wp;
-
-			CheckMenuItem(hmenu, IDM_MEM_F_1, (fontheight == 12) ? MF_CHECKED : MF_UNCHECKED);
-			CheckMenuItem(hmenu, IDM_MEM_F_2, (fontheight == 14) ? MF_CHECKED : MF_UNCHECKED);
-			CheckMenuItem(hmenu, IDM_MEM_F_3, (fontheight == 16) ? MF_CHECKED : MF_UNCHECKED);
+			for (int i = 0; i < nfontsizes; i++)
+			{
+				CheckMenuItem(hmenu, IDM_MON_FONTSIZE_BASE + i,
+					(fontheight == fontsizetable[i]) ? MF_CHECKED : MF_UNCHECKED);
+			}
 		}
 		break;
 
 	case WM_COMMAND:
-		switch (LOWORD(wp))
 		{
-		case IDM_MEM_F_1: fontheight = 12; break;
-		case IDM_MEM_F_2: fontheight = 14; break;
-		case IDM_MEM_F_3: fontheight = 16; break;
+			UINT id = LOWORD(wp);
+			if (IDM_MON_FONTSIZE_BASE <= id && id <= IDM_MON_FONTSIZE_LAST)
+			{
+				int idx = id - IDM_MON_FONTSIZE_BASE;
+				if (idx < nfontsizes)
+				{
+					fontheight = fontsizetable[idx];
+					SetFont(hdlg, fontheight);
+					ResizeWindow(hdlg);
+					Update();
+					r = true;
+				}
+			}
 		}
-		SetFont(hdlg, fontheight);
-		ResizeWindow(hdlg);
+		break;
+
+	case WM_SYSCOMMAND:
+		switch (wp & 0xfff0)
+		{
+		case sc_fontlarger:		ChangeFontSize(+1); return TRUE;
+		case sc_fontsmaller:	ChangeFontSize(-1); return TRUE;
+		case sc_fontdefault:	SetFontSize(fontsizedefault); return TRUE;
+		}
+		break;
+
+	case WM_DPICHANGED:
+		// DPI の違う画面へ移った: 文字をその DPI で作り直し、Windows の勧める位置・大きさにする (M88gn)
+		{
+			RECT* rc = (RECT*) lp;
+			SetFont(hdlg, fontheight);
+			SetWindowPos(hdlg, 0, rc->left, rc->top, rc->right - rc->left, rc->bottom - rc->top,
+						 SWP_NOZORDER | SWP_NOACTIVATE);
+			ResizeWindow(hdlg);
+			Update();
+		}
+		return TRUE;
+
+	case WM_DESTROY:
+		// 本体の窓が閉じると、開いたままのモニターの窓は WM_CLOSE 無しで壊れるので、ここでも保存する (M88gn)
+		if (hwnd)
+			SaveMonitorConfig();
 		break;
 
 	case WM_CLOSE:
+		SaveMonitorConfig();
 		EnableStatus(false);
 		if (timer)
 			KillTimer(hdlg, timer), timer = 0;
@@ -651,7 +1185,7 @@ BOOL WinMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 	case WM_TIMER:
 		Update();
 		return true;
-	
+
 	case WM_SIZE:
 		ResizeWindow(hdlg);
 		if (hwndstatus)
@@ -663,7 +1197,7 @@ BOOL WinMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 
 	case WM_VSCROLL:
 		line = VerticalScroll(LOWORD(wp));
-		
+
 		memset(&si, 0, sizeof(si));
 		si.cbSize = sizeof(si);
 		si.fMask = SIF_POS;
@@ -674,14 +1208,59 @@ BOOL WinMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		return true;
 
 	case WM_MOUSEWHEEL:
-		{
-			sn = static_cast<short>(HIWORD(wp)) / 120;
-			SendMessage(hwnd, WM_VSCROLL, MAKELONG((sn>0)?SB_LINEUP:SB_LINEDOWN, 0), 0L);  
-		}
+		if (ProcMouseWheel(wp))
+			r = true;
 		break;
 
 	case WM_KEYDOWN:
-		if (nlines)
+	case WM_SYSKEYDOWN:
+		// デバッグ用ファンクションキーは、どのモニタ窓にフォーカスがあっても
+		// 効くようにする。アクセラレータ(TranslateAccelerator)経由だと
+		// メニュー項目の状態やアクティブウインドウの状態に左右されて
+		// 取りこぼすため、ここで拾ってメインウインドウへ直接投げる
+		//
+		// ★ F10 は Windows では「メニューバーを開くキー」なので、単独で押すと
+		//    WM_KEYDOWN ではなく WM_SYSKEYDOWN で飛んでくる。WM_KEYDOWN しか
+		//    見ていないと DefDlgProc へ流れてメニューモードに入ってしまい
+		//    (メニュー項目に下線が出る。F10 のたびに ON/OFF する)、
+		//    以降のキー入力がメニュー側に食われて効かなくなる。
+		//    ここで受け取って TRUE を返し、メニューモードに入れないこと
+		if (wp == 'C' && (GetKeyState(VK_CONTROL) & 0x8000))
+		{
+			if (CopyToClipboard())
+				PutStatus("クリップボードにコピーしました.");
+			return TRUE;
+		}
+		// Ctrl++ / Ctrl+- / Ctrl+0 で文字の大きさ (M88gn。日本語のキーボードの + は ; のキー = VK_OEM_PLUS)
+		if (GetKeyState(VK_CONTROL) & 0x8000)
+		{
+			if (wp == VK_OEM_PLUS || wp == VK_ADD)
+				return ChangeFontSize(+1), TRUE;
+			if (wp == VK_OEM_MINUS || wp == VK_SUBTRACT)
+				return ChangeFontSize(-1), TRUE;
+			if (wp == '0' || wp == VK_NUMPAD0)
+				return SetFontSize(fontsizedefault), TRUE;
+		}
+
+		if (hwndowner && !(GetKeyState(VK_MENU) & 0x8000))
+		{
+			uint id = 0;
+			switch (wp)
+			{
+			case VK_F5:  id = IDM_DBG_PLAY; break;
+			case VK_F10: id = IDM_DBG_STEPOVER; break;
+			case VK_F11:
+				id = (GetKeyState(VK_SHIFT) & 0x8000) ? IDM_DBG_STEPOUT : IDM_DBG_STEPIN;
+				break;
+			}
+			if (id)
+			{
+				PostMessage(hwndowner, WM_COMMAND, id, 0);
+				return TRUE;
+			}
+		}
+		// スクロールは通常のキー入力のときだけ (Alt 併用は対象外)
+		if (msg == WM_KEYDOWN && nlines)
 		{
 			sn = -1;
 			switch (wp)
@@ -694,8 +1273,15 @@ BOOL WinMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 			case VK_END:	sn = SB_BOTTOM; break;
 			}
 			if (sn != -1)
-				SendMessage(hwnd, WM_VSCROLL, MAKELONG(sn, 0), 0L);  
+				SendMessage(hwnd, WM_VSCROLL, MAKELONG(sn, 0), 0L);
 		}
+		break;
+
+	case WM_SYSKEYUP:
+		// F10 の離した側も捨てる。DefDlgProc に渡すとここでメニューモードへ
+		// 入ることがある (WM_SYSKEYDOWN を握り潰しただけでは足りない)
+		if (wp == VK_F10 && !(GetKeyState(VK_MENU) & 0x8000))
+			return TRUE;
 		break;
 
 	case WM_DRAWITEM:
@@ -733,4 +1319,3 @@ BOOL CALLBACK WinMonitor::DlgProcGate
 		return FALSE;
 	}
 }
-

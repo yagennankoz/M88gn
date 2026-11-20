@@ -87,7 +87,9 @@ public:
 		usedsnotify		= 1 << 12,
 		saveposition	= 1 << 13,	// 起動時に前回終了時のウインドウ位置を復元
 		stretchx2		= 1 << 14,	// 画面2倍拡大
-		appshortcut		= 1 << 15,	// M88 のショートカット (全画面など) に Alt でなくアプリケーションキーを使う
+		appshortcut		= 1 << 15,
+		disableintskip	= 1 << 16,
+		savedebugperdisk = 1 << 17,	// デバッガ: ブレークポイント・ウォッチをディスクイメージごとに保存する (M88am から)	// デバッガ: ステップ実行中に割り込みを飛ばさない (M88am から)	// M88 のショートカット (全画面など) に Alt でなくアプリケーションキーを使う
 	};
 
 	int flags;
@@ -116,6 +118,8 @@ public:
 	int softkbdx, softkbdy, softkbdw;	// ソフトウェアキーボードの窓の位置と幅 (幅 0 なら既定)
 	int softkbdshow;		// ソフトウェアキーボードを表示する
 	int softkbddpi;			// softkbdx/y/w を書いたときの画面の DPI (0: 1.1.0 までの値 = 96 DPI 換算)
+	int tapewinx, tapewiny, tapewinw, tapewinh;	// テープの窓の位置と大きさ (物理ピクセル。幅 0 なら既定。M88gn)
+	int tapewinshow;		// テープの窓を表示する (M88gn)
 	int fddvolume;			// フロッピーのドライブの音 (シーク) の音量 (0～100%)
 	int tapespeed;			// テープのロードの速さ (1: 実機どおり、2/4/8: 倍率)
 	int screenrotate;		// 画面の回転 (0: なし 1: 右に 90° 2: 180° 3: 右に 270°。Direct3D 11 で描くときだけ)
@@ -125,6 +129,8 @@ public:
 	int crtsharp;			// CRT 風のフィルター: 横のシャープさ (0: Sharp 1: Normal 2: Soft)
 	int crtbright;			// CRT 風のフィルター: 明るさの補正 (0: Low 1: Normal 2: High)
 	int crtdirect;			// CRT 風のフィルターを掛けずに出す (1: Direct。ほかの CRT の設定は残す)
+	int fullhidemenu;		// 全画面でメニューバーを隠す (1: 隠す。メニューは右クリックで出す。M88gn)
+	int winhidemenu;		// ウィンドウ表示でメニューバーを隠す (1: 隠す。M88gn)
 	int crtpitch;			// CRT 風のフィルター: マスクの間隔 (0: Pixel 1: 0.25mm 2: 0.31mm 3: 0.39mm)
 	int crtbreathexp;		// CRT 風のフィルター: 伸び縮みの基準 (0: 真っ白で本来の大きさ、暗いと縮む 1: 中間の明るさで本来の大きさ、暗いと縮み明るいと膨らむ)
 	int crtbreath;			// CRT 風のフィルター: 画面全体の明るさで絵が伸び縮みする (0: Off 1: Weak 2: Normal 3: Strong)

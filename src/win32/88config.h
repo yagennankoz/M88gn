@@ -13,6 +13,8 @@ namespace PC8801
 {
 	void SaveConfig(Config* cfg, const char* inifile, bool writedefault);
 	void LoadConfig(Config* cfg, const char* inifile, bool applydefault);
+	// M88.ini ‚Ìƒtƒ‹ƒpƒX‚ð•Ô‚· (main.cpp ‚Ì m88ini ‚Æ“¯‚¶‚à‚Ì)
+	const char* GetM88IniPath();
 	void LoadConfigDirectory(Config* cfg, const char* inifile, const char* entry, bool readalways);
 }
 

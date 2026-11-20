@@ -22,7 +22,12 @@
 #include "regmon.h"
 #include "loadmon.h"
 #include "iomon.h"
+#include "bpmon.h"
+#include "watchmon.h"
+#include "tracemon.h"
+#include "dbgsettings.h"
 #include "softkbd.h"
+#include "tapewin.h"
 
 // ---------------------------------------------------------------------------
 
@@ -75,12 +80,20 @@ private:
 	bool CreateDiskMenu(uint drive);
 
 	void ChangeTapeImage();
+	void NewDiskImage(int drive);		// 新しいディスクイメージを作る (drive: 入れるドライブ、-1 なら入れない。M88gn)
+	void NewTapeImage();				// 空の T88 を作って開く (M88gn)
+	bool AskNewImageName(char* filename, const char* filter, const char* defext, const char* title);
 	void OpenTapeImage(const char* filename, bool readonly = false);
 	static void TapeNotify(void* ctx, int code);
 	void ShowOverlay(const char* msg);
+	void ApplyFullScreenMenu();			// 全画面: メニューバーを隠す・出す、知らせとランプの置き場所 (M88gn)
+	bool HideMenuBar();					// 今の表示 (全画面・ウィンドウ) でメニューバーを隠すか (M88gn)
+	bool SetMenuBar(bool show);			// メニューバーを出す・隠す。変わったら true (M88gn)
+	void ShowFullScreenMenu(int x, int y);	// 右クリックで本体のメニューを出す (全画面・ウィンドウとも。M88gn)
 
 	void ShowStatusWindow();
 	void ResizeWindow(uint width, uint height);
+	void GetClientSize(uint& width, uint& height);
 	void SetScaleFlag();
 	void SetGUIFlag(bool);
 
@@ -104,6 +117,10 @@ private:
 	HACCEL accelnoalt;			// ショートカットにアプリケーションキーを使うときの表
 	uint appswallow;			// アプリケーションキーのショートカットに使ったキー (離したのも PC-8801 に渡さない)
 	bool AppShortcut(const MSG& msg);
+	uint debugswallow;			// デバッガのキー (F5/F10/F11) に使ったキー (離したのも PC-8801 に渡さない)
+	bool DebugKey(const MSG& msg);
+	void ShowPauseStatus();
+	PC8801::Debugger::CpuTarget GetStepTarget();
 	void SetShortcutLabels(HMENU hmenu);
 	HMENU hmenudbg;
 
@@ -115,12 +132,14 @@ private:
 	// ウインドウの状態
 	bool background;
 	bool fullscreen;
+	HMENU hmenumain;			// 本体のメニュー (全画面で隠している間は GetMenu(hwnd) が 0 を返すので、こちらを使う)
 	uint displaychangedtime;
 	uint resetwindowsize;
 	DWORD wstyle;
 	POINT point;
 	int clipmode;
 	bool guimodebymouse;
+	bool dpimoved;			// 窓を動かしている間に DPI が変わった (動かし終えたら大きさを直す)
 	int appliedrot;			// 窓の大きさに使った画面の回転 (変わったら窓の大きさを直す)
 	bool cursorhidden;		// 全画面でマウスが止まっていたので、カーソルを消している
 	POINT cursorpos;		// カーソルが動いたかを見るための前の位置
@@ -151,6 +170,7 @@ private:
 	WinDraw draw;
 	PC8801::WinKeyIF keyif;
 	SoftKeyboard softkbd;
+	TapeWindow tapewin;				// テープの窓 (M88gn)
 	PC8801::Config config;
 	PC8801::WinConfig winconfig;
 	WinNewDisk newdisk;
@@ -159,6 +179,14 @@ private:
 	PC8801::CodeMonitor codemon;
 	PC8801::BasicMonitor basmon;
 	PC8801::IOMonitor iomon;
+	PC8801::BreakMonitor bpmon;
+	PC8801::WatchMonitor watchmon;
+	PC8801::TraceMonitor tracemon;
+	bool debugnodiskwarned;		// ディスクが無いので保存できないことを一度知らせた
+	void SyncDebugSettings(const char* oldkey, const char* newkey);
+	char debugkey[MAX_PATH];	// デバッガの設定を保存・読み込みしている今のイメージ (ドライブ 1 のディスクかテープ。空: 無し)
+	char tapefile[MAX_PATH];	// 開いているテープのファイル (空: 無し)
+	void SetDebugKey(const char* newkey);
 	Z80RegMonitor regmon;
 	LoadMonitor loadmon;
 	DiskManager* diskmgr;
@@ -174,6 +202,7 @@ private:
 	LRESULT M88SendKeyState(HWND, WPARAM, LPARAM);
 	LRESULT M88ClipCursor(HWND, WPARAM, LPARAM);
 	LRESULT M88TapeNotify(HWND, WPARAM, LPARAM);
+	LRESULT M88DebugBreak(HWND, WPARAM, LPARAM);
 	LRESULT WmDropFiles(HWND, WPARAM, LPARAM);
 	LRESULT WmDisplayChange(HWND, WPARAM, LPARAM);
 	LRESULT WmKeyDown(HWND, WPARAM, LPARAM);
@@ -192,6 +221,7 @@ private:
 	LRESULT WmCommand(HWND, WPARAM, LPARAM);
 	LRESULT WmSize(HWND, WPARAM, LPARAM);
 	LRESULT WmDpiChanged(HWND, WPARAM, LPARAM);
+	LRESULT WmGetDpiScaledSize(HWND, WPARAM, LPARAM);
 	LRESULT WmDrawItem(HWND, WPARAM, LPARAM);
 	LRESULT WmMeasureItem(HWND, WPARAM, LPARAM);
 	LRESULT M88StatusMenu(HWND, WPARAM, LPARAM);
@@ -201,6 +231,7 @@ private:
 	LRESULT WmLButtonUp(HWND, WPARAM, LPARAM);
 	LRESULT WmRButtonDown(HWND, WPARAM, LPARAM);
 	LRESULT WmRButtonUp(HWND, WPARAM, LPARAM);
+	LRESULT WmContextMenu(HWND, WPARAM, LPARAM);
 	LRESULT WmEnterSizeMove(HWND, WPARAM, LPARAM);
 	LRESULT WmExitSizeMove(HWND, WPARAM, LPARAM);
 	LRESULT WmMove(HWND, WPARAM, LPARAM);

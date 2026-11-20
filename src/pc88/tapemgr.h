@@ -48,6 +48,23 @@ public:
 	bool CanCue() { return tags && !recording && !recarm; }
 
 	bool IsOpen() { return tags || wave; }
+
+	// テープの窓 (M88gn)。UI のスレッドから、エミュレーションを止めて (core.Lock) 呼ぶ
+	struct CueInfo
+	{
+		uint32 ms;				// 区切りの始まり (テープの先頭からの時間)
+		std::string label;		// 中身の見当 (BASIC "NAME"、Monitor C000 など。無ければ空)
+		std::string detail;		// 速さとバイト数 (1200 baud, 738 bytes など)
+	};
+	uint GetSerial() { return serial; }			// テープを開き直す・書き直すたびに変わる (一覧を作り直す目安)
+	void GetCueList(std::vector<CueInfo>& list);	// 頭出しできる所 (先頭と区切り)
+	bool CueTo(int index);						// GetCueList の index 番目へ (0 で先頭のこともある)
+	uint GetTimeMs();							// 今の位置
+	uint GetLengthMs();							// テープの長さ
+	bool IsMotor() { return motor; }
+	bool IsRecording() { return recording; }
+	int GetSpeed() { return speed; }
+	int GetVolume() { return volpercent; }		// 音量 (0～100%)
 	bool IsWave() { return wave; }		// PicoCmt の .RAW (波形) を開いている
 
 	bool Motor(bool on);
@@ -161,6 +178,10 @@ private:
 	bool IsCuePoint(Tag* t);
 	uint32 CueDataPos(Tag* t);
 	void GoTag(Tag* t);
+	void CuePoints(std::vector<Tag*>& v);		// 頭出しできる所 (0 = テープの先頭)
+	std::string CueLabel(Tag* t, std::string* detail);
+	uint serial;
+	int recbegin;				// 録音を始めた時刻 (10us 単位。テープの窓の位置の表示用)
 	static uint32 TagPos(Tag* t) { return ((BlankTag*) t->data)->pos; }
 
 	Scheduler* scheduler;
@@ -261,6 +282,7 @@ private:
 	void SoundState();
 
 	ISoundControl* soundcontrol;
+	int volpercent;				// 音量 (SetVolume の値)
 	int amp;					// 今の音の大きさ (sndamp x 音量。体感に合わせたカーブ)
 	int clickamp;				// リレーの音の大きさ (sndamp x 音量。比例)
 	uint32 sndstep;				// 1200Hz の 1 サンプルあたりの位相の進み

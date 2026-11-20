@@ -96,15 +96,71 @@ void MemoryViewer::SelectBank(Type a0, Type a6, Type a8, Type ac, Type af)
 #ifdef Z80C_STATISTICS
 	stat = z80->GetStatistics();
 #endif
-	bus.SetMemorys(0x8000, 0x7000, mem1->GetRAM()+0x8000);
-//	bus.SetMemorys(0xc000, 0x3000, mem1->GetRAM()+0xc000);
-	// af
-	switch (af)
+	bus.SetMemorys(0x8000, 0x4000, mem1->GetRAM()+0x8000);	// $8000-$bfff は常に RAM
+
+	if (ac == gvram0 || ac == gvram1 || ac == gvram2)
 	{
-	case tvram: p = mem1->GetTVRAM(); break;
-	default:	p = mem1->GetRAM() + 0xf000; break;
+		// GVRAM はプレーン・インターリーブなので SetMemorys では貼れない。
+		// $c000-$ffff の 16KB 全部を関数マッピングで見せる
+		static const MemoryBus::ReadFuncPtr rdfunc[3]  = { RdGV0, RdGV1, RdGV2 };
+		static const MemoryBus::WriteFuncPtr wrfunc[3] = { WrGV0, WrGV1, WrGV2 };
+		int n = ac - gvram0;
+		bus.SetFuncs(0xc000, 0x4000, this, rdfunc[n], wrfunc[n]);
+		bank[4] = ac;	// $f000 台の R/W ウォッチ色付けもプレーンに合わせる
 	}
-	bus.SetMemorys(0xf000, 0x1000, p);
+	else
+	{
+		bus.SetMemorys(0xc000, 0x3000, mem1->GetRAM()+0xc000);
+		// af
+		switch (af)
+		{
+		case tvram: p = mem1->GetTVRAM(); break;
+		default:	p = mem1->GetRAM() + 0xf000; break;
+		}
+		bus.SetMemorys(0xf000, 0x1000, p);
+	}
+}
+
+// ----------------------------------------------------------------------------
+//	GVRAM プレーンの読み書き ($c000-$ffff に貼る関数マッピング用)
+//
+uint MEMCALL MemoryViewer::RdGV0(void* inst, uint addr)
+{
+	MemoryViewer* m = STATIC_CAST(MemoryViewer*, inst);
+	return m->mem1->GetGVRAM()[addr & 0x3fff].byte[0];
+}
+
+uint MEMCALL MemoryViewer::RdGV1(void* inst, uint addr)
+{
+	MemoryViewer* m = STATIC_CAST(MemoryViewer*, inst);
+	return m->mem1->GetGVRAM()[addr & 0x3fff].byte[1];
+}
+
+uint MEMCALL MemoryViewer::RdGV2(void* inst, uint addr)
+{
+	MemoryViewer* m = STATIC_CAST(MemoryViewer*, inst);
+	return m->mem1->GetGVRAM()[addr & 0x3fff].byte[2];
+}
+
+void MEMCALL MemoryViewer::WrGV0(void* inst, uint addr, uint data)
+{
+	MemoryViewer* m = STATIC_CAST(MemoryViewer*, inst);
+	m->mem1->GetGVRAM()[addr & 0x3fff].byte[0] = data;
+	m->mem1->GetDirtyFlag()[(addr & 0x3fff) >> 4] = 1;
+}
+
+void MEMCALL MemoryViewer::WrGV1(void* inst, uint addr, uint data)
+{
+	MemoryViewer* m = STATIC_CAST(MemoryViewer*, inst);
+	m->mem1->GetGVRAM()[addr & 0x3fff].byte[1] = data;
+	m->mem1->GetDirtyFlag()[(addr & 0x3fff) >> 4] = 1;
+}
+
+void MEMCALL MemoryViewer::WrGV2(void* inst, uint addr, uint data)
+{
+	MemoryViewer* m = STATIC_CAST(MemoryViewer*, inst);
+	m->mem1->GetGVRAM()[addr & 0x3fff].byte[2] = data;
+	m->mem1->GetDirtyFlag()[(addr & 0x3fff) >> 4] = 1;
 }
 
 

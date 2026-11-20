@@ -13,6 +13,7 @@
 Scheduler::Scheduler()
 {
 	evlast = 0;
+	abort = false;
 }
 
 Scheduler::~Scheduler()
@@ -24,6 +25,7 @@ Scheduler::~Scheduler()
 bool Scheduler::Init()
 {
 	evlast = -1;
+	abort = false;
 	
 	time = 0;
 	return events != 0;
@@ -119,6 +121,7 @@ bool IFCALL Scheduler::DelEvent(Event* ev)
 int Scheduler::Proceed(int ticks)
 {
 	int t;
+	abort = false;
 	for (t=ticks; t>0; )
 	{
 		int i;
@@ -160,6 +163,10 @@ int Scheduler::Proceed(int ticks)
 				(inst->*ev.func)(ev.arg);
 			}
 		}
+
+		// Execute 側から打ち切りを要求された (デバッガのブレーク)。残り時間を消化せずに抜ける
+		if (abort)
+			break;
 	}
 	return ticks - t;
 }

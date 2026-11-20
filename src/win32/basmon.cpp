@@ -24,7 +24,7 @@ BasicMonitor::~BasicMonitor()
 
 bool BasicMonitor::Init(PC88* pc88)
 {
-	if (!WinMonitor::Init(MAKEINTRESOURCE(IDD_BASMON)))
+	if (!WinMonitor::Init(MAKEINTRESOURCE(IDD_BASMON), "MonitorBasic", 80, 25))
 		return false;
 	mv.Init(pc88);
 	mv.SelectBank(MemoryViewer::mainram, MemoryViewer::mainram, 
@@ -73,6 +73,21 @@ void BasicMonitor::UpdateText()
 		Puts("\n");
 		l++;
 	}
+}
+
+// ---------------------------------------------------------------------------
+//	リスト全体をクリップボードへコピーする(仕様変更。
+//	docs/spec-phase10a-fix.md F-3)。デコード済みのテキストが basictext に
+//	全部あるので、メモリを読み直す必要はない
+//
+bool BasicMonitor::CopyToClipboard()
+{
+	TextBuffer tb;
+
+	for (int l = 0; l < nlines; l++)
+		tb.Add(basictext + line[l]), tb.Add("\r\n");
+
+	return SetClipboardText(tb.Get(), tb.Length());
 }
 
 // ---------------------------------------------------------------------------

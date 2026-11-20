@@ -321,16 +321,96 @@
 #define IDM_CRTGLOW_1                   40275
 #define IDM_CRTGLOW_2                   40276
 #define IDM_CRTGLOW_3                   40277
-#define IDM_DBG_RUN                     40240
-#define IDM_DBG_STEP                    40241
+#define IDM_DBG_PAUSE                   40240
+#define IDM_NEWDISK_1                   40370
+#define IDM_NEWDISK_2                   40371
+#define IDM_NEWDISK_NONE                40372
+#define IDM_TAPE_NEW                    40373
+#define IDM_FULLHIDEMENU                40374
+#define IDM_WINHIDEMENU                 40375
+#define IDM_TAPEWIN                     40376
+#define IDM_MEM_AUTO                    40377
+#define IDM_SHOWMENU                    40378
+#define IDM_DBG_PLAY                    40241
+#define IDM_DBG_STEPIN                  40293
+#define IDM_DBG_STEPOVER                40294
+#define IDM_DBG_STEPOUT                 40295
+#define IDM_DBG_SKIPINT                 40296
+
+// デバッガ・モニター (M88am から)
+#define IDD_REG_EDIT                    141
+#define IDD_BP_EDIT                     142
+#define IDD_ADDR_GOTO                   143
+#define IDR_MENU_CODE                   144
+#define IDD_BPMON                       145
+#define IDR_MENU_BP                     146
+#define IDD_WATCHMON                    147
+#define IDR_MENU_WATCH                  148
+#define IDD_WATCH_EDIT                  149
+#define IDD_TRACEMON                    150
+#define IDR_MENU_TRACE                  151
+#define IDC_REG_EDITBOX                 1154
+#define IDC_REG_EDIT_TEXT               1155
+#define IDC_BP_ADDR                     1156
+#define IDC_BP_SUBCPU                   1157
+#define IDC_BP_EXEC                     1158
+#define IDC_BP_READ                     1159
+#define IDC_BP_WRITE                    1160
+#define IDC_BP_LEN                      1161
+#define IDC_ADDR_GOTO_EDIT              1162
+#define IDC_BP_ENABLED                  1163
+#define IDC_WATCH_ADDR                  1164
+#define IDC_WATCH_SUBCPU                1165
+#define IDC_WATCH_WORD                  1166
+#define IDC_WATCH_LABEL                 1167
+#define IDC_BP_COMMENT                  1170
+#define IDM_MEM_C_RAM                   40331
+#define IDM_MEM_C_GV0                   40332
+#define IDM_MEM_C_GV1                   40333
+#define IDM_MEM_C_GV2                   40334
+#define IDM_CODE_PCFOLLOW               40343
+#define IDM_MON_FONTSIZE_BASE           40300
+#define IDM_MON_FONTSIZE_0              40300
+#define IDM_MON_FONTSIZE_1              40301
+#define IDM_MON_FONTSIZE_2              40302
+#define IDM_MON_FONTSIZE_3              40303
+#define IDM_MON_FONTSIZE_4              40304
+#define IDM_MON_FONTSIZE_5              40305
+#define IDM_MON_FONTSIZE_6              40306
+#define IDM_MON_FONTSIZE_7              40307
+#define IDM_MON_FONTSIZE_LAST           40307
+#define IDM_MEM_GOTO                    40344
+#define IDM_BPMON                       40345
+#define IDM_BP_ADD                      40346
+#define IDM_BP_EDIT                     40347
+#define IDM_BP_DELETE                   40348
+#define IDM_BP_DELETEALL                40349
+#define IDM_BP_ENABLEALL                40350
+#define IDM_BP_DISABLEALL               40351
+#define IDM_WATCHMON                    40352
+#define IDM_WATCH_ADD                   40353
+#define IDM_WATCH_EDIT                  40354
+#define IDM_WATCH_DELETE                40355
+#define IDM_WATCH_DELETEALL             40356
+#define IDM_DBG_SAVESETTINGS            40357
+#define IDM_TRACEMON                    40358
+#define IDM_DBG_TRACE                   40359
+#define IDM_DBG_TRACECLEAR              40360
+#define IDM_TRACE_SAVE                  40363
+#define IDM_TRACE_SORT_DESC             40364
+#define IDM_TRACE_SORT_ASC              40365
+#define IDM_TRACE_CAP_100               40366
+#define IDM_TRACE_CAP_500               40367
+#define IDM_TRACE_CAP_1000              40368
+#define IDM_MON_FONT                    40369
 
 // Next default values for new objects
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        141
-#define _APS_NEXT_COMMAND_VALUE         40293
-#define _APS_NEXT_CONTROL_VALUE         1140
+#define _APS_NEXT_RESOURCE_VALUE        152
+#define _APS_NEXT_COMMAND_VALUE         40379
+#define _APS_NEXT_CONTROL_VALUE         1171
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

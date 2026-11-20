@@ -183,7 +183,8 @@ inline bool MemoryManagerBase::Alloc
 	{
 		// 現在のページの owner が自分よりも低い優先度を持つ場合
 		// priority の書き換えを行う
-		for (int i=pid; pri[i] > pid && i>=0; i--)
+		// pri[i] を見る前に i>=0 を確かめる (i == -1 で priority[-1] を読んでいた。M88am から)
+		for (int i=pid; i>=0 && pri[i] > pid; i--)
 		{
 			pri[i] = pid;
 		}

@@ -9,6 +9,7 @@
 #include "pc88/pc88.h"
 #include "misc.h"
 #include "dpi.h"
+#include "messages.h"
 
 #define LOGNAME "sequence"
 #include "diag.h"
@@ -17,7 +18,7 @@
 //	構築/消滅
 //
 Sequencer::Sequencer()
-: hthread(0), execcount(0), vm(0)
+: hthread(0), execcount(0), vm(0), debugbreakhwnd(0)
 {
 }
 
@@ -134,6 +135,9 @@ void Sequencer::ExecuteAsynchronus()
 				Execute(effclock, 500 * speed / 100, effclock);
 			eclk += 5;
 			ms = keeper.GetTime() - time;
+
+			if (CheckDebugBreak())
+				return;
 		} while (ms < 1000);
 		vm->UpdateScreen();
 
@@ -145,7 +149,10 @@ void Sequencer::ExecuteAsynchronus()
 		int twork = texec * 100 / speed;
 		vm->TimeSync();
 		Execute(clock, texec, clock * speed / 100);
-	
+
+		if (CheckDebugBreak())
+			return;
+
 		int32 tcpu = keeper.GetTime() - time;
 		if (tcpu < twork)
 		{
@@ -206,11 +213,40 @@ void Sequencer::Activate(bool a)
 }
 
 // ---------------------------------------------------------------------------
-//	1CLK実行する
+//	デバッガのブレークを見つけたら止めて UI に知らせる
+//	(VM のスレッドから呼ばれる。UI はここでは触らず PostMessage だけ。M88am から)
+//
+bool Sequencer::CheckDebugBreak()
+{
+	if (!vm->GetDebugger()->IsBroken())
+		return false;
+
+	active = false;
+	vm->UpdateScreen();
+	if (debugbreakhwnd)
+		PostMessage(debugbreakhwnd, WM_M88_DEBUGBREAK, 0, 0);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+//	1CLK実行する (止めている間だけ)
+//
+//	Execute(1,1,1) は PC88 の clock/eclock をその場で書き換えるので、前後の値を退避・復元して、
+//	再開した後の速さに影響しないようにする。ブレークした番地から必ず 1 命令進めるため、
+//	ブレークを解いて、その間はブレークの判定を止める (M88am から)
 //
 void Sequencer::ExecOne()
 {
-	if (!active) {
+	if (!active)
+	{
+		uint savedclock = vm->GetCPUSpeed();
+		uint savedeclock = vm->GetEffectiveSpeed();
+
+		vm->GetDebugger()->ClearBreak();
+		vm->GetDebugger()->SetSuppressBreak(true);
 		Execute(1, 1, 1);
+		vm->GetDebugger()->SetSuppressBreak(false);
+
+		vm->Proceed(0, savedclock, savedeclock);
 	}
 }

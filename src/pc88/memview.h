@@ -62,11 +62,20 @@ private:
 	Memory* mem1;
 	SubSystem* mem2;
 	MemoryBus bus;
-	
+
 	PC88* pc;
 	PC88::Z80* z80;
 
 	Type bank[5];
+
+	// $c000-$ffff に GVRAM プレーンを直接見せるための関数マッピング
+	// (プレーン・インターリーブなので SetMemorys では貼れない)
+	static uint MEMCALL RdGV0(void* inst, uint addr);
+	static uint MEMCALL RdGV1(void* inst, uint addr);
+	static uint MEMCALL RdGV2(void* inst, uint addr);
+	static void MEMCALL WrGV0(void* inst, uint addr, uint data);
+	static void MEMCALL WrGV1(void* inst, uint addr, uint data);
+	static void MEMCALL WrGV2(void* inst, uint addr, uint data);
 
 protected:
 #ifdef Z80C_STATISTICS

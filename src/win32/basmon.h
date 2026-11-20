@@ -29,6 +29,7 @@ private:
 	void Decode(bool always);
 	BOOL DlgProc(HWND, UINT, WPARAM, LPARAM);
 	void UpdateText();
+	bool CopyToClipboard();	// リスト全体をコピーする(F-3)
 
 	char basictext[0x10000];
 	int line[0x4000];

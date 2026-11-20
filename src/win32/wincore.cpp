@@ -38,6 +38,7 @@ using namespace PC8801;
 //	構築/消滅
 //
 WinCore::WinCore()
+: paused(false)
 {
 }
 
@@ -76,6 +77,7 @@ bool WinCore::Init
 
 	if (!seq.Init(this))
 		return false;
+	seq.SetDebugBreakNotify(hwnd);
 	
 	return true;
 }
@@ -104,7 +106,86 @@ bool WinCore::Cleanup()
 void WinCore::Reset()
 {
 	LockObj lock(this);
+	// リセットで PC/SP が別物になるので、一時的なステップの条件とブレークの状態は捨てる
+	// (ブレークポイントは残す)
+	GetDebugger()->CancelStep();
+	GetDebugger()->ClearBreak();
 	PC88::Reset();
+}
+
+// ---------------------------------------------------------------------------
+//	デバッガ: 一時停止/再開 (M88am から)
+//
+void WinCore::Pause(bool pause)
+{
+	// ブレークした直後は paused == false のまま止まっているので、その状態からの再開は取りこぼさない
+	if (paused == pause && !(!pause && GetDebugger()->IsBroken()))
+		return;
+	paused = pause;
+
+	// 止めるとき・再開するときとも、進行中のステップの条件は捨てる
+	GetDebugger()->CancelStep();
+	if (!pause && GetDebugger()->IsBroken())
+	{
+		// ブレークポイントの番地に乗ったまま再開すると、すぐに同じブレークポイントで止まるので、
+		// 先に 1 命令だけ進める (ExecOne がブレークの解除もする)
+		seq.ExecOne();
+	}
+
+	seq.Activate(!pause);
+	sound.Mute(pause);
+}
+
+// ---------------------------------------------------------------------------
+//	ステップのために少しだけ実行を再開する (条件に当たると Sequencer::CheckDebugBreak がまた止める)
+//
+void WinCore::ResumeForStep()
+{
+	// ブレーク中は PC88::Execute が CPU を進めないので、前のブレークを先に解く
+	GetDebugger()->ClearBreak();
+	// 対象でない CPU がブレークポイントの番地に居座っていると、再開した瞬間に踏み直してステップごと
+	// 取り消されるので、1 回だけ見逃す
+	GetDebugger()->ArmResumeSkip();
+	paused = false;
+	seq.Activate(true);
+	sound.Mute(false);
+}
+
+void WinCore::StepIn(PC8801::Debugger::CpuTarget cpu)
+{
+	if (!IsStopped())
+		return;
+	GetDebugger()->RequestStepIn(cpu);
+	ResumeForStep();
+}
+
+void WinCore::StepOver(PC8801::Debugger::CpuTarget cpu)
+{
+	if (!IsStopped())
+		return;
+	PC88::Z80* z = (cpu == PC8801::Debugger::cpu_main) ? GetCPU1() : GetCPU2();
+	uint pc = z->GetPC();
+	uint retaddr;
+	if (GetDebugger()->IsStepOverInstruction(cpu, pc, &retaddr))
+		GetDebugger()->RequestStepOver(cpu, retaddr, z->GetReg().r.w.sp & 0xffff);
+	else
+		GetDebugger()->RequestStepIn(cpu);
+	ResumeForStep();
+}
+
+bool WinCore::StepOut(PC8801::Debugger::CpuTarget cpu)
+{
+	if (!IsStopped())
+		return false;
+	PC88::Z80* z = (cpu == PC8801::Debugger::cpu_main) ? GetCPU1() : GetCPU2();
+	uint sp = z->GetReg().r.w.sp & 0xffff;
+	IMemoryAccess* mem = (cpu == PC8801::Debugger::cpu_main) ? GetMemoryAccess1() : GetMemoryAccess2();
+	uint retaddr = (mem->Read8(sp) | (mem->Read8((sp + 1) & 0xffff) << 8)) & 0xffff;
+	if (!GetDebugger()->LooksLikeReturnAddress(cpu, retaddr))
+		return false;
+	GetDebugger()->RequestStepOver(cpu, retaddr, (sp + 2) & 0xffff);
+	ResumeForStep();
+	return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -267,8 +348,11 @@ bool WinCore::LoadShapshot(const char* filename, const char* diskname)
 	config.cpumode = ssh.cpumode;
 	config.mainsubratio = ssh.mainsubratio;
 	ApplyConfig(&config);
-	
+
 	// Reset
+	// スナップショットで PC/SP が別物になるので、一時的なステップの条件とブレークの状態は捨てる
+	GetDebugger()->CancelStep();
+	GetDebugger()->ClearBreak();
 	PC88::Reset();
 
 	// 読み込み
@@ -358,11 +442,22 @@ bool WinCore::ConnectExternalDevices()
 	strncpy_s(buf, MAX_PATH, m88dir, _TRUNCATE);
 	strncat_s(buf, MAX_PATH, "*.m88", _TRUNCATE);
 
+	// 読み込めなかったときに Windows のエラーのダイアログを出させない
+	UINT olderrmode = SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+
 	if (ff.FindFile(buf))
 	{
 		while (ff.FindNext())
 		{
 			const char* modname = ff.GetFileName();
+
+			// "*.m88" は 8.3 形式の短い名前にも当たるので、拡張子が .m88 で始まるだけの別のファイル
+			// (デバッガの設定の「イメージの名前.m88dbg」など) まで拾う。長い名前の拡張子が本当に .m88 かを確かめる
+			// (M88am から)
+			size_t modlen = strlen(modname);
+			if (modlen < 4 || _stricmp(modname + modlen - 4, ".m88") != 0)
+				continue;
+
 			ExtendModule* em = ExtendModule::Create(modname, this);
 			if (em)
 			{
@@ -386,6 +481,7 @@ bool WinCore::ConnectExternalDevices()
 			}
 		}
 	}
+	SetErrorMode(olderrmode);
 	return true;
 }
 

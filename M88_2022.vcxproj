@@ -147,6 +147,7 @@
     <ClCompile Include="src\pc88\beep.cpp" />
     <ClCompile Include="src\pc88\calender.cpp" />
     <ClCompile Include="src\pc88\crtc.cpp" />
+    <ClCompile Include="src\pc88\debugger.cpp" />
     <ClCompile Include="src\pc88\diskmgr.cpp" />
     <ClCompile Include="src\pc88\fdc.cpp" />
     <ClCompile Include="src\pc88\fdu.cpp" />
@@ -215,7 +216,12 @@
     <ClCompile Include="src\win32\dpi.cpp" />
     <ClCompile Include="src\win32\drawd3d11.cpp" />
     <ClCompile Include="src\win32\softkbd.cpp" />
+    <ClCompile Include="src\win32\tapewin.cpp" />
     <ClCompile Include="src\win32\winmon.cpp" />
+    <ClCompile Include="src\win32\bpmon.cpp" />
+    <ClCompile Include="src\win32\watchmon.cpp" />
+    <ClCompile Include="src\win32\tracemon.cpp" />
+    <ClCompile Include="src\win32\dbgsettings.cpp" />
     <ClCompile Include="src\Win32\winmouse.cpp" />
     <ClCompile Include="src\Win32\winsound.cpp" />
     <ClCompile Include="src\win32\winvars.cpp" />
@@ -289,6 +295,7 @@
     <ClInclude Include="src\devices\psg.h" />
     <ClInclude Include="src\devices\Z80.h" />
     <ClInclude Include="src\devices\Z80_x86.h" />
+    <ClInclude Include="src\devices\z80debughook.h" />
     <ClInclude Include="src\devices\Z80c.h" />
     <ClInclude Include="src\devices\Z80debug.h" />
     <ClInclude Include="src\devices\Z80diag.h" />
@@ -298,6 +305,7 @@
     <ClInclude Include="src\pc88\calender.h" />
     <ClInclude Include="src\pc88\config.h" />
     <ClInclude Include="src\pc88\crtc.h" />
+    <ClInclude Include="src\pc88\debugger.h" />
     <ClInclude Include="src\pc88\diskmgr.h" />
     <ClInclude Include="src\pc88\fdc.h" />
     <ClInclude Include="src\pc88\fdu.h" />
@@ -368,7 +376,12 @@
     <ClInclude Include="src\win32\dpi.h" />
     <ClInclude Include="src\win32\drawd3d11.h" />
     <ClInclude Include="src\win32\softkbd.h" />
+    <ClInclude Include="src\win32\tapewin.h" />
     <ClInclude Include="src\win32\winmon.h" />
+    <ClInclude Include="src\win32\bpmon.h" />
+    <ClInclude Include="src\win32\watchmon.h" />
+    <ClInclude Include="src\win32\tracemon.h" />
+    <ClInclude Include="src\win32\dbgsettings.h" />
     <ClInclude Include="src\Win32\winmouse.h" />
     <ClInclude Include="src\Win32\winsound.h" />
     <ClInclude Include="src\win32\winvars.h" />

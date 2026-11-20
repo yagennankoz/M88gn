@@ -9,7 +9,6 @@
 #include "wincfg.h"
 #include "misc.h"
 #include "messages.h"
-#include "dpi.h"
 
 using namespace PC8801;
 
@@ -109,7 +108,6 @@ bool WinConfig::Show(HINSTANCE hinstance, HWND hwnd, Config* conf)
 			psh.ppsp = psp;
 			psh.pfnCallback = (PFNPROPSHEETCALLBACK) (void*)PropProcGate;
 
-			Dpi::UnawareScope dpiscope;		// –{‘Ì‚Ì‘‹‚Ì‚Ù‚©‚Í DPI ”ñ‘Î‰ž‚Ì‚Ü‚Ü
 			hwndps = (HWND) PropertySheet(&psh);
 		}
 		delete[] psp;

@@ -42,6 +42,11 @@ public:
 
 	int IFCALL GetTime();
 
+protected:
+	// Execute() の実装から、Proceed のループを打ち切るために呼ぶ。デバッガがブレークしたときに使う
+	// (実行していない時間を「消化した」ことにしてイベントを空回しさせないため。M88am から)
+	void AbortProceed() { abort = true; }
+
 private:
 	virtual int Execute(int ticks) = 0;
 	virtual void Shorten(int ticks) = 0;
@@ -52,6 +57,7 @@ private:
 	int time;				// Scheduler 内の現在時刻
 	int etime;				// Execute の終了予定時刻
 	Event events[maxevents];
+	bool abort;				// Proceed のループを打ち切る
 };
 
 // ---------------------------------------------------------------------------

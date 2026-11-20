@@ -650,7 +650,30 @@ void OPNABase::SetADPCMBReg(uint addr, uint data)
 	case 0x03:		// Start Address H
 		adpcmreg[addr - 0x02 + 0] = data;
 		startaddr = (adpcmreg[1]*256+adpcmreg[0]) << 6;
-//		memaddr = startaddr;
+
+		// ★ 再生アドレスをここで更新するかどうか (M88gn: M88am から取り込んだ修正)
+		//
+		// 本家 M88 2.21a は無条件に memaddr = startaddr していたが、
+		// rururutan 版の 374abbd「ADPCM スタートアドレス指定時に即再生
+		// アドレスも更新するコードを外す」で丸ごとコメントアウトされた。
+		// 再生については実機どおりで正しい (再生アドレスは START で読み込まれ、
+		// 再生中にスタートアドレスを書いても動かない)。
+		//
+		// ところが**外部メモリアクセスモードでは読み書きの起点がここで
+		// 決まる**ので、丸ごと外すと ADPCM RAM をデータ格納に使うソフトが
+		// 壊れる。memaddr が前の値のまま残り、
+		//   ・書き込みが意図しないアドレスへ飛ぶ (見た目は正常終了する)
+		//   ・読み戻すと別の場所が返り「RAM 無し」と判定される / フリーズする
+		// という形になる。音が正常なのは、再生時は case 0x00 の START で
+		// memaddr = startaddr が行われるため。
+		//
+		// そこで「再生中でない」または「外部メモリアクセスモード
+		// (control1 の MEMDATA = bit5)」のときだけ更新する。
+		// これで 374abbd の意図 (再生中は動かさない) を保ったまま、
+		// メモリアクセスモードの起点が正しく載る。
+		// 詳細は M88am の docs/spec-adpcm-ram.md
+		if (!adpcmplay || (control1 & 0x20))
+			memaddr = startaddr;
 //		LOG1("  startaddr %.6x", startaddr);
 		break;
 
@@ -940,6 +963,18 @@ int OPNABase::ReadRAMN()
 	{
 		if (control1 & 0x10)
 		{
+			// ★ ループ端でも EOS を立てる (M88gn: M88am から取り込んだ修正)
+			//
+			// 実機の YM2608 は REPEAT 再生でも stop address に達した時点で
+			// EOS を上げており、これをループ回数の計数に使うソフトがある。
+			// PC-8801FA/MA の店頭デモは「EOS を7回数えたら次へ進む」という
+			// 作りなので、立てないと拡張ステータスの待ちループから
+			// 永久に抜けられない (BGM は割り込みで鳴り続ける)。
+			// 本家 2.21a (22f656b) から立てていない。
+			// 詳細は M88am の docs/spec-adpcm-repeat-eos.md
+			//
+			// 再生は続くので adpcmplay は落とさない。
+			SetStatus(adpcmnotice);
 			memaddr = startaddr;
 			data = adpcmx;
 			adpcmx = 0, adpcmd = 127;

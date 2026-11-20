@@ -27,6 +27,10 @@ public:
 	bool Init(WinCore*); 
 
 private:
+	// Memory ウインドウは1行=16バイトなので、Code 窓(1行=1アドレス)と
+	// 換算が異なる
+	void JumpTo(uint addr) { SetLine(addr >> 4); }
+
 	BOOL DlgProc(HWND, UINT, WPARAM, LPARAM);
 	BOOL EDlgProc(HWND, UINT, WPARAM, LPARAM);
 	static BOOL CALLBACK EDlgProcGate(HWND, UINT, WPARAM, LPARAM);
@@ -39,6 +43,7 @@ private:
 
 	void UpdateText();
 	bool SaveImage();
+	bool CopyToClipboard();		// 0000-ffff 全体をコピーする(F-3)
 
 	void SetWatch(uint, uint);
 

@@ -51,7 +51,7 @@ MemoryMonitor::~MemoryMonitor()
 bool MemoryMonitor::Init(WinCore* pc88)
 {
 	core = pc88;
-	if (!MemViewMonitor::Init(MAKEINTRESOURCE(IDD_MEMORY), pc88))
+	if (!MemViewMonitor::Init(MAKEINTRESOURCE(IDD_MEMORY), pc88, "MonitorMemory", 70, 25))
 		return false;
 	SetLines(0x1000);
 	SetUpdateTimer(50);
@@ -157,17 +157,31 @@ void MEMCALL MemoryMonitor::MemWrite(void* p, uint a, uint d)
 //
 void MemoryMonitor::UpdateText()
 {
+	AutoBank();
 	char buf[4];
 	char mem[16];
 	int a = GetLine() * 0x10;
 
-	if (prevaddr != a || prevlines != GetHeight())
+	// 0行目は列見出し。毎フレーム書き直すのでスクロールしても固定される
+	int rows = GetHeight() - 1;
+	if (rows < 0)
+		rows = 0;
+
+	if (prevaddr != a || prevlines != rows)
 	{
-		prevaddr = a; prevlines = GetHeight();
-		SetWatch(a, GetHeight() * 0x10);
+		prevaddr = a; prevlines = rows;
+		SetWatch(a, rows * 0x10);
 	}
-	
-	for (int y=0; y<GetHeight(); y++)
+
+	SetTxCol(0xc0c0c0);
+	SetBkCol(RGB(0, 0, 0x50));
+	Puts("      ");
+	for (int h = 0; h < 16; h++)
+		Putf(" %x ", h);
+	Puts("0123456789abcdef\n");
+	SetBkCol(RGB(0, 0, 0x20));
+
+	for (int y=0; y<rows; y++)
 	{
 		if (a < 0x10000)
 		{
@@ -257,9 +271,10 @@ BOOL MemoryMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		
 		if (GetTextPos(&p))
 		{
-			if (6 <= p.x && p.x <= 5+48)
+			// 0行目は列見出しなので編集対象にしない
+			if (p.y >= 1 && 6 <= p.x && p.x <= 5+48)
 			{
-				editaddr = (GetLine() + p.y) * 16 + (p.x - 6) / 3;
+				editaddr = (GetLine() + p.y - 1) * 16 + (p.x - 6) / 3;
 				if (editaddr < 0x10000)
 				{
 					DialogBoxParam(GetHInst(), MAKEINTRESOURCE(IDD_MEMORY_EDIT), 
@@ -270,6 +285,15 @@ BOOL MemoryMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		return 0;
 	
 	case WM_KEYDOWN:
+		if (wp == 'G' && (GetKeyState(VK_CONTROL) & 0x8000))
+		{
+			GotoAddress();
+			return 0;
+		}
+		// Ctrl+英字は16進入力として食わない(Ctrl+C を基底へ通すため)
+		if (GetKeyState(VK_CONTROL) & 0x8000)
+			break;
+
 		EnableStatus(true);
 		if (VK_NUMPAD0 <= wp && wp <= VK_NUMPAD9)
 			wp -= VK_NUMPAD0 - '0';
@@ -393,7 +417,9 @@ bool MemoryMonitor::SaveImage()
 
 	// 書き込み
 	FileIO fio(filename, FileIO::create);
-	if (!fio.GetFlags() & FileIO::open)
+	// 括弧が要る。! は & より優先度が高いので、
+	// 「!fio.GetFlags() & FileIO::open」だと (!flags) & open の意味になる
+	if (!(fio.GetFlags() & FileIO::open))
 		return false;
 	
 	uint8* img = new uint8[0x10000];
@@ -406,6 +432,51 @@ bool MemoryMonitor::SaveImage()
 	fio.Write(img, 0x10000);
 	delete[] img;
 	return true;
+}
+
+// ---------------------------------------------------------------------------
+//	選択中のバンクの 0000-ffff 全体をクリップボードへコピーする(仕様変更。
+//	docs/spec-phase10a-fix.md F-3)。書式は画面表示(UpdateText)と同じ。
+//
+//	Lock() は要る。64KB 読む間に VM が走っていると、時点の食い違った
+//	内容が混ざるため。
+//
+//	SetSuppressBreak() の方は念のためで、実際には効いていない。
+//	GetBus() は MemoryViewer の私設バス(生ポインタと RdGV*)で、VM の
+//	MemoryManager を通らないので Debugger のメモリフックに届かない
+//	(docs/spec-phase5-debug-ui.md §5.3 / docs/TODO.md の T-6)。
+//	ブレークが出るのは MemoryManager 経由で読む場合だけ。
+//
+bool MemoryMonitor::CopyToClipboard()
+{
+	TextBuffer tb;
+
+	tb.Add("      ");
+	for (int h = 0; h < 16; h++)
+		tb.Addf(" %x ", h);
+	tb.Add("0123456789abcdef\r\n");
+
+	core->Lock();
+	core->GetDebugger()->SetSuppressBreak(true);
+	for (int a = 0; a < 0x10000; )
+	{
+		char mem[17];
+		tb.Addf("%.4x: ", a);
+		for (int x = 0; x < 16; x++)
+		{
+			int d = GetBus()->Read8(a);
+			tb.Addf("%.2x ", d);
+			mem[x] = d >= 0x20 && d < 0xfd && d != 0x7f ? d : '.';
+			a++;
+		}
+		mem[16] = 0;
+		tb.Add(mem);
+		tb.Add("\r\n");
+	}
+	core->GetDebugger()->SetSuppressBreak(false);
+	core->Unlock();
+
+	return SetClipboardText(tb.Get(), tb.Length());
 }
 
 // ---------------------------------------------------------------------------

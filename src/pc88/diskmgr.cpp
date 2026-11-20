@@ -1079,7 +1079,18 @@ bool DiskManager::AddDisk(uint dr, const char* title, uint type)
 //
 bool DiskManager::FormatDisk(uint dr)
 {
-	if (!drive[dr].holder || drive[dr].disk.GetType() != FloppyDisk::MD2D)
+	if (dr >= max_drives)
+		return false;
+	CriticalSection::Lock lock(cs);
+	return FormatDrive(&drive[dr]);
+}
+
+// M88gn: ドライブを指定する形に分けた (CreateImage のため)。
+// 元は最後に drive->sizechanged / modified[0] (= ドライブ 1) に印を付けていたので、ドライブ 2 で作ったディスクの
+// フォーマットがファイルに書かれず、ドライブ 1 のディスクを余分に書き直していた
+bool DiskManager::FormatDrive(Drive* drv)
+{
+	if (!drv->holder || drv->disk.GetType() != FloppyDisk::MD2D)
 		return false;
 //	statusdisplay.Show(10, 5000, "Format drive : %d", dr);
 	
@@ -1100,7 +1111,7 @@ bool DiskManager::FormatDisk(uint dr)
 	buf[0x25f4a] = 0xfe; buf[0x25f4b] = 0xfe;
 	
 	// 書き込み
-	FloppyDisk& disk = drive[dr].disk;
+	FloppyDisk& disk = drv->disk;
 	FloppyDisk::IDR id;
 	id.n = 1;
 	uint8* dest = buf;
@@ -1126,10 +1137,54 @@ bool DiskManager::FormatDisk(uint dr)
 			dest += 256;
 		}
 	}
-	drive->sizechanged = true;
-	drive->modified[0] = true;
+	drv->sizechanged = true;
+	drv->modified[0] = true;
 	delete[] buf;
 	return true;
+}
+
+// ---------------------------------------------------------------------------
+//	ドライブに入れずに、空のディスクイメージを作る (M88gn)
+//	filename	作るファイル (無いこと。あれば呼ぶ側で消しておく)
+//	title		ディスクのタイトル
+//	type		メディアの種類 (AddDisk と同じ)
+//	format		N88-BASIC のフォーマットを掛ける (2D の D88 だけ。ほかは何もしない)
+//
+bool DiskManager::CreateImage(const char* filename, const char* title, uint type, bool format)
+{
+	DiskImageHolder h;
+	if (!h.Open(filename, false, true))
+		return false;
+	bool ok = h.AddDisk(title, type);
+	if (ok && format)
+	{
+		// AddDisk はファイルに書くだけで、holder の中のディスクの情報 (タイトル・位置) は古いままなので、開き直して読む
+		h.Disconnect();
+		ok = h.Open(filename, false, false);
+	}
+	if (ok && format)
+	{
+		// ドライブに入れたときと同じ手順で、作業用のドライブに読んで書き直す
+		Drive* tmp = new Drive;
+		tmp->holder = &h;
+		tmp->index = 0;
+		tmp->sizechanged = false;
+		memset(tmp->modified, 0, sizeof(tmp->modified));
+		FileIO* fio = h.GetDisk(0);
+		if (fio)
+		{
+			fio->Seek(0, FileIO::begin);
+			if (ReadDiskImage(fio, tmp) && FormatDrive(tmp))
+			{
+				fio = h.SetDiskSize(0, GetDiskImageSize(tmp)) ? h.GetDisk(0) : 0;
+				ok = fio && WriteDiskImage(fio, tmp);
+			}
+		}
+		tmp->holder = 0;
+		delete tmp;
+	}
+	h.Disconnect();
+	return ok;
 }
 
 //	FDXサポート

@@ -34,6 +34,10 @@ WinKeyIF::WinKeyIF()
 	for (int i=0; i<16; i++)
 		softkey[i] = 0;
 	active = false;
+	burst = false;
+	memset(heldframes, 0, sizeof(heldframes));
+	for (int i=0; i<16; i++)
+		burstcut[i] = 0;
 	shiftuptime = 0;
 	shiftupvalid = false;
 	usearrow = false;
@@ -73,6 +77,7 @@ void WinKeyIF::ApplyConfig(const Config* config)
 {
 	usearrow = 0 != (config->flags & Config::usearrowfor10);
 	basicmode = config->basicmode;
+	burst = 0 != (config->flags & (Config::cpuburst | Config::fullspeed));
 
 	switch (config->keytype)
 	{
@@ -271,6 +276,59 @@ void IOCALL WinKeyIF::VSync(uint,uint d)
 			keyport[i] = -1;
 		}
 	}
+	if (d)
+		UpdateBurstCut();
+}
+
+// ---------------------------------------------------------------------------
+//	Burst mode・全力駆動のキーリピート対策 (M88gn)
+//	フレームごとに、押し続けているフレームの数を数え、burstholdframes を超えたキーは
+//	指を離すまで離したことにする (1 回押した扱いになり、リピートしない)。
+//	SHIFT・CTRL・GRPH・カナ・CAPS は、ほかのキーと一緒に押し続けるものなので、そのまま
+//
+void WinKeyIF::UpdateBurstCut()
+{
+	static const uint8 keepmask[16] =
+	{
+		0, 0, 0, 0, 0, 0, 0, 0,
+		0xf0,		// 08: GRPH・カナ・SHIFT・CTRL
+		0,
+		0x80,		// 0a: CAPS
+		0, 0, 0,
+		0x0c,		// 0e: 左右の SHIFT
+		0,
+	};
+
+	if (!burst)
+	{
+		memset(heldframes, 0, sizeof(heldframes));
+		for (int i=0; i<16; i++)
+			burstcut[i] = 0;
+		return;
+	}
+	for (int port=0; port<16; port++)
+	{
+		uint pressed = softkey[port];
+		if (active)
+			pressed |= ~ReadPort(port) & 0xff;
+		pressed &= ~keepmask[port];
+
+		uint cut = 0;
+		for (int bit=0; bit<8; bit++)
+		{
+			uint8& n = heldframes[port][bit];
+			if (pressed & (1 << bit))
+			{
+				if (n < 255)
+					n++;
+				if (n > burstholdframes)
+					cut |= 1 << bit;
+			}
+			else
+				n = 0;
+		}
+		burstcut[port] = uint8(cut);
+	}
 }
 
 void WinKeyIF::Activate(bool yes)
@@ -310,10 +368,10 @@ uint IOCALL WinKeyIF::In(uint port)
 				LOG3("In(13)   = %.2x %.2x %.2x\n", r, keystate[0xf4], keystate[0x1f4]);
 			}
 		}
-		return uint8(r & ~softkey[port]);
+		return uint8((r & ~softkey[port]) | burstcut[port]);
 	}
 	else
-		return uint8(~softkey[port]);		// M88 が非アクティブでも、ソフトウェアキーボードのキーは届ける
+		return uint8(~softkey[port] | burstcut[port]);		// M88 が非アクティブでも、ソフトウェアキーボードのキーは届ける
 }
 
 // ---------------------------------------------------------------------------

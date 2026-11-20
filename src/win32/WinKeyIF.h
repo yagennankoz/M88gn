@@ -66,6 +66,7 @@ private:
 
 	uint GetKey(const Key* key);
 	uint ReadPort(uint port);				// パソコンのキーボードから求めたポートの値 (0 = 押している)
+	void UpdateBurstCut();					// Burst mode・全力駆動: 長く押したキーを離したことにする (M88gn)
 
 	static const Key KeyTable98[16 * 8][8];
 	static const Key KeyTable106[16 * 8][8];
@@ -86,6 +87,14 @@ private:
 	LONG shiftuptime;					// 最後に Shift が離されたときのメッセージの時刻
 	bool shiftupvalid;
 	volatile uint8 softkey[16];			// ソフトウェアキーボードで押しているキー (1 = 押している)
+
+	// Burst mode・全力駆動 (M88gn)。エミュレーターの中の時間が実時間より速く進むので、
+	// キーを普通に押しただけでも PC-8801 からは長く押したように見え、キーリピートで同じ文字が大量に入る。
+	// 押してから burstholdframes フレーム (エミュレーターの中の時間) たったキーは、指を離すまで離したことにする
+	enum { burstholdframes = 6 };
+	volatile bool burst;
+	uint8 heldframes[16][8];			// 押し続けているフレームの数
+	volatile uint8 burstcut[16];		// 離したことにしているキー (1 = 離したことにする)
 
 private:
 	static const Descriptor descriptor;

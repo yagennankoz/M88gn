@@ -41,9 +41,13 @@ public:
 
 	void ExecOne();
 
+	// デバッガのブレークをこの HWND に知らせる (WM_M88_DEBUGBREAK)
+	void SetDebugBreakNotify(HWND hwnd) { debugbreakhwnd = hwnd; }
+
 private:
 	void Execute(long clock, long length, long ec);
 	void ExecuteAsynchronus();
+	bool CheckDebugBreak();
 	
 	uint ThreadMain();
 	static uint CALLBACK ThreadEntry(LPVOID arg);
@@ -69,6 +73,8 @@ private:
 	
 	volatile bool shouldterminate;
 	volatile bool active;
+
+	HWND debugbreakhwnd;
 };
 
 inline void Sequencer::SetClock(int clk)

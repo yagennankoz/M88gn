@@ -28,7 +28,7 @@ OPNMonitor::~OPNMonitor()
 
 bool OPNMonitor::Init(OPNIF* o, ISoundControl* sc)
 {
-	if (!WinMonitor::Init(MAKEINTRESOURCE(IDD_SOUNDMON)))
+	if (!WinMonitor::Init(MAKEINTRESOURCE(IDD_SOUNDMON), "MonitorSound", 54, 32))
 		return false;
 	
 	soundcontrol = sc;
@@ -137,6 +137,10 @@ BOOL OPNMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		break;
 
 	case WM_KEYDOWN:
+		// Ctrl+英字はチャンネルマスクとして食わない
+		// ('A'-'G' の判定に 'C' が入るため。Ctrl+C を基底へ通す)
+		if (GetKeyState(VK_CONTROL) & 0x8000)
+			break;
 		{
 			if (wp == VK_RETURN)
 				mask = 0;
