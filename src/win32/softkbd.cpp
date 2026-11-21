@@ -258,6 +258,15 @@ void SoftKeyboard::Create()
 	const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME;
 	const DWORD exstyle = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
 
+	// 保存した位置で窓の真ん中がどの画面にも無ければ (画面を外したなど)、既定の位置・幅にする
+	// (デバッグの窓・テープの窓と同じ決め方)
+	if (placed)
+	{
+		POINT c = { posx + width / 2, posy + int(width * totalh / totalw) / 2 };
+		if (!MonitorFromPoint(c, MONITOR_DEFAULTTONULL))
+			placed = false, width = 0;
+	}
+
 	// 既定の幅は 96 DPI で 800 (M88 の窓の画面の DPI に合わせる)
 	int w = width > 0 ? width : MulDiv(800, Dpi::GetForWindow(owner), 96);
 	RECT r = { 0, 0, w, 0 };

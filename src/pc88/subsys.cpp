@@ -21,7 +21,7 @@ using namespace PC8801;
 //	構築・破棄
 //
 SubSystem::SubSystem(const ID& id)
-: Device(id), mm(0), mid(-1), rom(0)
+: Device(id), mm(0), mid(-1), rom(0), pbios(false)
 {
 	cw_m = cw_s = 0x80;
 }
@@ -64,10 +64,21 @@ bool SubSystem::InitMemory()
 	if (!rom)
 		return false;
 	memset(dummy, 0xff, pagesize);
-	SetRAMPattern(ram, 0x4000);
 	
 	LoadROM();
 	PatchROM();
+
+	// 起動時の RAM の中身。実機の ROM なら FH の実機をまねた模様 (M88g)。
+	// pbios (cisc 氏の代わりの ROM) は RAM が 0 で始まる元の M88 で使う前提なので 0 で埋め、
+	// アプリが触りそうな作業域は、実機の ROM が初期化する値にする (InitWorkArea、リセットのたびにも)
+	pbios = IsPBIOS();
+	if (pbios)
+	{
+		memset(ram, 0, 0x4000);
+		InitWorkArea();
+	}
+	else
+		SetRAMPattern(ram, 0x4000);
 
 	// map dummy memory
 	for (int i=0; i<0x10000; i+=pagesize)
@@ -121,6 +132,36 @@ void SubSystem::PatchROM()
 	}
 }
 
+// ---------------------------------------------------------------------------
+//	ディスクの ROM が pbios か (ROM の中に "pbios 88 disk" の文字列がある)
+//
+bool SubSystem::IsPBIOS()
+{
+	static const char sig[] = "pbios 88 disk";
+	const uint n = sizeof(sig) - 1;
+	for (uint i=0; i + n <= 0x2000; i++)
+	{
+		if (!memcmp(rom + i, sig, n))
+			return true;
+	}
+	return false;
+}
+
+// ---------------------------------------------------------------------------
+//	pbios のとき: 実機の ROM が起動時に初期化する作業域のうち、アプリが当てにしそうな所を
+//	実機の ROM と同じ値にする (pbios はこれらの番地を使わない)。
+//	XeGrader 体験版のローダーは 7F17h が 0 であることを当てにしていて、
+//	M88g の模様 (FF) のままだと読み置きのバッファーを使って暴走した
+//
+void SubSystem::InitWorkArea()
+{
+	ram[0x7f09 - 0x4000] = 0x00;	// モーターは止まっている
+	ram[0x7f17 - 0x4000] = 0x00;	// トラックの読み置きを使わない
+	ram[0x7f18 - 0x4000] = 0xff;	// 読み置いているトラックは無い
+	ram[0x7f22 - 0x4000] = 0xc9;	// RST 08h のフック (RET)
+	ram[0x7f42 - 0x4000] = 0x00;	// 1 バイトを RST 08h に置き換えていない
+}
+
 // ----------------------------------------------------------------------------
 //	起動時メモリパターン作成 (FH実機参考)
 //	arg:	ram		RAM エリア
@@ -154,6 +195,9 @@ void IOCALL SubSystem::Reset(uint, uint)
 	piom.Reset();
 	pios.Reset();
 	idlecount = 0;
+	// 実機の ROM はリセットのたびに作業域を初期化するので、pbios のときはここでも合わせる
+	if (pbios)
+		InitWorkArea();
 }
 
 // ---------------------------------------------------------------------------

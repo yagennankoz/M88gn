@@ -82,6 +82,8 @@ private:
 	bool LoadROM();
 	void PatchROM();
 	void SetRAMPattern(uint8* ram, uint length);
+	bool IsPBIOS();
+	void InitWorkArea();
 
 	MemoryManager* mm;
 	int mid;
@@ -91,6 +93,7 @@ private:
 	PIO piom, pios;
 	uint cw_m, cw_s;
 	uint idlecount;
+	bool pbios;				// ディスクの ROM が pbios (RAM を 0 で始め、作業域を実機の ROM に合わせる)
 
 private:
 	static const Descriptor descriptor;

@@ -104,9 +104,10 @@ void TapeWindow::Create()
 	int x = posx, y = posy, w = width, h = height;
 	if (placed)
 	{
-		// 保存した位置がどの画面にも無ければ (画面の構成が変わった)、既定の位置にする
-		RECT r = { x, y, x + w, y + h };
-		if (!MonitorFromRect(&r, MONITOR_DEFAULTTONULL))
+		// 保存した位置で窓の真ん中がどの画面にも無ければ (画面の構成が変わった)、既定の位置にする
+		// (デバッグの窓・ソフトウェアキーボードと同じ決め方)
+		POINT c = { x + w / 2, y + h / 2 };
+		if (!MonitorFromPoint(c, MONITOR_DEFAULTTONULL))
 			placed = false;
 		// 前の版で保存した大きさが、今の最小より小さければ広げる (速さ・音量の段を足した)
 		int d = Dpi::GetForWindow(owner);
