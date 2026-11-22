@@ -7,6 +7,7 @@
 
 #include "headers.h"
 #include "dbgsettings.h"
+#include "watchbank.h"
 
 namespace
 {
@@ -59,6 +60,19 @@ bool SaveDebugSettings(Debugger* dbg, const char* diskimage)
 				 bp.comment);
 		if (!WritePrivateProfileString("Breakpoints", key, val, path))
 			ok = false;
+		// I/O ポート (M88gn)。前の版でも読めるように別のキーにする
+		wsprintf(key, "BPIO%d", i);
+		if (!WritePrivateProfileString("Breakpoints", key, bp.io ? "1" : 0, path))
+			ok = false;
+		// 条件と回数 (M88gn)
+		wsprintf(key, "BPC%d", i);
+		if (!WritePrivateProfileString("Breakpoints", key, bp.cond[0] ? bp.cond : 0, path))
+			ok = false;
+		char num[16];
+		wsprintf(num, "%u", bp.hitcount);
+		wsprintf(key, "BPN%d", i);
+		if (!WritePrivateProfileString("Breakpoints", key, bp.hitcount ? num : 0, path))
+			ok = false;
 	}
 
 	WritePrivateProfileString("Watch", 0, 0, path);
@@ -77,6 +91,10 @@ bool SaveDebugSettings(Debugger* dbg, const char* diskimage)
 		// addr,size,cpu,label
 		wsprintf(val, "%x,%x,%x,%s", w.addr, w.size, w.cpu, w.label);
 		if (!WritePrivateProfileString("Watch", key, val, path))
+			ok = false;
+		// バンク (M88gn)。前の版でも読めるように別のキーにする。名前で書く
+		wsprintf(key, "WB%d", i);
+		if (!WritePrivateProfileString("Watch", key, WatchBankName(w.bank), path))
 			ok = false;
 	}
 
@@ -120,6 +138,13 @@ bool LoadDebugSettings(Debugger* dbg, const char* diskimage)
 		bp.addr = addr;
 		bp.length = length;
 		bp.cpu = uint8(cpu);
+		wsprintf(key, "BPIO%d", i);
+		bp.io = GetPrivateProfileInt("Breakpoints", key, 0, path) != 0;	// M88gn
+		wsprintf(key, "BPC%d", i);
+		GetPrivateProfileString("Breakpoints", key, "", bp.cond, sizeof(bp.cond), path);
+		wsprintf(key, "BPN%d", i);
+		bp.hitcount = GetPrivateProfileInt("Breakpoints", key, 0, path);
+		bp.hits = 0;
 		bp.exec = exec != 0;
 		bp.read = read != 0;
 		bp.write = write != 0;
@@ -148,6 +173,12 @@ bool LoadDebugSettings(Debugger* dbg, const char* diskimage)
 		w.size = uint8(size);
 		w.cpu = uint8(cpu);
 		strncpy_s(w.label, sizeof(w.label), label, _TRUNCATE);
+		// バンク (M88gn)。無ければ (前の版で保存したもの) RAM
+		char bname[16];
+		wsprintf(key, "WB%d", i);
+		GetPrivateProfileString("Watch", key, "RAM", bname, sizeof(bname), path);
+		const WatchBank* wb = FindWatchBankByName(bname);
+		w.bank = uint8(wb ? wb->type : MemoryViewer::mainram);
 		dbg->AddWatch(w);
 	}
 

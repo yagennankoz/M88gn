@@ -162,8 +162,18 @@ bool WinUI::InitM88(const char* cmdline)
 	loadmon.Init();
 	iomon.Init(&core);
 	bpmon.Init(&core);
+	iobpmon.Init(&core, true);
 	watchmon.Init(&core);
 	tracemon.Init(&core);
+	mnemmon.Init();
+	sublogmon.Init(&core);
+	videomon.Init(&core, &memmon);
+	stoptick = 0;
+	stoptickvalid = false;
+	laptext[0] = 0;
+	codemon.SetMnemonicMonitor(&mnemmon);
+	codemon.SetMemoryMonitor(&memmon);
+	memmon.SetCodeMonitor(&codemon);
 	debugnodiskwarned = false;
 	debugkey[0] = 0;
 	tapefile[0] = 0;
@@ -866,12 +876,28 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		bpmon.Show(hinst, hwnd, !bpmon.IsOpen());
 		break;
 
+	case IDM_IOBPMON:
+		iobpmon.Show(hinst, hwnd, !iobpmon.IsOpen());
+		break;
+
 	case IDM_WATCHMON:
 		watchmon.Show(hinst, hwnd, !watchmon.IsOpen());
 		break;
 
 	case IDM_TRACEMON:
 		tracemon.Show(hinst, hwnd, !tracemon.IsOpen());
+		break;
+
+	case IDM_MNEMMON:
+		mnemmon.Show(hinst, hwnd, !mnemmon.IsOpen());
+		break;
+
+	case IDM_SUBLOGMON:
+		sublogmon.Show(hinst, hwnd, !sublogmon.IsOpen());
+		break;
+
+	case IDM_VIDEOMON:
+		videomon.Show(hinst, hwnd, !videomon.IsOpen());
 		break;
 
 	case IDM_DBG_TRACE:
@@ -1033,6 +1059,7 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		ShowPauseStatus();
 		codemon.ShowCpu(GetStepTarget());
 		codemon.FollowPC();
+		videomon.Refresh();
 		tracemon.Refresh();			// トレースの窓はブレークのときしか書き直さないので、Pause でも書き直す (M88gn)
 		break;
 
@@ -1393,8 +1420,12 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 	CheckMenuItem(hmenu, IDM_MEMMON, memmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_CODEMON, codemon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_BPMON, bpmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_IOBPMON, iobpmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_WATCHMON, watchmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_TRACEMON, tracemon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_MNEMMON, mnemmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_SUBLOGMON, sublogmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_VIDEOMON, videomon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_DBG_TRACE, core.GetDebugger()->IsTraceEnabled() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_DBG_SAVESETTINGS, (config.flag2 & PC8801::Config::savedebugperdisk) ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_BASMON, basmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
@@ -2135,12 +2166,45 @@ LRESULT WinUI::M88DebugBreak(HWND, WPARAM, LPARAM)
 	codemon.ShowCpu(core.GetDebugger()->GetBreakCpu());
 	codemon.FollowPC();
 	tracemon.Refresh();
+	videomon.Refresh();
 	return 0;
 }
 
 void WinUI::ShowPauseStatus()
 {
-	statusdisplay.Show(20, 0, "PAUSED  PC:%.4x/%.4x", core.GetCPU1()->GetPC(), core.GetCPU2()->GetPC());
+	// M88gn: 止まった理由 (ブレークポイント) と、前に止まってからのメインの CPU のクロック数・時間 (ストップウォッチ)
+	char why[32] = "";
+	Debugger* dbg = core.GetDebugger();
+	if (dbg->IsBroken())
+	{
+		const char* c = dbg->GetBreakCpu() == Debugger::cpu_sub ? "SUB " : "";
+		uint a = dbg->GetBreakAddr();
+		switch (dbg->GetBreakReason())
+		{
+		case Debugger::brk_exec:		wsprintf(why, "%sBP  ", c); break;
+		case Debugger::brk_memread:		wsprintf(why, "%sRead %.4X  ", c, a); break;
+		case Debugger::brk_memwrite:	wsprintf(why, "%sWrite %.4X  ", c, a); break;
+		case Debugger::brk_ioread:		wsprintf(why, "%sIN %.2X  ", c, a); break;
+		case Debugger::brk_iowrite:		wsprintf(why, "%sOUT %.2X  ", c, a); break;
+		default: break;
+		}
+	}
+	// 止めたときは知らせが 2 回来ることがあるので、クロック数が変わっていなければ前の差をそのまま出す
+	uint32 tick = core.GetCPUTick();
+	if (!stoptickvalid || tick != stoptick)
+	{
+		laptext[0] = 0;
+		if (stoptickvalid)
+		{
+			uint32 d = tick - stoptick;
+			uint clock = core.GetCPUSpeed() ? core.GetCPUSpeed() : 1;	// 100kHz 単位 (40 = 4MHz)
+			uint us = uint((unsigned __int64)(d) * 10 / clock);
+			wsprintf(laptext, "+%u clk (%u.%.3u ms)", d, us / 1000, us % 1000);
+		}
+		stoptick = tick;
+		stoptickvalid = true;
+	}
+	statusdisplay.Show(20, 0, "PAUSED  PC:%.4x/%.4x  %s%s", core.GetCPU1()->GetPC(), core.GetCPU2()->GetPC(), why, laptext);
 	statusdisplay.Update();
 }
 

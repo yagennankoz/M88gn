@@ -24,8 +24,16 @@ Debugger::Debugger()
 : vm(0), hasmembreak(false), broken(false), reason(brk_none), breakcpu(cpu_main), breakaddr(0), suppressbreak(false),
   stepmode(step_none), steptarget(cpu_main), stepfirstcheck(false), stepoveraddr(0), stepoversp(0),
   intskipenabled(true), intskip(false), intskipretaddr(0), intskipsp(0), intskipcount(0), active(false),
-  tracemode(false), tracecapacity(0), tracebuf(0), tracehead(0), tracecount(0)
+  tracemode(false), tracecapacity(0), tracebuf(0), tracehead(0), tracecount(0),
+  sublog(false), subloghs(false), sublogbuf(0), subloghead(0), sublogcount(0)
 {
+	for (int c = 0; c < 2; c++)
+	{
+		iodev[c].dbg = this;
+		iodev[c].cpu = CpuTarget(c);
+		iobus[c] = 0;
+		lastpc[c] = 0;
+	}
 	memset(execbreak, 0, sizeof(execbreak));
 	execbreakcount[cpu_main] = execbreakcount[cpu_sub] = 0;
 	hasexecbreak[cpu_main] = hasexecbreak[cpu_sub] = false;
@@ -46,6 +54,7 @@ Debugger::Debugger()
 Debugger::~Debugger()
 {
 	delete[] tracebuf;
+	delete[] sublogbuf;
 }
 
 // ---------------------------------------------------------------------------
@@ -63,6 +72,10 @@ bool Debugger::Init(PC88* _vm)
 	memmid[cpu_main] = mm[cpu_main] ? mm[cpu_main]->Connect(this, true) : -1;
 	memmid[cpu_sub]  = mm[cpu_sub]  ? mm[cpu_sub]->Connect(this, true)  : -1;
 
+	// I/O のブレーク・ログ用 (M88gn)
+	iobus[cpu_main] = vm->GetBus1();
+	iobus[cpu_sub]  = vm->GetBus2();
+
 	SetTraceCapacity(tracecapacity_max);
 
 	return true;
@@ -70,6 +83,7 @@ bool Debugger::Init(PC88* _vm)
 
 void Debugger::Cleanup()
 {
+	sublog = false;				// I/O のつなぎも外れる (M88gn)
 	DeleteAllBreakPoints();
 	DeleteAllWatches();
 	ClearBreak();
@@ -109,6 +123,10 @@ void Debugger::SetExecBreak(CpuTarget cpu, uint addr, bool set)
 		bp.write = false;
 		bp.enabled = true;
 		bp.comment[0] = 0;
+		bp.io = false;
+		bp.cond[0] = 0;
+		bp.hitcount = 0;
+		bp.hits = 0;
 		AddBreakPoint(bp);
 	}
 	else
@@ -119,7 +137,7 @@ void Debugger::SetExecBreak(CpuTarget cpu, uint addr, bool set)
 		for (size_t i = 0; i < bplist.size(); )
 		{
 			BreakPoint& bp = bplist[i];
-			if (bp.cpu == uint8(cpu) && bp.exec && addr >= bp.addr && addr < bp.addr + bp.length)
+			if (!bp.io && bp.cpu == uint8(cpu) && bp.exec && addr >= bp.addr && addr < bp.addr + bp.length)
 			{
 				bp.exec = false;
 				changed = true;
@@ -181,7 +199,7 @@ int Debugger::FindExecBreakPoint(CpuTarget cpu, uint addr) const
 	for (size_t i = 0; i < bplist.size(); i++)
 	{
 		const BreakPoint& bp = bplist[i];
-		if (bp.cpu == uint8(cpu) && bp.exec && addr >= bp.addr && addr < bp.addr + bp.length)
+		if (!bp.io && bp.cpu == uint8(cpu) && bp.exec && addr >= bp.addr && addr < bp.addr + bp.length)
 			return int(i);
 	}
 	return -1;
@@ -202,13 +220,15 @@ int Debugger::AddBreakPoint(const BreakPoint& bp)
 	// 受け取った構造体は呼び出し側で comment を埋めていないことがある。
 	// 必ず終端させてから保持する
 	nb.comment[sizeof(nb.comment)-1] = 0;
+	nb.cond[sizeof(nb.cond)-1] = 0;
+	nb.hits = 0;
 
 	// 同一範囲(cpu/addr/length が一致)のエントリがあれば、
 	// 新規に増やさず属性を統合する
 	for (size_t i = 0; i < bplist.size(); i++)
 	{
 		BreakPoint& e = bplist[i];
-		if (e.cpu == nb.cpu && e.addr == nb.addr && e.length == nb.length)
+		if (e.cpu == nb.cpu && e.addr == nb.addr && e.length == nb.length && e.io == nb.io)
 		{
 			e.exec |= nb.exec;
 			e.read |= nb.read;
@@ -237,6 +257,8 @@ bool Debugger::SetBreakPoint(int index, const BreakPoint& bp)
 	// 受け取った構造体は呼び出し側で comment を埋めていないことがある。
 	// 必ず終端させてから保持する
 	nb.comment[sizeof(nb.comment)-1] = 0;
+	nb.cond[sizeof(nb.cond)-1] = 0;
+	nb.hits = 0;
 
 	bplist[index] = nb;
 	RebuildBreakTables();
@@ -333,7 +355,7 @@ void Debugger::RebuildBreakTables()
 	for (size_t i = 0; i < bplist.size(); i++)
 	{
 		const BreakPoint& bp = bplist[i];
-		if (!bp.enabled || !bp.exec)
+		if (!bp.enabled || !bp.exec || bp.io)
 			continue;
 		uint cpu = bp.cpu & 1;
 		uint end = Min(bp.addr + bp.length, 0x10000);
@@ -367,7 +389,7 @@ void Debugger::RebuildBreakTables()
 	for (size_t i = 0; i < bplist.size(); i++)
 	{
 		const BreakPoint& bp = bplist[i];
-		if (!bp.enabled || (!bp.read && !bp.write))
+		if (!bp.enabled || (!bp.read && !bp.write) || bp.io)
 			continue;
 		uint cpu = bp.cpu & 1;
 		if (!mm[cpu] || memmid[cpu] < 0)
@@ -387,7 +409,493 @@ void Debugger::RebuildBreakTables()
 		}
 	}
 
+	RebuildIOHooks();
 	UpdateActive();
+}
+
+// ---------------------------------------------------------------------------
+//	I/O ポートのブレーク・通信のログ (M88gn)。デバッガの装置 (DebugIO) を、要るポートにだけ
+//	本物の装置と並べてつなぐ (IN は 0xff を返すので、本物の装置の値は変わらない)。
+//	bplist やログの設定を変えたら呼ぶ (呼び出し元の Lock() 区間の中)
+//
+void Debugger::RebuildIOHooks()
+{
+	for (int c = 0; c < 2; c++)
+	{
+		if (!iobus[c])
+			continue;
+		iobus[c]->Disconnect(&iodev[c]);		// つないでいなければ何もしない
+
+		bool in[256], out[256];
+		memset(in, 0, sizeof(in));
+		memset(out, 0, sizeof(out));
+		for (size_t i = 0; i < bplist.size(); i++)
+		{
+			const BreakPoint& bp = bplist[i];
+			if (!bp.enabled || !bp.io || (bp.cpu & 1) != uint(c))
+				continue;
+			for (uint p = bp.addr; p < bp.addr + bp.length && p < 0x100; p++)
+			{
+				if (bp.read)
+					in[p] = true;
+				if (bp.write)
+					out[p] = true;
+			}
+		}
+		if (sublog)
+		{
+			out[0xfc] = out[0xfd] = true;
+			if (subloghs)
+				out[0xfe] = out[0xff] = true;
+		}
+		for (uint p = 0; p < 0x100; p++)
+		{
+			if (in[p])
+				iobus[c]->ConnectIn(p, &iodev[c], STATIC_CAST(Device::InFuncPtr, &DebugIO::In));
+			if (out[p])
+				iobus[c]->ConnectOut(p, &iodev[c], STATIC_CAST(Device::OutFuncPtr, &DebugIO::Out));
+		}
+	}
+}
+
+uint IOCALL Debugger::DebugIO::In(uint port)
+{
+	dbg->DoIOIn(cpu, port & 0xff);
+	return 0xff;
+}
+
+void IOCALL Debugger::DebugIO::Out(uint port, uint data)
+{
+	dbg->DoIOOut(cpu, port & 0xff, data & 0xff);
+}
+
+void Debugger::DoIOIn(CpuTarget cpu, uint port)
+{
+	if (suppressbreak || broken)
+		return;
+	for (size_t i = 0; i < bplist.size(); i++)
+	{
+		const BreakPoint& bp = bplist[i];
+		if (!bp.enabled || !bp.io || !bp.read || bp.cpu != uint8(cpu))
+			continue;
+		if (port < bp.addr || port >= bp.addr + bp.length)
+			continue;
+		if (!CondHit(bplist[i], cpu, lastpc[cpu], port, -1))		// IN で読む値はまだ分からない
+			continue;
+		// メモリのブレークと同じく、この命令は最後まで実行され、次の命令の前で止まる
+		RequestBreak(brk_ioread, cpu, port);
+		stepmode = step_none;
+		break;
+	}
+}
+
+void Debugger::DoIOOut(CpuTarget cpu, uint port, uint data)
+{
+	// 通信のログ
+	if (sublog && sublogbuf && port >= 0xfc && (subloghs || port <= 0xfd))
+	{
+		SubLogEntry& e = sublogbuf[subloghead];
+		e.tick = vm ? vm->GetCPUTick() : 0;
+		e.pc = lastpc[cpu];
+		e.cpu = uint8(cpu);
+		e.port = uint8(port);
+		e.data = uint8(data);
+		subloghead = (subloghead + 1) % subloglimit;
+		if (sublogcount < subloglimit)
+			sublogcount++;
+	}
+
+	if (suppressbreak || broken)
+		return;
+	for (size_t i = 0; i < bplist.size(); i++)
+	{
+		const BreakPoint& bp = bplist[i];
+		if (!bp.enabled || !bp.io || !bp.write || bp.cpu != uint8(cpu))
+			continue;
+		if (port < bp.addr || port >= bp.addr + bp.length)
+			continue;
+		if (!CondHit(bplist[i], cpu, lastpc[cpu], port, int(data)))
+			continue;
+		RequestBreak(brk_iowrite, cpu, port);
+		stepmode = step_none;
+		break;
+	}
+}
+
+void Debugger::SetSubLogEnabled(bool e)
+{
+	if (e && !sublogbuf)
+	{
+		sublogbuf = new SubLogEntry[subloglimit];
+		subloghead = sublogcount = 0;
+	}
+	sublog = e && sublogbuf;
+	RebuildIOHooks();
+	UpdateActive();			// ログを取る間は命令ごとの判定で PC を覚える
+}
+
+void Debugger::SetSubLogHandshake(bool h)
+{
+	subloghs = h;
+	RebuildIOHooks();
+}
+
+bool Debugger::GetSubLogEntry(int index, SubLogEntry* e) const
+{
+	if (!sublogbuf || index < 0 || index >= sublogcount)
+		return false;
+	int start = (subloghead - sublogcount + subloglimit) % subloglimit;
+	*e = sublogbuf[(start + index) % subloglimit];
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+//	条件付きブレークポイント (M88gn)
+//
+//	式: 数は 16 進 (先頭は数字。0C・1234・1234H・0x1234・$1234)、#123 で 10 進。
+//	レジスター A B C D E H L F I R AF BC DE HL IX IY SP PC IXH IXL IYH IYL AF' BC' DE' HL'、
+//	フラグ ZF CF SF PF (= VF) HF NF、DATA (読み書きした値。IN では使えない)、ADDR (番地・ポート)、
+//	[式] = その番地の 1 バイト、W[式] = 2 バイト (CPU が今見ているメモリ)。
+//	演算子 ( ) ! ~ - * / % + - << >> < <= > >= == != & ^ | && || (C と同じ優先順位)。0 以外が真
+//	レジスターは命令の直前の値 (メモリ・I/O のブレークでは、その命令が途中で変えた値のこともある)
+//
+struct CondEval
+{
+	Debugger* dbg;				// 0 なら書き方を確かめるだけ (値は読まない)
+	Debugger::CpuTarget cpu;
+	uint pc, addr;
+	int data;
+	const char* p;
+	const char* err;
+
+	void Skip() { while (*p == ' ' || *p == '\t') p++; }
+	bool Eat(const char* op)
+	{
+		Skip();
+		size_t n = strlen(op);
+		if (strncmp(p, op, n))
+			return false;
+		// '&' と '&&'、'|' と '||'、'<' と '<<' / '<=' などを取り違えない
+		if (n == 1 && (op[0] == '&' || op[0] == '|') && p[1] == op[0])
+			return false;
+		if (n == 1 && (op[0] == '<' || op[0] == '>') && (p[1] == '=' || p[1] == op[0]))
+			return false;
+		if (n == 1 && op[0] == '!' && p[1] == '=')
+			return false;
+		p += n;
+		return true;
+	}
+	uint Mem(uint a)
+	{
+		if (!dbg || !dbg->mm[cpu] || dbg->memmid[cpu] < 0)
+			return 0;
+		return dbg->mm[cpu]->Read8P(uint(dbg->memmid[cpu]), a & 0xffff) & 0xff;
+	}
+	bool Reg(const char* name, uint* v);
+	int Primary();
+	int Unary();
+	int Mul();
+	int Add();
+	int Shift();
+	int Rel();
+	int Eq();
+	int BitAnd();
+	int BitXor();
+	int BitOr();
+	int LAnd();
+	int LOr();
+};
+
+bool CondEval::Reg(const char* n, uint* v)
+{
+	static const char* const names[] =
+	{
+		"A", "F", "B", "C", "D", "E", "H", "L", "I", "R",
+		"AF", "BC", "DE", "HL", "IX", "IY", "SP", "PC", "IXH", "IXL", "IYH", "IYL",
+		"AF'", "BC'", "DE'", "HL'", "ZF", "CF", "SF", "PF", "VF", "HF", "NF", "DATA", "ADDR", 0,
+	};
+	int k;
+	for (k = 0; names[k]; k++)
+		if (!_stricmp(n, names[k]))
+			break;
+	if (!names[k])
+		return false;
+	if (!dbg)
+	{
+		*v = 0;
+		return true;
+	}
+	if (!_stricmp(n, "DATA") && data < 0)
+	{
+		err = "DATA は、このブレークポイント (IN・実行) では使えません";
+		*v = 0;
+		return true;
+	}
+	auto* z = cpu == Debugger::cpu_sub ? dbg->vm->GetCPU2() : dbg->vm->GetCPU1();
+	const Z80Reg& r = z->GetReg();
+	uint af = z->GetAFSync();
+	uint f = af & 0xff;
+	switch (k)
+	{
+	case 0: *v = af >> 8; break;
+	case 1: *v = f; break;
+	case 2: *v = r.r.w.bc >> 8; break;
+	case 3: *v = r.r.w.bc & 0xff; break;
+	case 4: *v = r.r.w.de >> 8; break;
+	case 5: *v = r.r.w.de & 0xff; break;
+	case 6: *v = r.r.w.hl >> 8; break;
+	case 7: *v = r.r.w.hl & 0xff; break;
+	case 8: *v = r.ireg; break;
+	case 9: *v = (r.rreg & 0x7f) | (r.rreg7 & 0x80); break;
+	case 10: *v = af; break;
+	case 11: *v = r.r.w.bc & 0xffff; break;
+	case 12: *v = r.r.w.de & 0xffff; break;
+	case 13: *v = r.r.w.hl & 0xffff; break;
+	case 14: *v = r.r.w.ix & 0xffff; break;
+	case 15: *v = r.r.w.iy & 0xffff; break;
+	case 16: *v = r.r.w.sp & 0xffff; break;
+	case 17: *v = pc & 0xffff; break;
+	case 18: *v = (r.r.w.ix >> 8) & 0xff; break;
+	case 19: *v = r.r.w.ix & 0xff; break;
+	case 20: *v = (r.r.w.iy >> 8) & 0xff; break;
+	case 21: *v = r.r.w.iy & 0xff; break;
+	case 22: *v = r.r_af & 0xffff; break;
+	case 23: *v = r.r_bc & 0xffff; break;
+	case 24: *v = r.r_de & 0xffff; break;
+	case 25: *v = r.r_hl & 0xffff; break;
+	case 26: *v = (f >> 6) & 1; break;		// ZF
+	case 27: *v = f & 1; break;				// CF
+	case 28: *v = (f >> 7) & 1; break;		// SF
+	case 29: case 30: *v = (f >> 2) & 1; break;	// PF / VF
+	case 31: *v = (f >> 4) & 1; break;		// HF
+	case 32: *v = (f >> 1) & 1; break;		// NF
+	case 33: *v = uint(data) & 0xff; break;
+	case 34: *v = addr & 0xffff; break;
+	}
+	return true;
+}
+
+int CondEval::Primary()
+{
+	Skip();
+	if (err)
+		return 0;
+	if (*p == '(')
+	{
+		p++;
+		int v = LOr();
+		if (!Eat(")"))
+			err = "「)」がありません";
+		return v;
+	}
+	bool word = false;
+	if ((p[0] == 'W' || p[0] == 'w') && p[1] == '[')
+		word = true, p++;
+	if (*p == '[')
+	{
+		p++;
+		uint a = uint(LOr());
+		if (!Eat("]"))
+			err = "「]」がありません";
+		return int(word ? (Mem(a) | (Mem(a + 1) << 8)) : Mem(a));
+	}
+	if (*p == '#' || *p == '$' || (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) || isdigit(uint8(*p)))
+	{
+		int base = 16;
+		if (*p == '#')
+			base = 10, p++;
+		else if (*p == '$')
+			p++;
+		else if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X'))
+			p += 2;
+		char* end;
+		uint v = strtoul(p, &end, base);
+		if (end == p)
+		{
+			err = "数の書き方が違います";
+			return 0;
+		}
+		p = end;
+		if (base == 16 && (*p == 'H' || *p == 'h'))
+			p++;
+		return int(v);
+	}
+	if (isalpha(uint8(*p)))
+	{
+		char name[8];
+		int n = 0;
+		while ((isalnum(uint8(*p)) || *p == '\'') && n < 7)
+			name[n++] = *p++;
+		name[n] = 0;
+		uint v;
+		if (!Reg(name, &v))
+		{
+			static char msg[64];
+			wsprintf(msg, "「%s」は知らない名前です", name);
+			err = msg;
+			return 0;
+		}
+		return int(v);
+	}
+	err = *p ? "式の書き方が違います" : "式が途中で終わっています";
+	return 0;
+}
+
+int CondEval::Unary()
+{
+	Skip();
+	if (Eat("!"))	return !Unary();
+	if (Eat("~"))	return ~Unary();
+	if (Eat("-"))	return -Unary();
+	return Primary();
+}
+
+int CondEval::Mul()
+{
+	int v = Unary();
+	for (;;)
+	{
+		if (Eat("*"))		v *= Unary();
+		else if (Eat("/"))	{ int d = Unary(); v = d ? v / d : 0; }
+		else if (Eat("%"))	{ int d = Unary(); v = d ? v % d : 0; }
+		else return v;
+	}
+}
+
+int CondEval::Add()
+{
+	int v = Mul();
+	for (;;)
+	{
+		if (Eat("+"))		v += Mul();
+		else if (Eat("-"))	v -= Mul();
+		else return v;
+	}
+}
+
+int CondEval::Shift()
+{
+	int v = Add();
+	for (;;)
+	{
+		if (Eat("<<"))		v <<= Add();
+		else if (Eat(">>"))	v = int(uint(v) >> Add());
+		else return v;
+	}
+}
+
+int CondEval::Rel()
+{
+	int v = Shift();
+	for (;;)
+	{
+		if (Eat("<="))		v = v <= Shift();
+		else if (Eat(">="))	v = v >= Shift();
+		else if (Eat("<"))	v = v < Shift();
+		else if (Eat(">"))	v = v > Shift();
+		else return v;
+	}
+}
+
+int CondEval::Eq()
+{
+	int v = Rel();
+	for (;;)
+	{
+		if (Eat("=="))		v = v == Rel();
+		else if (Eat("!="))	v = v != Rel();
+		else return v;
+	}
+}
+
+int CondEval::BitAnd()	{ int v = Eq();     while (Eat("&")) v &= Eq();     return v; }
+int CondEval::BitXor()	{ int v = BitAnd(); while (Eat("^")) v ^= BitAnd(); return v; }
+int CondEval::BitOr()	{ int v = BitXor(); while (Eat("|")) v |= BitXor(); return v; }
+int CondEval::LAnd()	{ int v = BitOr();  while (Eat("&&")) { int w = BitOr(); v = v && w; } return v; }
+int CondEval::LOr()		{ int v = LAnd();   while (Eat("||")) { int w = LAnd(); v = v || w; } return v; }
+
+bool Debugger::CheckCondition(const char* cond, char* err)
+{
+	err[0] = 0;
+	CondEval e;
+	e.dbg = 0;
+	e.cpu = cpu_main;
+	e.pc = e.addr = 0;
+	e.data = 0;
+	e.p = cond;
+	e.err = 0;
+	e.Skip();
+	if (!*e.p)
+		return true;			// 空なら条件無し
+	e.LOr();
+	e.Skip();
+	if (!e.err && *e.p)
+		e.err = "式の後ろに余分な文字があります";
+	if (e.err)
+	{
+		wsprintf(err, "%s (%d 文字目)", e.err, int(e.p - cond) + 1);
+		return false;
+	}
+	return true;
+}
+
+const char* Debugger::CondHelp()
+{
+	return
+		"条件 (Condition): 式が 0 以外のときだけ止めます。空なら毎回。\r\n"
+		"\r\n"
+		"数: 16 進で書きます (先頭は数字: 0C, 1234, 0FFH, 0x1234, $1234)。#100 は 10 進。\r\n"
+		"レジスター: A B C D E H L F I R  AF BC DE HL IX IY SP PC\r\n"
+		"　　IXH IXL IYH IYL  AF' BC' DE' HL'\r\n"
+		"フラグ: ZF CF SF PF (VF) HF NF (0 か 1)\r\n"
+		"DATA: 読み書きした値 (メモリの読み・書き、OUT。実行と IN では使えません)\r\n"
+		"ADDR: アクセスした番地・ポート\r\n"
+		"[式]: その番地の 1 バイト、W[式]: 2 バイト (CPU が今見ているメモリ)\r\n"
+		"演算子: ( ) ! ~ - * / % + - << >> < <= > >= == != & ^ | && ||\r\n"
+		"\r\n"
+		"例:  A==3   BC>=1000   ZF && HL==0E000   [0E6CB]==0FF   DATA&80\r\n"
+		"\r\n"
+		"回数 (Hit count): 条件が成り立った回数がこの数になったときから止めます (0 は毎回)。\r\n"
+		"回数はブレークポイントを変更すると 0 に戻ります。\r\n"
+		"レジスターは命令の直前の値です (メモリ・I/O のブレークでは、その命令が途中で変えた値のこともあります)。";
+}
+
+// 条件と回数を見て、止めるなら true。条件の式は毎回読み直す (誤りがあれば止める)
+bool Debugger::CondHit(BreakPoint& bp, CpuTarget cpu, uint pc, uint addr, int data)
+{
+	if (bp.cond[0])
+	{
+		CondEval e;
+		e.dbg = this;
+		e.cpu = cpu;
+		e.pc = pc;
+		e.addr = addr;
+		e.data = data;
+		e.p = bp.cond;
+		e.err = 0;
+		int v = e.LOr();
+		if (!e.err && !v)
+			return false;
+	}
+	bp.hits++;
+	return bp.hitcount <= 1 || bp.hits >= bp.hitcount;
+}
+
+// 実行のブレーク: その番地を含む実行のブレークポイントのどれかの条件が成り立てば止める
+bool Debugger::ExecCondHit(int cpuid, uint pc)
+{
+	bool hit = false;
+	for (size_t i = 0; i < bplist.size(); i++)
+	{
+		BreakPoint& bp = bplist[i];
+		if (!bp.enabled || !bp.exec || bp.io || bp.cpu != uint8(cpuid))
+			continue;
+		if (pc < bp.addr || pc >= bp.addr + bp.length)
+			continue;
+		if (CondHit(bp, CpuTarget(cpuid), pc, pc, -1))
+			hit = true;			// 回数を数えるため、残りも見る
+	}
+	return hit;
 }
 
 // ---------------------------------------------------------------------------
@@ -395,8 +903,11 @@ void Debugger::RebuildBreakTables()
 //
 void Debugger::UpdateActive()
 {
+	bool hasiobreak = false;
+	for (size_t i = 0; i < bplist.size() && !hasiobreak; i++)
+		hasiobreak = bplist[i].enabled && bplist[i].io && (bplist[i].read || bplist[i].write);
 	active = hasexecbreak[cpu_main] || hasexecbreak[cpu_sub] || hasmembreak
-		  || (stepmode != step_none) || broken || tracemode;
+		  || (stepmode != step_none) || broken || tracemode || sublog || hasiobreak;
 	// Z80_x86 は命令ごとのループでこの印だけを見て、立っているときだけ CheckExecBreak を呼ぶ
 	if (vm)
 	{
@@ -643,6 +1154,7 @@ bool Debugger::CheckExecBreak(int cpuid, uint pc)
 {
 	if (!active)
 		return false;
+	lastpc[cpuid & 1] = uint16(pc);		// 通信のログ用 (M88gn)
 	if (suppressbreak)
 		return false;
 	// 既にブレークしている: 何もせずに止める (メモリのブレークは命令の途中で起きるので、次の命令の前のここで止める。
@@ -712,7 +1224,7 @@ bool Debugger::CheckExecBreak(int cpuid, uint pc)
 	if (!hasexecbreak[cpuid])
 		return false;
 
-	if (execbreak[cpuid][pc >> 3] & (1 << (pc & 7)))
+	if ((execbreak[cpuid][pc >> 3] & (1 << (pc & 7))) && ExecCondHit(cpuid, pc))
 	{
 		RequestBreak(brk_exec, CpuTarget(cpuid), pc);
 		stepmode = step_none;
@@ -764,9 +1276,11 @@ uint Debugger::DoMemRead(CpuTarget cpu, uint addr)
 	for (size_t i = 0; i < bplist.size(); i++)
 	{
 		const BreakPoint& bp = bplist[i];
-		if (!bp.enabled || bp.cpu != uint8(cpu) || !bp.read)
+		if (!bp.enabled || bp.cpu != uint8(cpu) || !bp.read || bp.io)
 			continue;
 		if (addr < bp.addr || addr >= bp.addr + bp.length)
+			continue;
+		if (!CondHit(bplist[i], cpu, lastpc[cpu], addr, int(data & 0xff)))
 			continue;
 
 		RequestBreak(brk_memread, cpu, addr);
@@ -792,9 +1306,11 @@ void Debugger::DoMemWrite(CpuTarget cpu, uint addr, uint data)
 	for (size_t i = 0; i < bplist.size(); i++)
 	{
 		const BreakPoint& bp = bplist[i];
-		if (!bp.enabled || bp.cpu != uint8(cpu) || !bp.write)
+		if (!bp.enabled || bp.cpu != uint8(cpu) || !bp.write || bp.io)
 			continue;
 		if (addr < bp.addr || addr >= bp.addr + bp.length)
+			continue;
+		if (!CondHit(bplist[i], cpu, lastpc[cpu], addr, int(data & 0xff)))
 			continue;
 
 		RequestBreak(brk_memwrite, cpu, addr);

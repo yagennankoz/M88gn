@@ -62,6 +62,8 @@ void MemoryViewer::SelectBank(Type a0, Type a6, Type a8, Type ac, Type af)
 		{
 		case n88rom: p = mem1->GetROM()+Memory::n88; break;
 		case nrom:   p = mem1->GetROM()+Memory::n80; break;
+		case n80rom:   p = mem1->GetN80ROM() ? mem1->GetN80ROM() : mem1->GetRAM(); break;		// M88gn
+		case n80srrom: p = mem1->GetN80V2ROM() ? mem1->GetN80V2ROM() : mem1->GetRAM(); break;
 		case eram0:  p = mem1->GetERAM(0); break;
 		case eram1:  p = mem1->GetERAM(1); break;
 		case eram2:  p = mem1->GetERAM(2); break;
@@ -75,6 +77,9 @@ void MemoryViewer::SelectBank(Type a0, Type a6, Type a8, Type ac, Type af)
 		{
 		case n88rom: p = mem1->GetROM()+Memory::n88+0x6000; break;
 		case nrom:   p = mem1->GetROM()+Memory::n80+0x6000; break;
+		case n80rom:   p = mem1->GetN80ROM() ? mem1->GetN80ROM()+0x6000 : mem1->GetRAM()+0x6000; break;	// M88gn
+		case n80srrom: p = mem1->GetN80V2ROM() ? mem1->GetN80V2ROM()+0x6000 : mem1->GetRAM()+0x6000; break;
+		case n80sr1:   p = mem1->GetN80V2ROM() ? mem1->GetN80V2ROM()+0x8000 : mem1->GetRAM()+0x6000; break;
 		case n88e0: case n88e1: case n88e2: case n88e3:
 			p = mem1->GetROM()+Memory::n88e+(a6-n88e0)*0x2000; break;
 		case eram0:  p = mem1->GetERAM(0)+0x6000; break;

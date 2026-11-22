@@ -9,6 +9,7 @@
 #include "resource.h"
 #include "pc88/pc88.h"
 #include "bpmon.h"
+#include "ioports.h"
 #include "misc.h"
 #include "winexapi.h"
 
@@ -39,7 +40,7 @@ namespace
 //	構築/消滅
 //
 BreakMonitor::BreakMonitor()
-: core(0), cursor(-1), editindex(-1)
+: core(0), iomode(false), cursor(-1), editindex(-1)
 {
 }
 
@@ -50,10 +51,11 @@ BreakMonitor::~BreakMonitor()
 // ---------------------------------------------------------------------------
 //	初期化
 //
-bool BreakMonitor::Init(WinCore* wincore)
+bool BreakMonitor::Init(WinCore* wincore, bool io)
 {
 	core = wincore;
-	if (!WinMonitor::Init(MAKEINTRESOURCE(IDD_BPMON), "MonitorBP", 70, 12))
+	iomode = io;
+	if (!WinMonitor::Init(MAKEINTRESOURCE(io ? IDD_IOBPMON : IDD_BPMON), io ? "MonitorIOBP" : "MonitorBP", io ? 80 : 70, 12))
 		return false;
 	SetUpdateTimer(500);
 	return true;
@@ -62,11 +64,25 @@ bool BreakMonitor::Init(WinCore* wincore)
 // ---------------------------------------------------------------------------
 //	テキスト更新。0行目は列見出し(毎フレーム書き直すので固定表示になる)
 //
+// 表示する行: この窓の種類 (I/O か、メモリ・実行か) のブレークポイントだけ (M88gn)。Lock の中で呼ぶ
+void BreakMonitor::BuildView()
+{
+	Debugger* dbg = core->GetDebugger();
+	view.clear();
+	for (int i = 0; i < dbg->GetBreakPointCount(); i++)
+	{
+		Debugger::BreakPoint bp;
+		if (dbg->GetBreakPoint(i, &bp) && bp.io == iomode)
+			view.push_back(i);
+	}
+}
+
 void BreakMonitor::UpdateText()
 {
 	core->Lock();
 	Debugger* dbg = core->GetDebugger();
-	int count = dbg->GetBreakPointCount();
+	BuildView();
+	int count = int(view.size());
 
 	SetLines(Max(1, count));
 	int rows = Max(0, GetHeight() - 1);
@@ -74,26 +90,59 @@ void BreakMonitor::UpdateText()
 
 	SetTxCol(0xc0c0c0);
 	SetBkCol(RGB(0, 0, 0x50));
-	Putf("%3s  %-4s  %-4s  %-4s  %c %c %c  %-7s  %s\n",
-		 "#", "CPU", "Addr", "Len", 'E', 'R', 'W', "Enabled", "Comment");
+	// I/O の窓 (M88gn): Port・Count、R = IN、W = OUT、E の列は使わない。名前の列はポートの用途
+	if (iomode)
+		Putf("%3s  %-4s  %-4s  %-4s  %c %c %c  %-7s  %-9s  %s\n",
+			 "#", "CPU", "Port", "Cnt", ' ', 'I', 'O', "Enabled", "Hits", "Name / Condition / Comment");
+	else
+		Putf("%3s  %-4s  %-4s  %-4s  %c %c %c  %-7s  %-9s  %s\n",
+			 "#", "CPU", "Addr", "Len", 'E', 'R', 'W', "Enabled", "Hits", "Condition / Comment");
 
 	for (int y = 0; y < rows; y++)
 	{
 		int index = top + y;
 		Debugger::BreakPoint bp;
-		if (index < count && dbg->GetBreakPoint(index, &bp))
+		if (index < count && dbg->GetBreakPoint(view[index], &bp))
 		{
-			SetBkCol(index == cursor ? RGB(0, 0, 0x70) : RGB(0, 0, 0x20));
+			SetBkCol(view[index] == cursor ? RGB(0, 0, 0x70) : RGB(0, 0, 0x20));
 			SetTxCol(bp.enabled ? 0xffffff : 0x808080);
-			Putf("%3d  %-4s  %.4x  %.4x  %c %c %c  %-7s  %s\n",
-				 index,
-				 bp.cpu == Debugger::cpu_sub ? "SUB" : "MAIN",
-				 bp.addr, bp.length,
-				 bp.exec  ? '*' : '-',
-				 bp.read  ? '*' : '-',
-				 bp.write ? '*' : '-',
-				 bp.enabled ? "on" : "off",
-				 bp.comment);
+			// 回数 (M88gn): 条件が成り立った回数。止める回数を決めていれば「回数/止める回数」
+			char hits[16];
+			if (bp.hitcount > 1)
+				wsprintf(hits, "%u/%u", bp.hits, bp.hitcount);
+			else
+				wsprintf(hits, "%u", bp.hits);
+			// 条件とコメント
+			char cc[160];
+			wsprintf(cc, "%s%s%s%s", bp.cond[0] ? "if " : "", bp.cond,
+					 (bp.cond[0] && bp.comment[0]) ? "  ; " : "", bp.comment);
+			if (iomode)
+			{
+				char port[8], name[96];
+				wsprintf(port, "  %.2x", bp.addr);
+				const char* pn = IOPortName(bp.cpu == Debugger::cpu_sub, bp.addr);
+				if (!pn[0])
+					pn = "(not connected)";		// M88 の本体では何もつながっていないポート
+				wsprintf(name, "%s%s%s", pn, (pn[0] && cc[0]) ? " / " : "", cc);
+				Putf("%3d  %-4s  %-4s  %.4x  %c %c %c  %-7s  %-9s  %s\n",
+					 index,
+					 bp.cpu == Debugger::cpu_sub ? "SUB" : "MAIN",
+					 port, bp.length, ' ',
+					 bp.read  ? '*' : '-',
+					 bp.write ? '*' : '-',
+					 bp.enabled ? "on" : "off",
+					 hits, name);
+			}
+			else
+				Putf("%3d  %-4s  %.4x  %.4x  %c %c %c  %-7s  %-9s  %s\n",
+					 index,
+					 bp.cpu == Debugger::cpu_sub ? "SUB" : "MAIN",
+					 bp.addr, bp.length,
+					 bp.exec  ? '*' : '-',
+					 bp.read  ? '*' : '-',
+					 bp.write ? '*' : '-',
+					 bp.enabled ? "on" : "off",
+					 hits, cc);
 		}
 		else
 		{
@@ -113,12 +162,14 @@ void BreakMonitor::OnClick(POINT p, bool dblclick)
 		return;		// 見出し行はクリック対象外
 
 	core->Lock();
-	int count = core->GetDebugger()->GetBreakPointCount();
+	BuildView();
+	int count = int(view.size());
 	core->Unlock();
 
-	int index = GetLine() + p.y - 1;
-	if (index < 0 || index >= count)
+	int row = GetLine() + p.y - 1;
+	if (row < 0 || row >= count)
 		return;
+	int index = view[row];
 
 	if (!dblclick)
 	{
@@ -152,7 +203,7 @@ void BreakMonitor::ToggleAttr(int index, int col)
 	{
 		switch (col)
 		{
-		case 'E': bp.exec    = !bp.exec;    break;
+		case 'E': if (!bp.io) bp.exec = !bp.exec; break;	// I/O は実行を使わない
 		case 'R': bp.read    = !bp.read;    break;
 		case 'W': bp.write   = !bp.write;   break;
 		case 'e': bp.enabled = !bp.enabled; break;
@@ -170,10 +221,9 @@ void BreakMonitor::DeleteSelected()
 	core->Lock();
 	Debugger* dbg = core->GetDebugger();
 	dbg->DeleteBreakPoint(cursor);
-	int count = dbg->GetBreakPointCount();
 	core->Unlock();
 
-	cursor = Min(cursor, count - 1);
+	cursor = -1;
 	Update();
 }
 
@@ -204,24 +254,30 @@ BOOL BreakMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 			DeleteSelected();
 			break;
 
+		// 全部の削除・有効・無効は、この窓の種類のものだけ (M88gn)
 		case IDM_BP_DELETEALL:
 			core->Lock();
-			core->GetDebugger()->DeleteAllBreakPoints();
+			BuildView();
+			for (int i = int(view.size()) - 1; i >= 0; i--)
+				core->GetDebugger()->DeleteBreakPoint(view[i]);
 			core->Unlock();
 			cursor = -1;
 			Update();
 			break;
 
 		case IDM_BP_ENABLEALL:
-			core->Lock();
-			core->GetDebugger()->EnableAllBreakPoints(true);
-			core->Unlock();
-			Update();
-			break;
-
 		case IDM_BP_DISABLEALL:
 			core->Lock();
-			core->GetDebugger()->EnableAllBreakPoints(false);
+			BuildView();
+			for (size_t i = 0; i < view.size(); i++)
+			{
+				Debugger::BreakPoint bp;
+				if (core->GetDebugger()->GetBreakPoint(view[i], &bp))
+				{
+					bp.enabled = LOWORD(wp) == IDM_BP_ENABLEALL;
+					core->GetDebugger()->SetBreakPoint(view[i], bp);
+				}
+			}
 			core->Unlock();
 			Update();
 			break;
@@ -273,7 +329,7 @@ void BreakMonitor::ShowEditDialog(int index)
 	// 日本語を入れるダイアログでは戻してから開く。
 	// WatchMonitor::ShowEditDialog と同じ
 	(*EnableIME)(GetHWnd(), true);
-	DialogBoxParam(GetHInst(), MAKEINTRESOURCE(IDD_BP_EDIT), GetHWnd(),
+	DialogBoxParam(GetHInst(), MAKEINTRESOURCE(iomode ? IDD_IOBP_EDIT : IDD_BP_EDIT), GetHWnd(),
 				   DLGPROC((void*)EDlgProcGate), (LPARAM)this);
 	(*EnableIME)(GetHWnd(), false);
 }
@@ -306,14 +362,28 @@ BOOL BreakMonitor::EDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 				CheckDlgButton(hdlg, IDC_BP_WRITE, bp.write ? BST_CHECKED : BST_UNCHECKED);
 				CheckDlgButton(hdlg, IDC_BP_ENABLED, bp.enabled ? BST_CHECKED : BST_UNCHECKED);
 				SetDlgItemText(hdlg, IDC_BP_COMMENT, bp.comment);
+				SetDlgItemText(hdlg, IDC_BP_COND, bp.cond);
+				SetDlgItemInt(hdlg, IDC_BP_HITCOUNT, bp.hitcount, false);
+				if (iomode)
+				{
+					wsprintf(buf, "%.2x", bp.addr);
+					SetDlgItemText(hdlg, IDC_BP_ADDR, buf);
+				}
 			}
 			else
 			{
-				SetDlgItemText(hdlg, IDC_BP_ADDR, "0000");
+				SetDlgItemText(hdlg, IDC_BP_ADDR, iomode ? "00" : "0000");
 				SetDlgItemText(hdlg, IDC_BP_LEN, "1");
-				CheckDlgButton(hdlg, IDC_BP_EXEC, BST_CHECKED);
+				SetDlgItemText(hdlg, IDC_BP_COND, "");
+				SetDlgItemInt(hdlg, IDC_BP_HITCOUNT, 0, false);
+				CheckDlgButton(hdlg, iomode ? IDC_BP_WRITE : IDC_BP_EXEC, BST_CHECKED);
 				CheckDlgButton(hdlg, IDC_BP_ENABLED, BST_CHECKED);
 				SetDlgItemText(hdlg, IDC_BP_COMMENT, "");
+			}
+			if (iomode)
+			{
+				SendDlgItemMessage(hdlg, IDC_BP_ADDR, EM_LIMITTEXT, 2, 0);	// ポートは 2 桁まで
+				UpdatePortLabel(hdlg);
 			}
 			SetFocus(GetDlgItem(hdlg, IDC_BP_ADDR));
 			SendDlgItemMessage(hdlg, IDC_BP_ADDR, EM_SETSEL, 0, -1);
@@ -321,18 +391,34 @@ BOOL BreakMonitor::EDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		return 0;
 
 	case WM_COMMAND:
+		// I/O (M88gn): ポートや CPU が変わったら説明を出し直す
+		if (iomode && ((LOWORD(wp) == IDC_BP_ADDR && HIWORD(wp) == EN_CHANGE)
+					   || (LOWORD(wp) == IDC_BP_SUBCPU && HIWORD(wp) == BN_CLICKED)))
+		{
+			UpdatePortLabel(hdlg);
+			return 0;
+		}
 		if (HIWORD(wp) == BN_CLICKED)
 		{
 			switch (LOWORD(wp))
 			{
 				char* dum;
 				char lenbuf[16];
+			case IDC_BP_PORTSEL:
+				ShowPortMenu(hdlg);
+				return 0;
+
+			case IDC_BP_CONDHELP:
+				MessageBox(hdlg, Debugger::CondHelp(), "Condition", MB_OK | MB_ICONINFORMATION);
+				return 0;
+
 			case IDOK:
 				GetDlgItemText(hdlg, IDC_BP_ADDR, buf, 5);
 				if (isxdigit((uint8) buf[0]))
 				{
 					Debugger::BreakPoint bp;
 					bp.addr = strtoul(buf, &dum, 16) & 0xffff;
+					bp.io = iomode;
 					bp.cpu = uint8(IsDlgButtonChecked(hdlg, IDC_BP_SUBCPU) == BST_CHECKED
 								   ? Debugger::cpu_sub : Debugger::cpu_main);
 					bp.exec = IsDlgButtonChecked(hdlg, IDC_BP_EXEC) == BST_CHECKED;
@@ -340,9 +426,34 @@ BOOL BreakMonitor::EDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 					bp.write = IsDlgButtonChecked(hdlg, IDC_BP_WRITE) == BST_CHECKED;
 					bp.enabled = IsDlgButtonChecked(hdlg, IDC_BP_ENABLED) == BST_CHECKED;
 					GetDlgItemText(hdlg, IDC_BP_COMMENT, bp.comment, sizeof(bp.comment));
+					// 条件と回数 (M88gn)。式の書き方が違えば閉じない
+					GetDlgItemText(hdlg, IDC_BP_COND, bp.cond, sizeof(bp.cond));
+					bp.hitcount = GetDlgItemInt(hdlg, IDC_BP_HITCOUNT, 0, false);
+					bp.hits = 0;
+					{
+						char err[128];
+						if (!Debugger::CheckCondition(bp.cond, err))
+						{
+							MessageBox(hdlg, err, "Condition", MB_OK | MB_ICONWARNING);
+							SetFocus(GetDlgItem(hdlg, IDC_BP_COND));
+							return 0;
+						}
+					}
 
 					GetDlgItemText(hdlg, IDC_BP_LEN, lenbuf, sizeof(lenbuf));
 					bp.length = isxdigit((uint8) lenbuf[0]) ? strtoul(lenbuf, &dum, 16) : 1;
+					if (bp.io)
+					{
+						bp.exec = false;
+						if (bp.length < 1)
+							bp.length = 1;
+						if (bp.addr + bp.length > 0x100)
+						{
+							MessageBox(hdlg, "I/O ポートは 00～FF です。", "Set Breakpoint", MB_OK | MB_ICONWARNING);
+							SetFocus(GetDlgItem(hdlg, IDC_BP_ADDR));
+							return 0;
+						}
+					}
 
 					core->Lock();
 					if (editindex >= 0)
@@ -367,6 +478,80 @@ BOOL BreakMonitor::EDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 	default:
 		return false;
 	}
+}
+
+// ---------------------------------------------------------------------------
+//	I/O: ポートを選ぶメニュー (分類ごと、説明付き)。選んだらポートの欄に入れ、
+//	サブ CPU のポートなら Sub CPU にチェックする (M88gn)
+//
+void BreakMonitor::ShowPortMenu(HWND hdlg)
+{
+	HMENU hmenu = CreatePopupMenu();
+	HMENU hsub = 0;
+	const char* group = 0;
+	for (int i = 0; i < nioports; i++)
+	{
+		const IOPortInfo& e = ioports[i];
+		if (!group || lstrcmp(group, e.group))
+		{
+			group = e.group;
+			hsub = CreatePopupMenu();
+			AppendMenu(hmenu, MF_POPUP | MF_STRING, (UINT_PTR) hsub, group);
+		}
+		char text[160];
+		// タブを使うとショートカットキーの欄として右に寄せられるので、空白でつなぐ
+		wsprintf(text, "%.2X   %s", e.port, e.desc);
+		AppendMenu(hsub, MF_STRING, 1 + i, text);
+	}
+
+	RECT r;
+	GetWindowRect(GetDlgItem(hdlg, IDC_BP_PORTSEL), &r);
+	int cmd = TrackPopupMenu(hmenu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_NONOTIFY,
+							 r.left, r.bottom, 0, hdlg, 0);
+	DestroyMenu(hmenu);			// 中のメニューもいっしょに消える
+	if (cmd < 1 || cmd > nioports)
+		return;
+
+	const IOPortInfo& e = ioports[cmd - 1];
+	char buf[8];
+	wsprintf(buf, "%.2x", e.port);
+	SetDlgItemText(hdlg, IDC_BP_ADDR, buf);
+	CheckDlgButton(hdlg, IDC_BP_SUBCPU, e.sub ? BST_CHECKED : BST_UNCHECKED);
+	UpdatePortLabel(hdlg);
+}
+
+// I/O: 入っているポートの説明を、追加の窓に出す
+void BreakMonitor::UpdatePortLabel(HWND hdlg)
+{
+	char buf[8];
+	char* dum;
+	GetDlgItemText(hdlg, IDC_BP_ADDR, buf, 4);
+	char text[200] = "";
+	if (isxdigit((uint8) buf[0]))
+	{
+		uint port = strtoul(buf, &dum, 16);
+		int sub = IsDlgButtonChecked(hdlg, IDC_BP_SUBCPU) == BST_CHECKED;
+		const char* desc = 0;
+		const char* other = 0;		// もう一方の CPU のポートの説明
+		for (int i = 0; i < nioports; i++)
+		{
+			if (ioports[i].port != port)
+				continue;
+			if (ioports[i].sub == sub)
+				desc = ioports[i].desc;
+			else
+				other = ioports[i].desc;
+		}
+		if (desc)
+			lstrcpyn(text, desc, sizeof(text));
+		else if (other)
+			// CPU の選び間違いに気付けるように、もう一方の CPU での用途も出す
+			wsprintf(text, "%s CPU のこのポートには何もつながっていません (%s CPU なら: %s)",
+					 sub ? "サブ" : "メイン", sub ? "メイン" : "サブ", other);
+		else
+			wsprintf(text, "%s CPU のこのポートには何もつながっていません (M88 の本体では)", sub ? "サブ" : "メイン");
+	}
+	SetDlgItemText(hdlg, IDC_BP_ADDRLABEL, text);
 }
 
 BOOL CALLBACK BreakMonitor::EDlgProcGate(HWND hwnd, UINT m, WPARAM w, LPARAM l)

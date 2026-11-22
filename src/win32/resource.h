@@ -27,6 +27,15 @@
 #define IDD_MEMORY                      132
 #define IDD_CODEMON                     133
 #define IDR_MENU_MEMORY                 133
+#define IDM_MEM_SUM_NONE                40379
+#define IDM_MEM_SUM_KOUGAKUSHA          40380
+#define IDM_MEM_SUM_ASCII               40381
+#define IDM_MEM_SUM_DEMPA               40382
+#define IDM_CODE_CYCLES                 40383
+#define IDM_MNEMMON                     40384
+#define IDM_MNEM_SORT_CODE              40385
+#define IDM_MNEM_SORT_CATEGORY          40386
+#define IDM_MNEM_LEGEND                 40387
 #define IDD_MEMORY_EDIT                 134
 #define IDR_MENU_DEBUG                  135
 #define IDD_BASMON                      136
@@ -349,6 +358,8 @@
 #define IDD_WATCH_EDIT                  149
 #define IDD_TRACEMON                    150
 #define IDR_MENU_TRACE                  151
+#define IDD_MNEMMON                     152
+#define IDR_MENU_MNEMONIC               153
 #define IDC_REG_EDITBOX                 1154
 #define IDC_REG_EDIT_TEXT               1155
 #define IDC_BP_ADDR                     1156
@@ -363,6 +374,33 @@
 #define IDC_WATCH_SUBCPU                1165
 #define IDC_WATCH_WORD                  1166
 #define IDC_WATCH_LABEL                 1167
+#define IDC_WATCH_BANK                  1168
+#define IDC_BP_IO                       1169
+#define IDC_RANGE_START                 1171
+#define IDC_RANGE_END                   1172
+#define IDC_BP_ADDRLABEL                1173
+#define IDC_BP_PORTSEL                  1174
+#define IDC_BP_COND                     1175
+#define IDC_BP_HITCOUNT                 1176
+#define IDC_BP_CONDHELP                 1177
+#define IDD_IOBPMON                     157
+#define IDD_IOBP_EDIT                   158
+#define IDM_IOBPMON                     40395
+#define IDM_MEM_0_N80                   40396
+#define IDM_MEM_0_N80SR                 40397
+#define IDM_MEM_6_N80SR                 40398
+#define IDM_MEM_6_N80SR1                40399
+#define IDD_MEM_RANGE                   154
+#define IDD_SUBLOGMON                   155
+#define IDR_MENU_SUBLOG                 156
+#define IDM_MEM_SAVERANGE               40388
+#define IDM_MEM_LOADRANGE               40389
+#define IDM_SUBLOGMON                   40390
+#define IDM_VIDEOMON                    40400
+#define IDM_SUBLOG_ENABLE               40391
+#define IDM_SUBLOG_HANDSHAKE            40392
+#define IDM_SUBLOG_CLEAR                40393
+#define IDM_SUBLOG_SAVE                 40394
 #define IDC_BP_COMMENT                  1170
 #define IDM_MEM_C_RAM                   40331
 #define IDM_MEM_C_GV0                   40332
@@ -408,9 +446,9 @@
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        152
-#define _APS_NEXT_COMMAND_VALUE         40379
-#define _APS_NEXT_CONTROL_VALUE         1171
+#define _APS_NEXT_RESOURCE_VALUE        159
+#define _APS_NEXT_COMMAND_VALUE         40401
+#define _APS_NEXT_CONTROL_VALUE         1178
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

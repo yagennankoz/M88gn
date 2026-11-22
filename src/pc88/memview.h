@@ -41,7 +41,10 @@ public:
 		gvram0	= Memory::mG0, 
 		gvram1	= Memory::mG1, 
 		gvram2	= Memory::mG2, 
-		tvram	= Memory::mTV, 
+		tvram	= Memory::mTV,
+		n80rom	= Memory::mN80,		// N80 ÉÇÅ[ÉhÇÃ ROM (M88gn)
+		n80srrom = Memory::mN80SR,	// N80 V2 (N80SR) ÇÃ ROM
+		n80sr1	= Memory::mN80SR1,	// N80SR ÇÃ ROM ÇÃ 8000-9FFF (6000-7FFF ÇÃêÿÇËë÷Ç¶êÊ)
 		sub		= -1
 	};
 	

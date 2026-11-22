@@ -1359,8 +1359,38 @@ inline uint Memory::GetHiBank(uint addr)
 	return mRAM;
 }
 
+// ---------------------------------------------------------------------------
+//	N80 モードで CPU がいま見ているバンク (M88gn)。UpdateN80R・UpdateN80G と同じ決め方。
+//	0000-7FFF は N80 / N80SR の ROM か拡張 RAM、GVRAM は 8000-BFFF に出る
+//
+uint Memory::GetN80RdBank(uint addr)
+{
+	if (addr < 0x8000)
+	{
+		if (((porte2 | (port31 >> 1)) & 1) && porte3 < erambanks)
+			return mERAM + porte3;
+		if (port33 & 0x80)
+			return (addr < 0x6000 || (port71 & 1)) ? mN80SR : mN80SR1;
+		// 6000-7FFF が N80 の拡張 ROM (erom[8]) のときも、見せる種類が無いので N80 と答える
+		return mN80;
+	}
+	if (addr < 0xc000)
+	{
+		if (port33 & 0x40)
+		{
+			if (port35 & 0x80)
+				return mALU;
+		}
+		else if (port5x < 3)
+			return mG0 + port5x;
+	}
+	return mRAM;
+}
+
 uint IFCALL Memory::GetRdBank(uint addr)
 {
+	if (n80mode)
+		return GetN80RdBank(addr);
 	if (addr < 0x8000)
 	{
 		if ((porte2 & 0x01) && (porte3 < erambanks))

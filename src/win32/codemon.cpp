@@ -13,261 +13,17 @@
 #include "winvars.h"
 #include "88config.h"
 #include "dpi.h"
+#include "mnemmon.h"
+#include "memmon.h"
+#include "dbgbuttons.h"
 
 using namespace PC8801;
-
-#ifndef WM_DPICHANGED
-#define WM_DPICHANGED	0x02e0
-#endif
-#ifndef SPI_GETFLATMENU
-#define SPI_GETFLATMENU		0x1022
-#endif
-#ifndef COLOR_MENUHILIGHT
-#define COLOR_MENUHILIGHT	29
-#define COLOR_MENUBAR		30
-#endif
-#ifndef WM_NCMOUSELEAVE
-#define WM_NCMOUSELEAVE	0x02a2
-#endif
-
-enum { tiptimerid = 0x4d42, tipdelay = 400 };
-
-// ---------------------------------------------------------------------------
-//	メニューバーの Pause/Play/Step の絵 (M88gn)
-//	Visual Studio のデバッグのツールバーと同じ意味の形を、16x16 の格子の座標で描く。
-//	4 倍の大きさで白黒に描いてから縮め (重なった割合を色の濃さにする)、縁を滑らかにする
-//
-namespace
-{
-	enum { iconunit = 16, iconss = 4 };
-
-	struct ButtonDef
-	{
-		uint id;
-		const char* name;
-		COLORREF color;		// 主な形の色 (part 0)。part 1 (点) はいつも濃い灰色
-	};
-	const ButtonDef buttondefs[] =
-	{
-		{ IDM_DBG_PAUSE,    "Pause",     RGB(0x00, 0x53, 0x9c) },
-		{ IDM_DBG_PLAY,     "Play",      RGB(0x38, 0x8a, 0x34) },
-		{ IDM_DBG_STEPIN,   "Step In",   RGB(0x00, 0x53, 0x9c) },
-		{ IDM_DBG_STEPOVER, "Step Over", RGB(0x00, 0x53, 0x9c) },
-		{ IDM_DBG_STEPOUT,  "Step Out",  RGB(0x00, 0x53, 0x9c) },
-	};
-	const COLORREF dotcolor = RGB(0x42, 0x42, 0x42);
-	const COLORREF graycolor = RGB(0xa0, 0xa0, 0xa0);
-
-	const ButtonDef* FindButton(uint id)
-	{
-		for (int i = 0; i < sizeof(buttondefs) / sizeof(buttondefs[0]); i++)
-			if (buttondefs[i].id == id)
-				return &buttondefs[i];
-		return 0;
-	}
-
-	// 格子の座標 (16 で 1 辺) を描く DC の座標に
-	struct IconPen
-	{
-		double u;
-		int X(double x) const { return int(x * u + 0.5); }
-	};
-
-	void IconPolygon(HDC dc, const IconPen& p, const double* xy, int n)
-	{
-		POINT pt[8];
-		for (int i = 0; i < n; i++)
-			pt[i].x = p.X(xy[i * 2]), pt[i].y = p.X(xy[i * 2 + 1]);
-		Polygon(dc, pt, n);
-	}
-
-	void IconDot(HDC dc, const IconPen& p, double cx, double cy, double r)
-	{
-		Ellipse(dc, p.X(cx - r), p.X(cy - r), p.X(cx + r), p.X(cy + r));
-	}
-
-	// part 0 = 色の付いた形、part 1 = 点 (ステップの 3 つだけ)。白で描く
-	void DrawIconPart(HDC dc, uint id, int part, const IconPen& p)
-	{
-		LOGBRUSH lb = { BS_SOLID, RGB(255, 255, 255), 0 };
-		HPEN thick = ExtCreatePen(PS_GEOMETRIC | PS_SOLID | PS_ENDCAP_FLAT | PS_JOIN_MITER,
-								  p.X(2.0), &lb, 0, 0);
-		HPEN nopen = (HPEN) GetStockObject(NULL_PEN);
-		HBRUSH white = (HBRUSH) GetStockObject(WHITE_BRUSH);
-		HGDIOBJ oldpen = SelectObject(dc, nopen);
-		HGDIOBJ oldbrush = SelectObject(dc, white);
-
-		if (part == 1)
-		{
-			if (id == IDM_DBG_STEPIN || id == IDM_DBG_STEPOVER || id == IDM_DBG_STEPOUT)
-				IconDot(dc, p, 8, 13.5, 2);
-		}
-		else switch (id)
-		{
-		case IDM_DBG_PAUSE:
-			{
-				RECT r1 = { p.X(3.5), p.X(2.5), p.X(6.5), p.X(13.5) };
-				RECT r2 = { p.X(9.5), p.X(2.5), p.X(12.5), p.X(13.5) };
-				FillRect(dc, &r1, white);
-				FillRect(dc, &r2, white);
-			}
-			break;
-
-		case IDM_DBG_PLAY:
-			{
-				static const double tri[] = { 4, 2, 14, 8, 4, 14 };
-				IconPolygon(dc, p, tri, 3);
-			}
-			break;
-
-		case IDM_DBG_STEPIN:		// 点に向かって下りる矢印
-			{
-				SelectObject(dc, thick);
-				MoveToEx(dc, p.X(8), p.X(0.5), 0);
-				LineTo(dc, p.X(8), p.X(7));
-				SelectObject(dc, nopen);
-				static const double head[] = { 4.5, 6, 11.5, 6, 8, 10 };
-				IconPolygon(dc, p, head, 3);
-			}
-			break;
-
-		case IDM_DBG_STEPOVER:		// 点をまたぐ弧の矢印
-			{
-				SelectObject(dc, thick);
-				int olddir = SetArcDirection(dc, AD_CLOCKWISE);
-				Arc(dc, p.X(2.5), p.X(3), p.X(13.5), p.X(14),
-					p.X(2.5), p.X(8.5), p.X(13.5), p.X(8.5));
-				SetArcDirection(dc, olddir);
-				SelectObject(dc, nopen);
-				static const double head[] = { 9.5, 7.5, 16, 7.5, 12.75, 11.5 };
-				IconPolygon(dc, p, head, 3);
-			}
-			break;
-
-		case IDM_DBG_STEPOUT:		// 点から上がる矢印
-			{
-				SelectObject(dc, thick);
-				MoveToEx(dc, p.X(8), p.X(10.5), 0);
-				LineTo(dc, p.X(8), p.X(5));
-				SelectObject(dc, nopen);
-				static const double head[] = { 4.5, 6, 11.5, 6, 8, 1.5 };
-				IconPolygon(dc, p, head, 3);
-			}
-			break;
-		}
-		SelectObject(dc, oldpen);
-		SelectObject(dc, oldbrush);
-		DeleteObject(thick);
-	}
-
-	// 32bit の DIB (上から下へ) を作る
-	HBITMAP CreateDib(HDC dc, int w, int h, void** bits)
-	{
-		BITMAPINFO bi;
-		memset(&bi, 0, sizeof(bi));
-		bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-		bi.bmiHeader.biWidth = w;
-		bi.bmiHeader.biHeight = -h;
-		bi.bmiHeader.biPlanes = 1;
-		bi.bmiHeader.biBitCount = 32;
-		bi.bmiHeader.biCompression = BI_RGB;
-		return CreateDIBSection(dc, &bi, DIB_RGB_COLORS, bits, 0, 0);
-	}
-
-	// size x size の絵を、bits (32bit、幅 pitch 画素) の (ox, oy) に重ねる
-	void CompositeIcon(HDC dc, uint id, int size, bool gray, uint32* bits, int pitch, int ox, int oy)
-	{
-		int big = size * iconss;
-		void* mbits;
-		HBITMAP mbmp = CreateDib(dc, big, big, &mbits);
-		if (!mbmp)
-			return;
-		HDC mdc = CreateCompatibleDC(dc);
-		HGDIOBJ old = SelectObject(mdc, mbmp);
-		IconPen pen = { double(big) / iconunit };
-		const ButtonDef* def = FindButton(id);
-
-		for (int part = 0; part < 2; part++)
-		{
-			RECT all = { 0, 0, big, big };
-			FillRect(mdc, &all, (HBRUSH) GetStockObject(BLACK_BRUSH));
-			DrawIconPart(mdc, id, part, pen);
-			GdiFlush();
-
-			COLORREF c = gray ? graycolor : part ? dotcolor : def->color;
-			int cr = GetRValue(c), cg = GetGValue(c), cb = GetBValue(c);
-			const uint32* m = (const uint32*) mbits;
-			for (int y = 0; y < size; y++)
-			{
-				for (int x = 0; x < size; x++)
-				{
-					int sum = 0;
-					for (int sy = 0; sy < iconss; sy++)
-						for (int sx = 0; sx < iconss; sx++)
-							sum += m[(y * iconss + sy) * big + x * iconss + sx] & 0xff;
-					if (!sum)
-						continue;
-					int a = sum / (iconss * iconss);		// 0～255
-					uint32& d = bits[(oy + y) * pitch + ox + x];
-					int dr = (d >> 16) & 0xff, dg = (d >> 8) & 0xff, db = d & 0xff;
-					dr += (cr - dr) * a / 255;
-					dg += (cg - dg) * a / 255;
-					db += (cb - db) * a / 255;
-					d = (dr << 16) | (dg << 8) | db;
-				}
-			}
-		}
-		SelectObject(mdc, old);
-		DeleteDC(mdc);
-		DeleteObject(mbmp);
-	}
-
-	// メニューバーの背景と項目の状態を、テーマ (uxtheme) で描く。テーマが無ければシステムの色
-	typedef HANDLE (WINAPI* OpenThemeDataFn)(HWND, LPCWSTR);
-	typedef HRESULT (WINAPI* DrawThemeBackgroundFn)(HANDLE, HDC, int, int, const RECT*, const RECT*);
-	typedef HRESULT (WINAPI* CloseThemeDataFn)(HANDLE);
-
-	enum
-	{
-		MENU_BARBACKGROUND_ = 7, MB_ACTIVE_ = 1, MB_INACTIVE_ = 2,
-		MENU_BARITEM_ = 8, MBI_HOT_ = 2, MBI_PUSHED_ = 3,
-	};
-
-	void DrawMenuBarBack(HWND hwnd, HDC dc, const RECT& r, bool active, bool hot, bool pushed)
-	{
-		static HMODULE uxtheme = LoadLibrary("uxtheme.dll");
-		static OpenThemeDataFn open = uxtheme ? (OpenThemeDataFn) GetProcAddress(uxtheme, "OpenThemeData") : 0;
-		static DrawThemeBackgroundFn draw = uxtheme ? (DrawThemeBackgroundFn) GetProcAddress(uxtheme, "DrawThemeBackground") : 0;
-		static CloseThemeDataFn close = uxtheme ? (CloseThemeDataFn) GetProcAddress(uxtheme, "CloseThemeData") : 0;
-
-		HANDLE theme = (open && draw && close) ? open(hwnd, L"MENU") : 0;
-		if (theme)
-		{
-			draw(theme, dc, MENU_BARBACKGROUND_, active ? MB_ACTIVE_ : MB_INACTIVE_, &r, 0);
-			if (hot || pushed)
-				draw(theme, dc, MENU_BARITEM_, pushed ? MBI_PUSHED_ : MBI_HOT_, &r, 0);
-			close(theme);
-			return;
-		}
-		BOOL flat = FALSE;
-		SystemParametersInfo(SPI_GETFLATMENU, 0, &flat, 0);
-		FillRect(dc, &r, GetSysColorBrush((hot || pushed) ? COLOR_MENUHILIGHT : flat ? COLOR_MENUBAR : COLOR_MENU));
-	}
-
-	int ButtonIconSize(HWND hwnd)
-	{
-		return MulDiv(16, Dpi::GetForWindow(hwnd), 96);
-	}
-}
-
 
 // ---------------------------------------------------------------------------
 //	構築/消滅
 //
 CodeMonitor::CodeMonitor()
-: core(0), pcfollow(true), lasta0(MemoryViewer::mainram), dbgbuttons(-1),
-  inlayoutmenu(false), menulayoutwidth(-1),
-  hwndtip(0), tipid(0), tipshown(false), tiptracking(false)
+: core(0), pcfollow(true), mnemmon(0), memmon(0), showcycles(true), lasta0(MemoryViewer::mainram)
 {
 }
 
@@ -278,6 +34,7 @@ CodeMonitor::~CodeMonitor()
 bool CodeMonitor::Init(WinCore* wincore)
 {
 	core = wincore;
+	buttons.Init(wincore);
 	// 行頭に PC マーカ/BP マーカ用の1文字を足すため、既定カラム数は
 	// 42 ではなく 44 にする
 	if (!MemViewMonitor::Init(MAKEINTRESOURCE(IDD_CODEMON), wincore, "MonitorCode", 44, 24))
@@ -297,12 +54,14 @@ void CodeMonitor::LoadMonitorConfig()
 {
 	MemViewMonitor::LoadMonitorConfig();
 	pcfollow = GetPrivateProfileInt("MonitorCode", "PCFollow", 1, PC8801::GetM88IniPath()) != 0;
+	showcycles = GetPrivateProfileInt("MonitorCode", "Cycles", 1, PC8801::GetM88IniPath()) != 0;
 }
 
 void CodeMonitor::SaveMonitorConfig()
 {
 	MemViewMonitor::SaveMonitorConfig();
 	WritePrivateProfileString("MonitorCode", "PCFollow", pcfollow ? "1" : "0", PC8801::GetM88IniPath());
+	WritePrivateProfileString("MonitorCode", "Cycles", showcycles ? "1" : "0", PC8801::GetM88IniPath());
 }
 
 // ---------------------------------------------------------------------------
@@ -437,6 +196,8 @@ void CodeMonitor::UpdateCaption()
 	case MemoryViewer::sub:		bank = "SUB"; break;
 	case MemoryViewer::n88rom:	bank = "MAIN - N88 ROM"; break;
 	case MemoryViewer::nrom:	bank = "MAIN - N ROM"; break;
+	case MemoryViewer::n80rom:	bank = "MAIN - N80 ROM"; break;
+	case MemoryViewer::n80srrom: bank = GetShown6() == MemoryViewer::n80sr1 ? "MAIN - N80SR ROM (6000=8000)" : "MAIN - N80SR ROM"; break;
 	case MemoryViewer::eram0:	bank = "MAIN - ERAM0"; break;
 	case MemoryViewer::eram1:	bank = "MAIN - ERAM1"; break;
 	case MemoryViewer::eram2:	bank = "MAIN - ERAM2"; break;
@@ -462,276 +223,7 @@ void CodeMonitor::SetBank()
 void CodeMonitor::Start()
 {
 	UpdateCaption();
-	SetOwnerDrawButtons();
-	dbgbuttons = -1;
-	UpdateDebugButtons();
-	menulayoutwidth = -1;
-	LayoutMenuBar();
-}
-
-// ---------------------------------------------------------------------------
-//	メニューバーの Pause/Play/Step を自分で描く項目にし、ツールチップを作る (M88gn)。
-//	.rc の字は、ここで外すまでの控え。窓を開くたびにメニューは .rc から作り直されるので、
-//	開くたびに呼ぶ。DPI が変わったときも呼ぶ (項目の大きさを測り直させる)
-//
-void CodeMonitor::SetOwnerDrawButtons()
-{
-	HWND hwnd = GetHWnd();
-	HMENU hmenu = hwnd ? GetMenu(hwnd) : 0;
-	if (!hmenu)
-		return;
-
-	// 項目の種類を書き換えるだけでは、Windows は前に測った幅 (字の幅) を使い続ける
-	// (WM_MEASUREITEM が最初の項目にしか来ない) ので、いったん外して入れ直す。
-	// 最初の項目 (Pause) は右寄せ (MFT_RIGHTJUSTIFY)。折り返し (MFT_MENUBREAK) は LayoutMenuBar が付け直す
-	for (int i = 0; i < sizeof(buttondefs) / sizeof(buttondefs[0]); i++)
-		RemoveMenu(hmenu, buttondefs[i].id, MF_BYCOMMAND);
-	for (int i = 0; i < sizeof(buttondefs) / sizeof(buttondefs[0]); i++)
-	{
-		MENUITEMINFO mii;
-		memset(&mii, 0, sizeof(mii));
-		mii.cbSize = sizeof(mii);
-		mii.fMask = MIIM_FTYPE | MIIM_ID | MIIM_DATA;
-		mii.fType = MFT_OWNERDRAW | (i == 0 ? MFT_RIGHTJUSTIFY : 0);
-		mii.wID = buttondefs[i].id;
-		InsertMenuItem(hmenu, GetMenuItemCount(hmenu), TRUE, &mii);
-	}
-	DrawMenuBar(hwnd);
-	menulayoutwidth = -1;
-	dbgbuttons = -1;
-
-	if (!hwndtip)
-	{
-		hwndtip = CreateWindowEx(WS_EX_TOPMOST, TOOLTIPS_CLASS, 0, WS_POPUP | TTS_NOPREFIX | TTS_ALWAYSTIP,
-								 CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-								 hwnd, 0, GetHInst(), 0);
-		if (hwndtip)
-		{
-			TOOLINFO ti;
-			memset(&ti, 0, sizeof(ti));
-			ti.cbSize = TTTOOLINFOA_V1_SIZE;
-			ti.uFlags = TTF_TRACK | TTF_ABSOLUTE;
-			ti.hwnd = hwnd;
-			ti.uId = 1;
-			ti.lpszText = (LPSTR) "";
-			SendMessage(hwndtip, TTM_ADDTOOL, 0, (LPARAM) &ti);
-		}
-	}
-	tipid = 0;
-	tipshown = false;
-}
-
-bool CodeMonitor::MeasureButton(MEASUREITEMSTRUCT* mis)
-{
-	if (mis->CtlType != ODT_MENU || !FindButton(mis->itemID))
-		return false;
-	int size = ButtonIconSize(GetHWnd());
-	mis->itemWidth = size;		// 左右の余白は Windows が足す
-	mis->itemHeight = size;
-	return true;
-}
-
-bool CodeMonitor::DrawButton(const DRAWITEMSTRUCT* dis)
-{
-	if (dis->CtlType != ODT_MENU || !FindButton(dis->itemID))
-		return false;
-
-	RECT r = dis->rcItem;
-	int w = r.right - r.left, h = r.bottom - r.top;
-	if (w <= 0 || h <= 0)
-		return true;
-
-	// 背景と絵を作ってから一度に写す (ちらつかないように)
-	void* bits;
-	HBITMAP bmp = CreateDib(dis->hDC, w, h, &bits);
-	if (!bmp)
-		return true;
-	HDC mdc = CreateCompatibleDC(dis->hDC);
-	HGDIOBJ old = SelectObject(mdc, bmp);
-
-	bool gray = (dis->itemState & (ODS_GRAYED | ODS_DISABLED)) != 0;
-	bool active = !(dis->itemState & ODS_INACTIVE);
-	bool pushed = !gray && (dis->itemState & ODS_SELECTED);
-	bool hot = !gray && (dis->itemState & ODS_HOTLIGHT);
-	RECT lr = { 0, 0, w, h };
-	DrawMenuBarBack(GetHWnd(), mdc, lr, active, hot, pushed);
-	GdiFlush();
-
-	int size = Min(ButtonIconSize(GetHWnd()), Min(w, h));
-	CompositeIcon(mdc, dis->itemID, size, gray, (uint32*) bits, w, (w - size) / 2, (h - size) / 2);
-
-	BitBlt(dis->hDC, r.left, r.top, w, h, mdc, 0, 0, SRCCOPY);
-	SelectObject(mdc, old);
-	DeleteDC(mdc);
-	DeleteObject(bmp);
-	return true;
-}
-
-// ---------------------------------------------------------------------------
-//	メニューバーの上でマウスが動いた (M88gn)。絵の項目に載って少したったらツールチップを出す。
-//	字は本体の Debug メニューの字 (ショートカットの表示が Alt+ / App+ に合う) から作る
-//
-void CodeMonitor::ButtonMouseMove(POINT screen)
-{
-	HWND hwnd = GetHWnd();
-	HMENU hmenu = GetMenu(hwnd);
-	int pos = hmenu ? MenuItemFromPoint(hwnd, hmenu, screen) : -1;
-	uint id = pos >= 0 ? GetMenuItemID(hmenu, pos) : 0;
-	if (!FindButton(id))
-		id = 0;
-
-	if (!tiptracking)
-	{
-		TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE | TME_NONCLIENT, hwnd, 0 };
-		tiptracking = !!TrackMouseEvent(&tme);
-	}
-	if (id == tipid)
-		return;
-	ShowButtonTip(false);
-	tipid = id;
-	if (id)
-		SetTimer(hwnd, tiptimerid, tipdelay, 0);
-}
-
-void CodeMonitor::ShowButtonTip(bool show)
-{
-	HWND hwnd = GetHWnd();
-	if (!show)
-	{
-		KillTimer(hwnd, tiptimerid);
-		if (hwndtip && tipshown)
-			SendMessage(hwndtip, TTM_TRACKACTIVATE, FALSE, 0);
-		tipshown = false;
-		return;
-	}
-	const ButtonDef* def = FindButton(tipid);
-	HMENU hmenu = GetMenu(hwnd);
-	if (!hwndtip || !def || !hmenu)
-		return;
-
-	// 本体の Debug メニューの字 ("Step &Over\tF10" など) からショートカットを取り出す
-	char text[128];
-	lstrcpyn(text, def->name, sizeof(text));
-	HWND owner = GetWindow(hwnd, GW_OWNER);
-	char label[128];
-	if (owner && GetMenuString(GetMenu(owner), def->id, label, sizeof(label), MF_BYCOMMAND) > 0)
-	{
-		char* tab = strchr(label, '\t');
-		if (tab && tab[1])
-			wsprintf(text, "%s (%s)", def->name, tab + 1);
-	}
-
-	TOOLINFO ti;
-	memset(&ti, 0, sizeof(ti));
-	ti.cbSize = TTTOOLINFOA_V1_SIZE;
-	ti.hwnd = hwnd;
-	ti.uId = 1;
-	ti.lpszText = text;
-	SendMessage(hwndtip, TTM_UPDATETIPTEXT, 0, (LPARAM) &ti);
-
-	int n = GetMenuItemCount(hmenu);
-	for (int pos = 0; pos < n; pos++)
-	{
-		if (GetMenuItemID(hmenu, pos) != tipid)
-			continue;
-		RECT r;
-		if (GetMenuItemRect(hwnd, hmenu, pos, &r))
-		{
-			SendMessage(hwndtip, TTM_TRACKPOSITION, 0, MAKELPARAM(r.left, r.bottom + 2));
-			SendMessage(hwndtip, TTM_TRACKACTIVATE, TRUE, (LPARAM) &ti);
-			tipshown = true;
-		}
-		break;
-	}
-}
-
-// ---------------------------------------------------------------------------
-//	メニューバーが 1 段に収まらないとき、Windows に任せると項目の途中で折り返すので、
-//	Pause の前 (MFT_MENUBREAK) で折り返す (M88gn)。折り返しを外して並べ直させ、
-//	最後の項目が最初の項目と違う段に来たら、Pause に折り返しを付ける
-//
-void CodeMonitor::LayoutMenuBar()
-{
-	HWND hwnd = GetHWnd();
-	if (!hwnd || inlayoutmenu)
-		return;
-	HMENU hmenu = GetMenu(hwnd);
-	if (!hmenu)
-		return;
-
-	RECT wr;
-	GetWindowRect(hwnd, &wr);
-	int width = wr.right - wr.left;
-	if (width == menulayoutwidth)
-		return;
-	menulayoutwidth = width;
-
-	int n = GetMenuItemCount(hmenu);
-	int pos;
-	for (pos = 0; pos < n; pos++)
-		if (GetMenuItemID(hmenu, pos) == IDM_DBG_PAUSE)
-			break;
-	if (pos >= n)
-		return;
-
-	inlayoutmenu = true;
-
-	MENUITEMINFO mii;
-	memset(&mii, 0, sizeof(mii));
-	mii.cbSize = sizeof(mii);
-	mii.fMask = MIIM_FTYPE;
-	GetMenuItemInfo(hmenu, pos, TRUE, &mii);
-	bool hadbreak = (mii.fType & MFT_MENUBREAK) != 0;
-
-	// 折り返しを外して並べ直す (DrawMenuBar の中で窓の枠を計算し直すので、すぐに位置が取れる)
-	if (hadbreak)
-	{
-		mii.fType &= ~MFT_MENUBREAK;
-		SetMenuItemInfo(hmenu, pos, TRUE, &mii);
-		DrawMenuBar(hwnd);
-	}
-	RECT first, last;
-	bool wrap = GetMenuItemRect(hwnd, hmenu, 0, &first) && GetMenuItemRect(hwnd, hmenu, n - 1, &last)
-		&& last.top != first.top;
-	if (wrap)
-	{
-		mii.fType |= MFT_MENUBREAK;
-		SetMenuItemInfo(hmenu, pos, TRUE, &mii);
-	}
-	if (wrap || hadbreak)
-		DrawMenuBar(hwnd);
-
-	inlayoutmenu = false;
-}
-
-// ---------------------------------------------------------------------------
-//	メニューバーの Pause/Play/Step In/Step Over/Step Out (M88gn)
-//	本体の Debug メニューと同じ条件で押せる・押せないを決める。メニューバーの項目は
-//	開くことが無いので WM_INITMENU では合わせられない。書き直しのたびに調べ、
-//	変わったときだけ描き直す
-//
-void CodeMonitor::UpdateDebugButtons()
-{
-	HWND hwnd = GetHWnd();
-	if (!hwnd || !core)
-		return;
-	HMENU hmenu = GetMenu(hwnd);
-	if (!hmenu)
-		return;
-
-	bool stopped = core->IsStopped();
-	bool stepping = core->IsStepping();
-	int state = (stopped ? 1 : 0) | (stepping ? 2 : 0);
-	if (state == dbgbuttons)
-		return;
-	dbgbuttons = state;
-
-	EnableMenuItem(hmenu, IDM_DBG_PAUSE, !stopped ? MF_ENABLED : MF_GRAYED);
-	EnableMenuItem(hmenu, IDM_DBG_PLAY, (stopped || stepping) ? MF_ENABLED : MF_GRAYED);
-	EnableMenuItem(hmenu, IDM_DBG_STEPIN, stopped ? MF_ENABLED : MF_GRAYED);
-	EnableMenuItem(hmenu, IDM_DBG_STEPOVER, stopped ? MF_ENABLED : MF_GRAYED);
-	EnableMenuItem(hmenu, IDM_DBG_STEPOUT, stopped ? MF_ENABLED : MF_GRAYED);
-	DrawMenuBar(hwnd);
+	buttons.Attach(GetHWnd(), GetHInst());
 }
 
 // ---------------------------------------------------------------------------
@@ -740,6 +232,13 @@ void CodeMonitor::UpdateDebugButtons()
 BOOL CodeMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 {
 	POINT p;
+
+	// メニューバーの Pause/Play/Step のボタン (M88gn)
+	if (buttons.Message(hdlg, msg, wp, lp))
+	{
+		SetWindowLongPtr(hdlg, DWLP_MSGRESULT, TRUE);
+		return TRUE;
+	}
 
 	switch (msg)
 	{
@@ -754,89 +253,18 @@ BOOL CodeMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 			pcfollow = !pcfollow;
 			break;
 
-		// メニューバーの Pause/Play/Step は本体の Debug メニューと同じ処理に回す (M88gn)
-		case IDM_DBG_PAUSE:
-		case IDM_DBG_PLAY:
-		case IDM_DBG_STEPIN:
-		case IDM_DBG_STEPOVER:
-		case IDM_DBG_STEPOUT:
-			{
-				HWND owner = GetWindow(hdlg, GW_OWNER);
-				if (owner)
-					PostMessage(owner, WM_COMMAND, LOWORD(wp), 0);
-			}
-			return TRUE;
+		case IDM_CODE_CYCLES:
+			showcycles = !showcycles;
+			SaveMonitorConfig();
+			Update();
+			break;
+
 		}
 		break;
 
 	case WM_INITMENU:
 		CheckMenuItem((HMENU) wp, IDM_CODE_PCFOLLOW, pcfollow ? MF_CHECKED : MF_UNCHECKED);
-		break;
-
-	case WM_SIZE:
-		LayoutMenuBar();
-		break;
-
-	case WM_DPICHANGED:
-		menulayoutwidth = -1;		// メニューの字の大きさが変わる (この後の WM_SIZE で並べ直す)
-		SetOwnerDrawButtons();		// 絵の大きさを測り直させる
-		break;
-
-	// メニューバーの Pause/Play/Step の絵とツールチップ (M88gn)
-	case WM_MEASUREITEM:
-		if (MeasureButton((MEASUREITEMSTRUCT*) lp))
-		{
-			SetWindowLongPtr(hdlg, DWLP_MSGRESULT, TRUE);
-			return TRUE;
-		}
-		break;
-
-	case WM_DRAWITEM:
-		if (DrawButton((const DRAWITEMSTRUCT*) lp))
-		{
-			SetWindowLongPtr(hdlg, DWLP_MSGRESULT, TRUE);
-			return TRUE;
-		}
-		break;
-
-	case WM_NCMOUSEMOVE:
-		{
-			POINT pt = { (short) LOWORD(lp), (short) HIWORD(lp) };
-			if (wp == HTMENU)
-				ButtonMouseMove(pt);
-			else if (tipid)
-				ShowButtonTip(false), tipid = 0;
-		}
-		break;
-
-	case WM_NCMOUSELEAVE:
-		tiptracking = false;
-		ShowButtonTip(false);
-		tipid = 0;
-		break;
-
-	case WM_MOUSEMOVE:
-	case WM_NCLBUTTONDOWN:
-	case WM_ENTERMENULOOP:
-		if (tipid)
-			ShowButtonTip(false), tipid = 0;
-		break;
-
-	case WM_TIMER:
-		if (wp == tiptimerid)
-		{
-			KillTimer(hdlg, tiptimerid);
-			if (tipid)
-				ShowButtonTip(true);
-			return TRUE;
-		}
-		break;
-
-	case WM_DESTROY:
-		hwndtip = 0;			// 持ち主の窓といっしょに壊れる
-		tipid = 0;
-		tipshown = false;
-		tiptracking = false;
+		CheckMenuItem((HMENU) wp, IDM_CODE_CYCLES, showcycles ? MF_CHECKED : MF_UNCHECKED);
 		break;
 
 	case WM_LBUTTONDOWN:
@@ -845,6 +273,14 @@ BOOL CodeMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		if (GetTextPos(&p))
 			ToggleBreakAt(p);
 		break;
+
+	case WM_RBUTTONUP:
+		// 右クリックのメニュー (M88gn): ニーモニック表の該当行へ・飛び先へ・ブレークポイント
+		p.x = (short) LOWORD(lp);
+		p.y = (short) HIWORD(lp);
+		if (GetTextPos(&p))
+			ShowLineMenu(hdlg, p);
+		return TRUE;
 	}
 
 	BOOL r = MemViewMonitor::DlgProc(hdlg, msg, wp, lp);
@@ -865,6 +301,107 @@ BOOL CodeMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		}
 	}
 	return r;
+}
+
+// ---------------------------------------------------------------------------
+//	命令の飛び先 (JP nn・JP cc,nn・CALL nn・CALL cc,nn・JR・JR cc・DJNZ・RST)。
+//	命令に飛び先が書かれていなければ -1 (RET・JP (HL) など)
+//
+static int JumpTarget(uint addr, const uint8* b)
+{
+	uint op = b[0];
+	if (op == 0xc3 || op == 0xcd || (op & 0xc7) == 0xc2 || (op & 0xc7) == 0xc4)
+		return b[1] | (b[2] << 8);
+	if (op == 0x18 || op == 0x10 || op == 0x20 || op == 0x28 || op == 0x30 || op == 0x38)
+		return (addr + 2 + int8(b[1])) & 0xffff;
+	if ((op & 0xc7) == 0xc7)
+		return op & 0x38;
+	return -1;
+}
+
+// ---------------------------------------------------------------------------
+//	命令に書かれた 16 ビットの番地 (LD rr,nn・LD (nn),A・LD A,(nn)・LD HL,(nn)・LD (nn),HL・JP・CALL、
+//	ED の LD (nn),rr・LD rr,(nn)、DD/FD の LD IX,nn・LD (nn),IX・LD IX,(nn))。無ければ -1
+//
+static int OperandAddress(const uint8* b)
+{
+	uint op = b[0];
+	if ((op & 0xcf) == 0x01 || op == 0x22 || op == 0x2a || op == 0x32 || op == 0x3a
+		|| op == 0xc3 || op == 0xcd || (op & 0xc7) == 0xc2 || (op & 0xc7) == 0xc4)
+		return b[1] | (b[2] << 8);
+	if (op == 0xed && ((b[1] & 0xc7) == 0x43 || (b[1] & 0xc7) == 0x4b))
+		return b[2] | (b[3] << 8);
+	if ((op == 0xdd || op == 0xfd) && (b[1] == 0x21 || b[1] == 0x22 || b[1] == 0x2a))
+		return b[2] | (b[3] << 8);
+	return -1;
+}
+
+// ---------------------------------------------------------------------------
+//	右クリックのメニュー (M88gn)。p はクリックした文字の位置
+//
+void CodeMonitor::ShowLineMenu(HWND hdlg, POINT p)
+{
+	if (p.y < 0 || size_t(p.y) >= lineaddr.size())
+		return;
+	uint addr = lineaddr[p.y];
+	if (addr >= 0x10000)
+		return;
+
+	uint8 b[4];
+	for (int i = 0; i < 4; i++)
+		b[i] = GetBus()->Read8((addr + i) & 0xffff);
+	int target = JumpTarget(addr, b);
+
+	enum { cmd_mnemonic = 1, cmd_goto, cmd_break, cmd_memline, cmd_memoperand };
+	int operand = OperandAddress(b);
+	HMENU hmenu = CreatePopupMenu();
+	AppendMenu(hmenu, MF_STRING | (mnemmon ? 0 : MF_GRAYED), cmd_mnemonic, "Show in &Mnemonic Table");
+	char buf[32];
+	if (target >= 0)
+		wsprintf(buf, "&Go to %.4XH", target);
+	else
+		lstrcpy(buf, "&Go to Jump Target");
+	AppendMenu(hmenu, MF_STRING | (target >= 0 ? 0 : MF_GRAYED), cmd_goto, buf);
+	AppendMenu(hmenu, MF_SEPARATOR, 0, 0);
+	// メモリの窓へ (M88gn): この行の番地、命令に書かれた番地
+	wsprintf(buf, "Show %.4XH in M&emory", addr);
+	AppendMenu(hmenu, MF_STRING | (memmon ? 0 : MF_GRAYED), cmd_memline, buf);
+	if (operand >= 0)
+		wsprintf(buf, "Show &Operand %.4XH in Memory", operand);
+	else
+		lstrcpy(buf, "Show &Operand in Memory");
+	AppendMenu(hmenu, MF_STRING | (memmon && operand >= 0 ? 0 : MF_GRAYED), cmd_memoperand, buf);
+	AppendMenu(hmenu, MF_SEPARATOR, 0, 0);
+	AppendMenu(hmenu, MF_STRING, cmd_break, "Toggle &Breakpoint");
+
+	POINT sp;
+	GetCursorPos(&sp);
+	int cmd = TrackPopupMenu(hmenu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, sp.x, sp.y, 0, hdlg, 0);
+	DestroyMenu(hmenu);
+
+	switch (cmd)
+	{
+	case cmd_mnemonic:
+		mnemmon->ShowInstruction(b, GetHInst(), GetWindow(hdlg, GW_OWNER));
+		break;
+
+	case cmd_goto:
+		JumpTo(target);
+		Update();
+		break;
+
+	case cmd_break:
+		ToggleBreakAt(p);
+		break;
+
+	case cmd_memline:
+		memmon->ShowAddress(addr, GetHInst(), GetWindow(hdlg, GW_OWNER));
+		break;
+
+	case cmd_memoperand:
+		memmon->ShowAddress(operand, GetHInst(), GetWindow(hdlg, GW_OWNER));
+		break;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -947,6 +484,116 @@ static inline void ToHex(char** p, uint d)
 	*(*p)++ = hex[d & 15];
 }
 
+// ---------------------------------------------------------------------------
+//	命令のサイクル数 (Z80 の T ステート、M88gn)。PC-8801 のメモリのウェイトは含めない。
+//	条件で変わる命令は「成立したとき/しないとき」(JR cc・DJNZ・CALL cc・RET cc・LDIR など)。
+//	表の値: 下位 8 ビット = 成立したとき (または常に)、上位 8 ビット = 成立しないとき (0 なら同じ)
+//
+#define C2(t, n)	((t) | ((n) << 8))
+
+static const uint16 cyc_main[256] =
+{
+	 4,10, 7, 6, 4, 4, 7, 4,  4,11, 7, 6, 4, 4, 7, 4,		// 00
+	C2(13,8),10, 7, 6, 4, 4, 7, 4, 12,11, 7, 6, 4, 4, 7, 4,	// 10
+	C2(12,7),10,16, 6, 4, 4, 7, 4, C2(12,7),11,16, 6, 4, 4, 7, 4,	// 20
+	C2(12,7),10,13, 6,11,11,10, 4, C2(12,7),11,13, 6, 4, 4, 7, 4,	// 30
+	 4, 4, 4, 4, 4, 4, 7, 4,  4, 4, 4, 4, 4, 4, 7, 4,		// 40
+	 4, 4, 4, 4, 4, 4, 7, 4,  4, 4, 4, 4, 4, 4, 7, 4,		// 50
+	 4, 4, 4, 4, 4, 4, 7, 4,  4, 4, 4, 4, 4, 4, 7, 4,		// 60
+	 7, 7, 7, 7, 7, 7, 4, 7,  4, 4, 4, 4, 4, 4, 7, 4,		// 70
+	 4, 4, 4, 4, 4, 4, 7, 4,  4, 4, 4, 4, 4, 4, 7, 4,		// 80
+	 4, 4, 4, 4, 4, 4, 7, 4,  4, 4, 4, 4, 4, 4, 7, 4,		// 90
+	 4, 4, 4, 4, 4, 4, 7, 4,  4, 4, 4, 4, 4, 4, 7, 4,		// a0
+	 4, 4, 4, 4, 4, 4, 7, 4,  4, 4, 4, 4, 4, 4, 7, 4,		// b0
+	C2(11,5),10,10,10,C2(17,10),11, 7,11, C2(11,5),10,10, 0,C2(17,10),17, 7,11,	// c0
+	C2(11,5),10,10,11,C2(17,10),11, 7,11, C2(11,5), 4,10,11,C2(17,10), 0, 7,11,	// d0
+	C2(11,5),10,10,19,C2(17,10),11, 7,11, C2(11,5), 4,10, 4,C2(17,10), 0, 7,11,	// e0
+	C2(11,5),10,10, 4,C2(17,10),11, 7,11, C2(11,5), 6,10, 4,C2(17,10), 0, 7,11,	// f0
+};
+
+static uint CyclesED(uint op)
+{
+	if (op >= 0x40 && op < 0x80)
+	{
+		switch (op & 7)
+		{
+		case 0: case 1: return 12;					// IN r,(C) / OUT (C),r
+		case 2: return 15;							// SBC/ADC HL,rr
+		case 3: return 20;							// LD (nn),rr / LD rr,(nn)
+		case 4: case 6: return 8;					// NEG / IM
+		case 5: return 14;							// RETN / RETI
+		default:
+			if (op == 0x47 || op == 0x4f || op == 0x57 || op == 0x5f) return 9;	// LD I/R,A / LD A,I/R
+			if (op == 0x67 || op == 0x6f) return 18;	// RRD / RLD
+			return 8;
+		}
+	}
+	if (op >= 0xa0 && op < 0xc0 && (op & 7) < 4)
+		return op & 0x10 ? C2(21, 16) : 16;			// LDIR 等 / LDI 等
+	return 8;
+}
+
+// IX/IY を使う命令 (DD/FD の後の 1 バイト)。0 なら HL を使わない命令 (前置きは 4 足すだけ)
+static uint CyclesIndex(uint op)
+{
+	switch (op)
+	{
+	case 0x09: case 0x19: case 0x29: case 0x39: return 15;	// ADD IX,rr
+	case 0x21: return 14;									// LD IX,nn
+	case 0x22: case 0x2a: return 20;						// LD (nn),IX / LD IX,(nn)
+	case 0x23: case 0x2b: return 10;						// INC/DEC IX
+	case 0x24: case 0x25: case 0x2c: case 0x2d: return 8;	// INC/DEC IXH/IXL
+	case 0x26: case 0x2e: return 11;						// LD IXH/IXL,n
+	case 0x34: case 0x35: return 23;						// INC/DEC (IX+d)
+	case 0x36: return 19;									// LD (IX+d),n
+	case 0xe1: return 14;									// POP IX
+	case 0xe3: return 23;									// EX (SP),IX
+	case 0xe5: return 15;									// PUSH IX
+	case 0xe9: return 8;									// JP (IX)
+	case 0xf9: return 10;									// LD SP,IX
+	}
+	if (op >= 0x40 && op < 0xc0 && op != 0x76)
+	{
+		bool mem = (op & 7) == 6 || (op < 0x80 && (op & 0x38) == 0x30);
+		return mem ? 19 : 8;								// (IX+d) を使うか、IXH/IXL など
+	}
+	return 0;
+}
+
+uint CodeMonitor::GetCycles(uint a)
+{
+	uint op = GetBus()->Read8(a & 0xffff);
+	switch (op)
+	{
+	case 0xcb:
+		op = GetBus()->Read8((a + 1) & 0xffff);
+		if ((op & 7) != 6)
+			return 8;
+		return (op & 0xc0) == 0x40 ? 12 : 15;				// BIT n,(HL) / それ以外の (HL)
+
+	case 0xed:
+		return CyclesED(GetBus()->Read8((a + 1) & 0xffff));
+
+	case 0xdd: case 0xfd:
+		{
+			uint op2 = GetBus()->Read8((a + 1) & 0xffff);
+			if (op2 == 0xcb)
+			{
+				uint op4 = GetBus()->Read8((a + 3) & 0xffff);
+				return (op4 & 0xc0) == 0x40 ? 20 : 23;		// BIT n,(IX+d) / それ以外
+			}
+			if (op2 == 0xdd || op2 == 0xfd || op2 == 0xed)
+				return 4;									// 前置きが続く: この前置きは NOP 扱い
+			uint c = CyclesIndex(op2);
+			if (c)
+				return c;
+			c = cyc_main[op2];
+			return (c & 0xff) + 4 + ((c >> 8) ? ((c >> 8) + 4) << 8 : 0);
+		}
+	}
+	return cyc_main[op];
+}
+
 void CodeMonitor::UpdateText()
 {
 	if (AutoBank())
@@ -963,7 +610,7 @@ void CodeMonitor::UpdateText()
 	if (core->IsPaused())
 		pc = (subshown ? core->GetCPU2() : core->GetCPU1())->GetPC();
 
-	UpdateDebugButtons();
+	buttons.Update();
 
 	int rows = GetHeight();
 	lineaddr.resize(rows);
@@ -1002,7 +649,20 @@ void CodeMonitor::UpdateText()
 				ToHex(&ptr, GetBus()->Read8((a+c) & 0xffff));
 			for (; c<4; c++)
 				*ptr++ = ' ', *ptr++ = ' ';
-			Putf("%c %.4x: %.8s   %s\n", mark, a, buf, buf+8);
+			if (showcycles)
+			{
+				// 行の右に「; 12/7」のように出す (ニーモニックの幅をそろえる)
+				uint c = GetCycles(a);
+				Putf("%c %.4x: %.8s   %-20s", mark, a, buf, buf+8);
+				SetTxCol(0xa0c0a0);
+				if (c >> 8)
+					Putf("; %d/%d\n", c & 0xff, c >> 8);
+				else
+					Putf("; %d\n", c & 0xff);
+				SetTxCol(0xffffff);
+			}
+			else
+				Putf("%c %.4x: %.8s   %s\n", mark, a, buf, buf+8);
 			a = next;
 		}
 		else

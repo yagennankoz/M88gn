@@ -111,8 +111,12 @@ public:
 	PC8801::OPNIF*	GetOPN1() { return opn1; }
 	PC8801::OPNIF*	GetOPN2() { return opn2; }
 	Z80*			GetCPU1() { return &cpu1; }
+	IOBus*			GetBus1() { return &bus1; }		// デバッガの I/O のブレーク・ログ用 (M88gn)
+	IOBus*			GetBus2() { return &bus2; }
 	Z80*			GetCPU2() { return &cpu2; }
 	PC8801::PD8257*	GetDMAC() { return dmac; }
+	PC8801::Screen*	GetScreen() { return scrn; }		// デバッガの Video の窓用 (M88gn)
+	PC8801::CRTC*	GetCRTC() { return crtc; }
 	PC8801::Beep*	GetBEEP() { return beep; }
 	PC8801::Debugger* GetDebugger() { return &debugger; }
 	IMemoryAccess* GetMemoryAccess1() { return &mm1; }

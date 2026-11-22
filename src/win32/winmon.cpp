@@ -344,6 +344,7 @@ void WinMonitor::ClearText()
 		txtbuf[i].ch = ' ';
 		txtbuf[i].txcol = txcol;
 		txtbuf[i].bkcol = bkcol;
+		txtbuf[i].bkcol2 = bkcol;
 	}
 }
 
@@ -381,9 +382,26 @@ void WinMonitor::DrawMain(HDC _hdc, bool update)
 				for (n=x; n<width; n++)
 				{
 					if (   txtbuf[c+x].txcol != txtbuf[c+n].txcol
-						|| txtbuf[c+x].bkcol != txtbuf[c+n].bkcol)
+						|| txtbuf[c+x].bkcol != txtbuf[c+n].bkcol
+						|| txtbuf[c+n].bkcol2 != txtbuf[c+n].bkcol)
 						break;
 					buf[n-x] = txtbuf[c+n].ch;
+				}
+
+				// ¶‰E‚Å“h‚è•ª‚¯‚½‹ó”’ (M88gn)
+				if (n == x && txtbuf[c+x].bkcol2 != txtbuf[c+x].bkcol)
+				{
+					RECT r;
+					SetRect(&r, x * fontwidth, y, x * fontwidth + fontwidth / 2, y + fontheightpx);
+					HBRUSH hb = CreateSolidBrush(txtbuf[c+x].bkcol);
+					FillRect(hdc, &r, hb);
+					DeleteObject(hb);
+					SetRect(&r, x * fontwidth + fontwidth / 2, y, (x + 1) * fontwidth, y + fontheightpx);
+					hb = CreateSolidBrush(txtbuf[c+x].bkcol2);
+					FillRect(hdc, &r, hb);
+					DeleteObject(hb);
+					x++;
+					continue;
 				}
 
 				// ‘‚­
@@ -488,6 +506,7 @@ void WinMonitor::Puts(const char* text)
 				txtbufptr->ch = ' ';
 				txtbufptr->txcol = txcol;
 				txtbufptr->bkcol = bkcol;
+				txtbufptr->bkcol2 = bkcol;
 				txtbufptr++;
 			}
 			txp.x = 0, txp.y++;
@@ -531,11 +550,27 @@ void WinMonitor::Puts(const char* text)
 				txtbufptr->ch = c;
 				txtbufptr->txcol = txcol;
 				txtbufptr->bkcol = bkcol;
+				txtbufptr->bkcol2 = bkcol;
 				txtbufptr++;
 				txp.x++;
 			}
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+//	¶”¼•ª‚Æ‰E”¼•ª‚Å”wŒiF‚Ìˆá‚¤‹ó”’‚ð 1 •¶Žš‘‚­ (M88gn)
+//
+void WinMonitor::PutSplitSpace(COLORREF left, COLORREF right)
+{
+	if (txp.y >= height || txp.x >= width)
+		return;
+	txtbufptr->ch = ' ';
+	txtbufptr->txcol = txcol;
+	txtbufptr->bkcol = left;
+	txtbufptr->bkcol2 = right;
+	txtbufptr++;
+	txp.x++;
 }
 
 // ---------------------------------------------------------------------------

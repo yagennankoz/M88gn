@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <vector>
+
 #include "winmon.h"
 #include "wincore.h"
 #include "pc88/debugger.h"
@@ -22,7 +24,8 @@ public:
 	BreakMonitor();
 	~BreakMonitor();
 
-	bool Init(WinCore*);
+	// io: I/O ポートのブレークポイントの窓にする (M88gn)。そうでなければメモリ・実行の窓
+	bool Init(WinCore*, bool io = false);
 
 private:
 	void UpdateText();
@@ -40,7 +43,13 @@ private:
 	BOOL EDlgProc(HWND, UINT, WPARAM, LPARAM);
 	static BOOL CALLBACK EDlgProcGate(HWND, UINT, WPARAM, LPARAM);
 
+	void BuildView();				// 表示する行 (この窓の種類のブレークポイントの番号) を作る
+	void ShowPortMenu(HWND hdlg);	// I/O: ポートを選ぶメニュー
+	void UpdatePortLabel(HWND hdlg);	// I/O: 入っているポートの説明を出す
+
 	WinCore* core;
+	bool iomode;
+	std::vector<int> view;		// 行 → bplist の番号
 	int cursor;			// 選択中の行(bplist のインデックス。-1 = 未選択)
 	int editindex;		// 編集ダイアログの対象(-1 = 追加モード)
 };

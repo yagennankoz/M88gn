@@ -219,6 +219,7 @@ BEGIN
         MENUITEM "S&kip Interrupts while Stepping", IDM_DBG_SKIPINT
         MENUITEM SEPARATOR
         MENUITEM "Show &Breakpoints",           IDM_BPMON
+        MENUITEM "Show &I/O Breakpoints",       IDM_IOBPMON
         MENUITEM "Show &Watch",                 IDM_WATCHMON
         MENUITEM SEPARATOR
         MENUITEM "&Trace Execution",            IDM_DBG_TRACE
@@ -234,6 +235,9 @@ BEGIN
         MENUITEM "Show &OPN Register",          IDM_SOUNDMON
         MENUITEM "Show &Memory",                IDM_MEMMON
         MENUITEM "Show &Code",                  IDM_CODEMON
+        MENUITEM "Show M&nemonic Table",        IDM_MNEMMON
+        MENUITEM "Show Sub System &Log",        IDM_SUBLOGMON
+        MENUITEM "Show &Video",                 IDM_VIDEOMON
         MENUITEM "Show &Basic code",            IDM_BASMON
         MENUITEM "Show Out&port",               IDM_IOMON
         MENUITEM "&Load Monitor",               IDM_LOADMON
@@ -252,6 +256,8 @@ BEGIN
     POPUP "&Image"
     BEGIN
         MENUITEM "&Save...",                    IDM_MEM_SAVEIMAGE
+        MENUITEM "Save &Range...",              IDM_MEM_SAVERANGE
+        MENUITEM "&Load Range...",              IDM_MEM_LOADRANGE
         MENUITEM "&Clear",                      IDM_MEM_STATCLEAR
         MENUITEM SEPARATOR
         MENUITEM "&Read",                       IDM_MEM_READ
@@ -268,6 +274,8 @@ BEGIN
         MENUITEM "&RAM",                        IDM_MEM_0_RAM
         MENUITEM "N&88",                        IDM_MEM_0_N88
         MENUITEM "&N",                          IDM_MEM_0_N
+        MENUITEM "N8&0",                        IDM_MEM_0_N80
+        MENUITEM "N80S&R",                      IDM_MEM_0_N80SR
         MENUITEM "&Sub",                        IDM_MEM_0_SUB
         MENUITEM "ERAM&0",                      IDM_MEM_0_ERAM0
         MENUITEM "ERAM&1",                      IDM_MEM_0_ERAM1
@@ -281,6 +289,9 @@ BEGIN
         MENUITEM "E&1",                         IDM_MEM_6_E1
         MENUITEM "E&2",                         IDM_MEM_6_E2
         MENUITEM "E&3",                         IDM_MEM_6_E3
+        MENUITEM SEPARATOR
+        MENUITEM "N80SR (&6000)",               IDM_MEM_6_N80SR
+        MENUITEM "N80SR (&8000)",               IDM_MEM_6_N80SR1
     END
     POPUP "&c000"
     BEGIN
@@ -294,6 +305,18 @@ BEGIN
         MENUITEM "&RAM",                        IDM_MEM_F_RAM
         MENUITEM "&TVRAM",                      IDM_MEM_F_TVRAM
     END
+    POPUP "Check&sum"
+    BEGIN
+        MENUITEM "&None",                                IDM_MEM_SUM_NONE
+        MENUITEM "&1 çHäwé– (I/OÅEPiO)",                 IDM_MEM_SUM_KOUGAKUSHA
+        MENUITEM "&2 ÉAÉXÉLÅ[ (ASCIIÅELOGiN)",           IDM_MEM_SUM_ASCII
+        MENUITEM "&3 ìdîgêVï∑é– (É}ÉCÉRÉìBASICÉ}ÉKÉWÉì)", IDM_MEM_SUM_DEMPA
+    END
+    MENUITEM "Pause",                       IDM_DBG_PAUSE, HELP
+    MENUITEM "Play",                        IDM_DBG_PLAY
+    MENUITEM "Step In",                     IDM_DBG_STEPIN
+    MENUITEM "Step Over",                   IDM_DBG_STEPOVER
+    MENUITEM "Step Out",                    IDM_DBG_STEPOUT
 END
 
 IDR_MENU_CODE MENU 
@@ -304,6 +327,7 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "Go to &Address...\tCtrl+G",   IDM_MEM_GOTO
         MENUITEM "PC &Follow",                  IDM_CODE_PCFOLLOW
+        MENUITEM "Show &Cycles",                IDM_CODE_CYCLES
         MENUITEM SEPARATOR
         MENUITEM "E&xit",                       IDM_CLOSE
     END
@@ -314,6 +338,8 @@ BEGIN
         MENUITEM "&RAM",                        IDM_MEM_0_RAM
         MENUITEM "N&88",                        IDM_MEM_0_N88
         MENUITEM "&N",                          IDM_MEM_0_N
+        MENUITEM "N8&0",                        IDM_MEM_0_N80
+        MENUITEM "N80S&R",                      IDM_MEM_0_N80SR
         MENUITEM "&Sub",                        IDM_MEM_0_SUB
         MENUITEM "ERAM&0",                      IDM_MEM_0_ERAM0
         MENUITEM "ERAM&1",                      IDM_MEM_0_ERAM1
@@ -327,6 +353,9 @@ BEGIN
         MENUITEM "E&1",                         IDM_MEM_6_E1
         MENUITEM "E&2",                         IDM_MEM_6_E2
         MENUITEM "E&3",                         IDM_MEM_6_E3
+        MENUITEM SEPARATOR
+        MENUITEM "N80SR (&6000)",               IDM_MEM_6_N80SR
+        MENUITEM "N80SR (&8000)",               IDM_MEM_6_N80SR1
     END
     POPUP "&c000"
     BEGIN
@@ -393,6 +422,35 @@ BEGIN
         END
         MENUITEM SEPARATOR
         MENUITEM "E&xit",                       IDM_CLOSE
+    END
+END
+
+IDR_MENU_SUBLOG MENU
+BEGIN
+    POPUP "&Log"
+    BEGIN
+        MENUITEM "&Logging",                    IDM_SUBLOG_ENABLE
+        MENUITEM "Include &Handshake (FE/FF)",  IDM_SUBLOG_HANDSHAKE
+        MENUITEM SEPARATOR
+        MENUITEM "&Clear",                      IDM_SUBLOG_CLEAR
+        MENUITEM "&Save to File...",            IDM_SUBLOG_SAVE
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit",                       IDM_CLOSE
+    END
+END
+
+IDR_MENU_MNEMONIC MENU
+BEGIN
+    POPUP "&Sort"
+    BEGIN
+        MENUITEM "By &Code",                    IDM_MNEM_SORT_CODE
+        MENUITEM "By C&ategory",                IDM_MNEM_SORT_CATEGORY
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit",                       IDM_CLOSE
+    END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&Legend...",                  IDM_MNEM_LEGEND
     END
 END
 
@@ -843,6 +901,41 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,80,34,60,16
 END
 
+IDD_IOBPMON DIALOG  0, 0, 340, 220
+STYLE DS_SETFONT | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_VSCROLL | WS_SYSMENU | WS_THICKFRAME
+CAPTION "I/O Breakpoints"
+MENU IDR_MENU_BP
+FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN"
+BEGIN
+END
+
+IDD_IOBP_EDIT DIALOGEX 100, 100, 170, 182
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Set I/O Breakpoint"
+FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN", 0, 0, 0x0
+BEGIN
+    LTEXT           "Port (hex):",IDC_STATIC,5,10,45,8
+    EDITTEXT        IDC_BP_ADDR,52,8,22,12,ES_RIGHT | ES_AUTOHSCROLL
+    PUSHBUTTON      "Select...",IDC_BP_PORTSEL,78,8,40,12
+    DEFPUSHBUTTON   "Ok",IDOK,128,6,35,12
+    PUSHBUTTON      "Cancel",IDCANCEL,128,20,35,12
+    CONTROL         "Sub CPU (disk side)",IDC_BP_SUBCPU,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,5,26,90,10
+    CONTROL         "IN (read)",IDC_BP_READ,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,5,42,50,10
+    CONTROL         "OUT (write)",IDC_BP_WRITE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,60,42,55,10
+    LTEXT           "Count (hex):",IDC_STATIC,5,58,45,8
+    EDITTEXT        IDC_BP_LEN,52,56,22,12,ES_RIGHT | ES_AUTOHSCROLL
+    LTEXT           "",IDC_BP_ADDRLABEL,5,72,158,26
+    CONTROL         "Enabled",IDC_BP_ENABLED,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,5,100,60,10
+    LTEXT           "Comment:",IDC_STATIC,5,114,55,8
+    EDITTEXT        IDC_BP_COMMENT,5,124,158,12,ES_AUTOHSCROLL
+    LTEXT           "Condition:",IDC_STATIC,5,142,40,8
+    PUSHBUTTON      "?",IDC_BP_CONDHELP,148,139,15,12
+    EDITTEXT        IDC_BP_COND,5,152,158,12,ES_AUTOHSCROLL
+    LTEXT           "Hit count:",IDC_STATIC,5,168,40,8
+    EDITTEXT        IDC_BP_HITCOUNT,47,166,25,12,ES_RIGHT | ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           "(0 = every time)",IDC_STATIC,76,168,60,8
+END
+
 IDD_BPMON DIALOG  0, 0, 340, 220
 STYLE DS_SETFONT | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_VSCROLL | WS_SYSMENU | WS_THICKFRAME
 CAPTION "Breakpoints"
@@ -851,7 +944,7 @@ FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN"
 BEGIN
 END
 
-IDD_BP_EDIT DIALOGEX 100, 100, 140, 134
+IDD_BP_EDIT DIALOGEX 100, 100, 140, 172
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Set Breakpoint"
 FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN", 0, 0, 0x0
@@ -869,6 +962,12 @@ BEGIN
     CONTROL         "Enabled",IDC_BP_ENABLED,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,5,88,60,10
     LTEXT           "Comment:",IDC_STATIC,5,104,55,8
     EDITTEXT        IDC_BP_COMMENT,5,114,128,12,ES_AUTOHSCROLL
+    LTEXT           "Condition:",IDC_STATIC,5,132,40,8
+    PUSHBUTTON      "?",IDC_BP_CONDHELP,118,129,15,12
+    EDITTEXT        IDC_BP_COND,5,142,128,12,ES_AUTOHSCROLL
+    LTEXT           "Hit count:",IDC_STATIC,5,158,40,8
+    EDITTEXT        IDC_BP_HITCOUNT,47,156,25,12,ES_RIGHT | ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           "(0 = every time)",IDC_STATIC,76,158,60,8
 END
 
 IDD_REG_EDIT DIALOGEX 100, 100, 117, 39
@@ -880,6 +979,35 @@ BEGIN
     LTEXT           "",IDC_REG_EDIT_TEXT,5,10,34,8
     DEFPUSHBUTTON   "Ok",IDOK,75,6,35,12
     PUSHBUTTON      "Cancel",IDCANCEL,75,20,35,12
+END
+
+IDD_MEM_RANGE DIALOGEX 100, 100, 150, 48
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Memory Range"
+FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN", 0, 0, 0x0
+BEGIN
+    LTEXT           "Start (hex):",IDC_STATIC,5,10,45,8
+    EDITTEXT        IDC_RANGE_START,52,8,33,12,ES_RIGHT | ES_AUTOHSCROLL
+    LTEXT           "End (hex):",IDC_STATIC,5,28,45,8
+    EDITTEXT        IDC_RANGE_END,52,26,33,12,ES_RIGHT | ES_AUTOHSCROLL
+    DEFPUSHBUTTON   "Ok",IDOK,108,6,35,12
+    PUSHBUTTON      "Cancel",IDCANCEL,108,20,35,12
+END
+
+IDD_SUBLOGMON DIALOG  0, 0, 300, 200
+STYLE DS_SETFONT | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_VSCROLL | WS_SYSMENU | WS_THICKFRAME
+CAPTION "Sub System Log"
+MENU IDR_MENU_SUBLOG
+FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN"
+BEGIN
+END
+
+IDD_MNEMMON DIALOG  0, 0, 330, 300
+STYLE DS_SETFONT | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_VSCROLL | WS_SYSMENU | WS_THICKFRAME
+CAPTION "Mnemonic Table"
+MENU IDR_MENU_MNEMONIC
+FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN"
+BEGIN
 END
 
 IDD_TRACEMON DIALOG  0, 0, 400, 260
@@ -898,7 +1026,7 @@ FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN"
 BEGIN
 END
 
-IDD_WATCH_EDIT DIALOGEX 100, 100, 150, 90
+IDD_WATCH_EDIT DIALOGEX 100, 100, 150, 92
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Set Watch"
 FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN", 0, 0, 0x0
@@ -907,8 +1035,10 @@ BEGIN
     EDITTEXT        IDC_WATCH_ADDR,62,8,33,12,ES_RIGHT | ES_AUTOHSCROLL
     CONTROL         "Sub CPU",IDC_WATCH_SUBCPU,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,5,26,60,10
     CONTROL         "Word (2 bytes)",IDC_WATCH_WORD,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,5,40,90,10
-    LTEXT           "Label:",IDC_STATIC,5,56,55,8
-    EDITTEXT        IDC_WATCH_LABEL,62,54,80,12,ES_AUTOHSCROLL
+    LTEXT           "Bank:",IDC_STATIC,5,56,55,8
+    COMBOBOX        IDC_WATCH_BANK,62,54,80,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Label:",IDC_STATIC,5,74,55,8
+    EDITTEXT        IDC_WATCH_LABEL,62,72,80,12,ES_AUTOHSCROLL
     DEFPUSHBUTTON   "Ok",IDOK,108,6,35,12
     PUSHBUTTON      "Cancel",IDCANCEL,108,20,35,12
 END

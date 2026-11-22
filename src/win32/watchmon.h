@@ -34,7 +34,8 @@ private:
 	// Debugger 経由の生きた MemoryManager(バンク切り替えの影響を受ける)
 	// ではなく、MemoryMonitor と同じ MemoryViewer の私設バス(常に RAM を
 	// 指すバンク固定)を使う。main/sub でバスが別なので2つ持つ
-	MemoryBus* GetWatchBus(uint8 cpu) { return cpu == Debugger::cpu_sub ? mvsub.GetBus() : mvmain.GetBus(); }
+	// M88gn: メインの CPU はウォッチのバンク (w.bank) のメモリを見る
+	MemoryBus* GetWatchBus(const Debugger::WatchEntry& w);
 
 	MemoryViewer mvmain;
 	MemoryViewer mvsub;
@@ -56,6 +57,8 @@ private:
 	WinCore* core;
 	int cursor;			// 選択中の行(watchlist のインデックス。-1 = 未選択)
 	int editindex;		// 編集ダイアログの対象(-1 = 追加モード)
+	int editbank;		// 編集ダイアログで選んでいるバンク (M88gn)
+	void FillBankCombo(HWND hdlg);	// 番地で選べるバンクだけを並べる (選んでいるものは残す)
 };
 
 }

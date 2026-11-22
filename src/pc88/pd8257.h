@@ -42,6 +42,16 @@ public:
 	uint IOCALL GetAddr (uint port);
 	uint IOCALL GetCount(uint port);
 	uint IOCALL GetStatus(uint);
+	// デバッガの Video の窓用 (M88gn): チャネルのアドレス・カウント、DMA が読むメモリの 1 バイト
+	uint GetChannelAddr(int ch) const { return stat.ptr[ch & 3] & 0xffff; }
+	// テキストの転送の始まりの番地。自動初期化ならチャネル 3 に元の番地がある (チャネル 2 は転送で進む)
+	uint GetTextBase() const { return (stat.autoinit ? stat.ptr[3] : stat.ptr[2]) & 0xffff; }
+	int GetChannelCount(int ch) const { return stat.count[ch & 3]; }
+	uint ReadDebug(uint addr) const
+	{
+		addr &= 0xffff;
+		return (mread && mrbegin <= addr && addr < mrend) ? mread[addr - mrbegin] : 0xff;
+	}
 	
 	uint IFCALL RequestRead(uint bank, uint8* data, uint nbytes);
 	uint IFCALL RequestWrite(uint bank, uint8* data, uint nbytes);

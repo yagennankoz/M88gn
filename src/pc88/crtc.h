@@ -44,6 +44,13 @@ public:
 	void SetSize();
 	void ApplyConfig(const Config* config);
 	int GetFramePeriod();
+	// デバッガの Video の窓用 (M88gn): テキストの幅・高さ・1 行の属性の数・1 行のバイト数・モード
+	void GetDebugInfo(uint* w, uint* h, uint* attrs, uint* bytes, uint* m, uint* lines = 0) const
+	{
+		*w = width, *h = height, *attrs = attrperline, *bytes = linesize, *m = mode;
+		if (lines)
+			*lines = linesperchar;		// 1 文字の行のライン数 (640x400 の画像の上で)
+	}
 
 	uint IFCALL GetStatusSize();
 	bool IFCALL SaveStatus(uint8* status);

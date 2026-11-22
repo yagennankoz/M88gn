@@ -66,6 +66,7 @@ BOOL MemViewMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		case IDM_MEM_0_ERAM0: case IDM_MEM_0_ERAM1: case IDM_MEM_0_ERAM2: case IDM_MEM_0_ERAM3:
 		case IDM_MEM_6_N88: case IDM_MEM_6_E0: case IDM_MEM_6_E1: case IDM_MEM_6_E2: case IDM_MEM_6_E3:
 		case IDM_MEM_F_RAM: case IDM_MEM_F_TVRAM:
+		case IDM_MEM_0_N80: case IDM_MEM_0_N80SR: case IDM_MEM_6_N80SR: case IDM_MEM_6_N80SR1:
 			autobank = false;
 			break;
 		}
@@ -80,6 +81,10 @@ BOOL MemViewMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		case IDM_MEM_0_RAM:	a0 = MemoryViewer::mainram;	SetBank(); break;
 		case IDM_MEM_0_N88:	a0 = MemoryViewer::n88rom;	SetBank(); break;
 		case IDM_MEM_0_N:	a0 = MemoryViewer::nrom;	SetBank(); break;
+		case IDM_MEM_0_N80:	a0 = MemoryViewer::n80rom;	SetBank(); break;	// M88gn
+		case IDM_MEM_0_N80SR: a0 = MemoryViewer::n80srrom; a6 = MemoryViewer::n80srrom; SetBank(); break;
+		case IDM_MEM_6_N80SR:  a0 = MemoryViewer::n80srrom; a6 = MemoryViewer::n80srrom; SetBank(); break;
+		case IDM_MEM_6_N80SR1: a0 = MemoryViewer::n80srrom; a6 = MemoryViewer::n80sr1; SetBank(); break;
 		case IDM_MEM_0_SUB: a0 = MemoryViewer::sub;     SetBank(); break;
 		case IDM_MEM_0_ERAM0: a0 = MemoryViewer::eram0;     SetBank(); break;
 		case IDM_MEM_0_ERAM1: a0 = MemoryViewer::eram1;     SetBank(); break;
@@ -124,6 +129,10 @@ BOOL MemViewMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 			CheckMenuItem(hmenu, IDM_MEM_0_RAM, (a0 == MemoryViewer::mainram) ? MF_CHECKED : MF_UNCHECKED);
 			CheckMenuItem(hmenu, IDM_MEM_0_N88, (a0 == MemoryViewer::n88rom ) ? MF_CHECKED : MF_UNCHECKED);
 			CheckMenuItem(hmenu, IDM_MEM_0_N,   (a0 == MemoryViewer::nrom   ) ? MF_CHECKED : MF_UNCHECKED);
+			CheckMenuItem(hmenu, IDM_MEM_0_N80,   (a0 == MemoryViewer::n80rom  ) ? MF_CHECKED : MF_UNCHECKED);
+			CheckMenuItem(hmenu, IDM_MEM_0_N80SR, (a0 == MemoryViewer::n80srrom) ? MF_CHECKED : MF_UNCHECKED);
+			CheckMenuItem(hmenu, IDM_MEM_6_N80SR,  (GetShown6() == MemoryViewer::n80srrom) ? MF_CHECKED : MF_UNCHECKED);
+			CheckMenuItem(hmenu, IDM_MEM_6_N80SR1, (GetShown6() == MemoryViewer::n80sr1  ) ? MF_CHECKED : MF_UNCHECKED);
 			CheckMenuItem(hmenu, IDM_MEM_0_ERAM0, (a0 == MemoryViewer::eram0 ) ? MF_CHECKED : MF_UNCHECKED);
 			CheckMenuItem(hmenu, IDM_MEM_0_ERAM1, (a0 == MemoryViewer::eram1 ) ? MF_CHECKED : MF_UNCHECKED);
 			CheckMenuItem(hmenu, IDM_MEM_0_ERAM2, (a0 == MemoryViewer::eram2 ) ? MF_CHECKED : MF_UNCHECKED);
@@ -176,6 +185,10 @@ bool MemViewMonitor::AutoBank()
 		n0 = MemoryViewer::n88rom;
 	else if (b == Memory::mN)
 		n0 = MemoryViewer::nrom;
+	else if (b == Memory::mN80)						// N80 モード (M88gn)
+		n0 = MemoryViewer::n80rom;
+	else if (b == Memory::mN80SR)
+		n0 = MemoryViewer::n80srrom;
 	else if (b >= Memory::mERAM && b < Memory::mERAM + 4)
 		n0 = MemoryViewer::Type(MemoryViewer::eram0 + (b - Memory::mERAM));
 	else
@@ -189,6 +202,8 @@ bool MemViewMonitor::AutoBank()
 		else
 			n6 = MemoryViewer::n88rom;
 	}
+	else if (n0 == MemoryViewer::n80srrom)
+		n6 = mem1->GetRdBank(0x6000) == Memory::mN80SR1 ? MemoryViewer::n80sr1 : MemoryViewer::n80srrom;
 
 	if (ac == MemoryViewer::mainram)
 		nf = mem1->GetRdBank(0xf000) == Memory::mTV ? MemoryViewer::tvram : MemoryViewer::mainram;
@@ -196,9 +211,19 @@ bool MemViewMonitor::AutoBank()
 	if (n0 == a0 && n6 == a6 && nf == af)
 		return false;
 	a0 = n0, a6 = n6, af = nf;
-	MemoryViewer::Type t6 = a0 == MemoryViewer::n88rom ? a6 : a0;
-	mv.SelectBank(a0, t6, MemoryViewer::mainram, ac, af);
+	mv.SelectBank(a0, GetShown6(), MemoryViewer::mainram, ac, af);
 	return true;
+}
+
+// 6000-7FFF に実際に出しているバンク (M88gn)。a6 は 0000 が N88 のとき (N88 / E0-E3) と
+// N80SR のとき (N80SR / その 8000-9FFF) だけ効き、それ以外は 0000 と同じ
+MemoryViewer::Type MemViewMonitor::GetShown6()
+{
+	if (a0 == MemoryViewer::n88rom)
+		return (a6 == MemoryViewer::n88rom || (a6 >= MemoryViewer::n88e0 && a6 <= MemoryViewer::n88e3)) ? a6 : MemoryViewer::n88rom;
+	if (a0 == MemoryViewer::n80srrom)
+		return a6 == MemoryViewer::n80sr1 ? MemoryViewer::n80sr1 : MemoryViewer::n80srrom;
+	return a0;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,12 +231,7 @@ bool MemViewMonitor::AutoBank()
 //
 void MemViewMonitor::SetBank()
 {
-	MemoryViewer::Type t6;
-	if (a0 == MemoryViewer::n88rom)
-		t6 = a6;
-	else
-		t6 = a0;
-	mv.SelectBank(a0, t6, MemoryViewer::mainram, ac, af);
+	mv.SelectBank(a0, GetShown6(), MemoryViewer::mainram, ac, af);
 	Update();
 }
 

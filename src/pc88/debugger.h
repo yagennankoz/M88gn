@@ -12,6 +12,7 @@
 #include "z80debughook.h"
 #include "if/ifcommon.h"
 #include "Z80.h"
+#include "device.h"
 
 class PC88;
 
@@ -36,6 +37,8 @@ public:
 		brk_memwrite,		// メモリ書き込み
 		brk_step,			// ステップ完了
 		brk_user,			// 手動ポーズ
+		brk_ioread,			// I/O ポートの IN (M88gn)
+		brk_iowrite,		// I/O ポートの OUT (M88gn)
 	};
 
 	enum CpuTarget { cpu_main = 0, cpu_sub = 1 };
@@ -53,6 +56,20 @@ public:
 		bool  write;		// 書き込み
 		bool  enabled;		// 一時的に無効化できる
 		char  comment[64];	// 空文字が初期値。改行・前後の空白は保持しない
+		bool  io;			// I/O ポート (M88gn)。addr はポート (00-ff)、read = IN、write = OUT、exec は使わない
+		char  cond[64];		// 条件の式 (M88gn)。空なら条件無し。書き方は Debugger::CondHelp
+		uint  hitcount;		// この回数目から止める (M88gn。0・1 なら毎回)
+		uint  hits;			// 条件が成り立った回数 (M88gn。変更・追加で 0 に戻る)
+	};
+
+	// サブシステムとの通信のログ 1 件 (M88gn)。メイン・サブの CPU が 8255 のポート (FC-FF) に OUT した値
+	struct SubLogEntry
+	{
+		uint32 tick;		// メインの CPU のクロック数 (PC88::GetCPUTick)
+		uint16 pc;			// OUT を実行した命令の番地
+		uint8  cpu;			// cpu_main (メイン→サブ) / cpu_sub (サブ→メイン)
+		uint8  port;		// fc-ff
+		uint8  data;
 	};
 
 	// ウォッチエントリ1件。※ MemoryMonitor::SetWatch (R/Wアクセスの色付け表示。
@@ -62,6 +79,7 @@ public:
 		uint  addr;
 		uint8 size;			// 1 = バイト, 2 = ワード(リトルエンディアン)
 		uint8 cpu;			// cpu_main / cpu_sub
+		uint8 bank;			// 見るメモリ (MemoryViewer::Type の値。メインの CPU のとき。M88gn)
 		char  label[32];
 	};
 
@@ -124,6 +142,21 @@ public:
 	enum { tracecapacity_min = 100, tracecapacity_max = 1000 };
 	void SetTraceCapacity(int n);
 	int  GetTraceCapacity() const { return tracecapacity; }
+
+	// --- サブシステムとの通信のログ (M88gn。すべて WinCore::Lock() の中で呼ぶこと) ---
+	enum { subloglimit = 4096 };
+	void SetSubLogEnabled(bool e);
+	bool IsSubLogEnabled() const { return sublog; }
+	void SetSubLogHandshake(bool h);		// FE・FF (ハンドシェイク) も記録するか
+	bool IsSubLogHandshake() const { return subloghs; }
+	void ClearSubLog() { subloghead = sublogcount = 0; }
+	int  GetSubLogCount() const { return sublogcount; }
+	bool GetSubLogEntry(int index, SubLogEntry* e) const;	// index: 0 が最も古い
+
+	// --- 条件付きブレークポイント (M88gn) ---
+	// 条件の式の書き方を確かめる。誤りなら false で、err に知らせを書く (128 バイト)
+	static bool CheckCondition(const char* cond, char* err);
+	static const char* CondHelp();			// 書き方の説明 (メッセージの窓用)
 
 	// --- ブレーク状態 ---
 	void RequestBreak(BreakReason reason, CpuTarget cpu, uint addr);
@@ -193,6 +226,24 @@ private:
 	static void MEMCALL MemWriteSub(void* inst, uint addr, uint data);
 	uint DoMemRead(CpuTarget cpu, uint addr);
 	void DoMemWrite(CpuTarget cpu, uint addr, uint data);
+
+	// I/O ポートのブレーク・通信のログ (M88gn)。IOBus のポートに、本物の装置と並べてつなぐ
+	class DebugIO : public Device
+	{
+	public:
+		DebugIO() : Device(0), dbg(0), cpu(cpu_main) {}
+		uint IOCALL In(uint port);
+		void IOCALL Out(uint port, uint data);
+		Debugger* dbg;
+		CpuTarget cpu;
+	};
+	// 条件と回数を見て、止めるなら true (M88gn)。data は読み書きした値 (無ければ -1)
+	bool CondHit(BreakPoint& bp, CpuTarget cpu, uint pc, uint addr, int data);
+	bool ExecCondHit(int cpuid, uint pc);
+	friend struct CondEval;
+	void DoIOIn(CpuTarget cpu, uint port);
+	void DoIOOut(CpuTarget cpu, uint port, uint data);
+	void RebuildIOHooks();
 
 	// bplist からビットマップ/メモリフックを作り直す。bplist を変更した
 	// 呼び出し元は必ず最後にこれを呼ぶこと(呼び出し元の Lock() 区間の中)
@@ -277,6 +328,16 @@ private:
 	// CheckExecBreak 冒頭の高速パス用フラグ。BP/ステップ/トレースの
 	// いずれも無効なら即 false を返せるようにする
 	bool active;
+
+	// --- I/O (M88gn) ---
+	DebugIO  iodev[2];
+	IOBus*   iobus[2];
+	uint16   lastpc[2];				// 最後に CheckExecBreak で見た PC (ログ用。active のときだけ正しい)
+	bool     sublog;
+	bool     subloghs;
+	SubLogEntry* sublogbuf;
+	int      subloghead;
+	int      sublogcount;
 
 	// --- バックトレース ---
 	// 件数可変のリングバッファ(既定1000。SetTraceCapacity で作り直す)。

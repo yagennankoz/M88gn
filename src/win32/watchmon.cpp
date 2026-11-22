@@ -11,6 +11,7 @@
 #include "watchmon.h"
 #include "misc.h"
 #include "winexapi.h"
+#include "watchbank.h"
 
 using namespace PC8801;
 
@@ -19,14 +20,15 @@ namespace
 	// UpdateText() の Putf フォーマット文字列と対応する列の文字位置(0起点)。
 	// フォーマットを変えたら、ここも必ず合わせて直すこと。
 	//
-	//   "%3d  %-4s  %-4s  %-2s  %-6s  %-7s  %-18s  %-7s  %-4s  %s\n"
+	//   "%3d  %-4s  %-4s  %-6s  %-2s  %-6s  %-7s  %-18s  %-7s  %-4s  %s\n"
+	//   (M88gn: Addr の後に Bank の列 (6 桁 + 空白 2) を足したので、下の図より値の列は 8 桁右)
 	//     0-2  3-4 5-8  9-10 11-14 15-16 17-18 19-20 21-26 27-28 29-35 36-37 38-55  56-57 58-64 65-66 67-70 71-72 73-
 	//      #        CPU        Addr        Sz          Hex         Dec         Bin                  Raw         Ch          Label
 	//
 	// Hex/Dec/Bin/Ch は「値」、Raw はアドレス順の実バイト格納(ワードなら
 	// 下位バイトが先)。ダブルクリック判定は Hex～Ch をまとめて「値の列」として扱う
-	const int col_value_lo = 21;
-	const int col_value_hi = 71;
+	const int col_value_lo = 21 + 8;
+	const int col_value_hi = 71 + 8;
 
 	// value の下位 bits ビットぶんを2進数文字列にする(MSBが先。dest は bits+1 バイト必要)
 	void ToBinary(char* dest, uint value, int bits)
@@ -41,8 +43,19 @@ namespace
 //	構築/消滅
 //
 WatchMonitor::WatchMonitor()
-: core(0), cursor(-1), editindex(-1)
+: core(0), cursor(-1), editindex(-1), editbank(MemoryViewer::mainram)
 {
+}
+
+// ---------------------------------------------------------------------------
+//	ウォッチが読み書きするバス (M88gn: メインの CPU はウォッチのバンクに切り替える)
+//
+MemoryBus* WatchMonitor::GetWatchBus(const Debugger::WatchEntry& w)
+{
+	if (w.cpu == Debugger::cpu_sub)
+		return mvsub.GetBus();
+	SelectWatchBank(mvmain, w.bank);
+	return mvmain.GetBus();
 }
 
 WatchMonitor::~WatchMonitor()
@@ -89,8 +102,8 @@ void WatchMonitor::UpdateText()
 
 	SetTxCol(0xc0c0c0);
 	SetBkCol(RGB(0, 0, 0x50));
-	Putf("%3s  %-4s  %-4s  %-2s  %-6s  %-7s  %-18s  %-7s  %-4s  %s\n",
-		 "#", "CPU", "Addr", "Sz", "Hex", "Dec", "Bin", "Raw", "Ch", "Label");
+	Putf("%3s  %-4s  %-4s  %-6s  %-2s  %-6s  %-7s  %-18s  %-7s  %-4s  %s\n",
+		 "#", "CPU", "Addr", "Bank", "Sz", "Hex", "Dec", "Bin", "Raw", "Ch", "Label");
 
 	for (int y = 0; y < rows; y++)
 	{
@@ -98,7 +111,7 @@ void WatchMonitor::UpdateText()
 		Debugger::WatchEntry w;
 		if (index < count && dbg->GetWatch(index, &w))
 		{
-			MemoryBus* bus = GetWatchBus(w.cpu);
+			MemoryBus* bus = GetWatchBus(w);
 
 			char hexbuf[8], decbuf[8], binbuf[20], rawbuf[8], chbuf[8];
 			if (w.size == 2)
@@ -127,10 +140,11 @@ void WatchMonitor::UpdateText()
 
 			SetBkCol(index == cursor ? RGB(0, 0, 0x70) : RGB(0, 0, 0x20));
 			SetTxCol(0xffffff);
-			Putf("%3d  %-4s  %.4x  %-2s  %-6s  %-7s  %-18s  %-7s  %-4s  %s\n",
+			Putf("%3d  %-4s  %.4x  %-6s  %-2s  %-6s  %-7s  %-18s  %-7s  %-4s  %s\n",
 				 index,
 				 w.cpu == Debugger::cpu_sub ? "SUB" : "MAIN",
 				 w.addr,
+				 w.cpu == Debugger::cpu_sub ? "-" : WatchBankName(w.bank),
 				 w.size == 2 ? "W" : "B",
 				 hexbuf, decbuf, binbuf, rawbuf, chbuf,
 				 w.label);
@@ -302,18 +316,35 @@ BOOL WatchMonitor::EDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 				CheckDlgButton(hdlg, IDC_WATCH_SUBCPU, w.cpu == Debugger::cpu_sub ? BST_CHECKED : BST_UNCHECKED);
 				CheckDlgButton(hdlg, IDC_WATCH_WORD, w.size == 2 ? BST_CHECKED : BST_UNCHECKED);
 				SetDlgItemText(hdlg, IDC_WATCH_LABEL, w.label);
+				editbank = FindWatchBank(w.bank) ? w.bank : MemoryViewer::mainram;
 			}
 			else
 			{
 				SetDlgItemText(hdlg, IDC_WATCH_ADDR, "0000");
 				SetDlgItemText(hdlg, IDC_WATCH_LABEL, "");
+				editbank = MemoryViewer::mainram;
 			}
+			FillBankCombo(hdlg);
 			SetFocus(GetDlgItem(hdlg, IDC_WATCH_ADDR));
 			SendDlgItemMessage(hdlg, IDC_WATCH_ADDR, EM_SETSEL, 0, -1);
 		}
 		return 0;
 
 	case WM_COMMAND:
+		// M88gn: バンクの選び。番地・大きさ・Sub CPU が変わったら、選べるバンクを並べ直す
+		if (LOWORD(wp) == IDC_WATCH_BANK && HIWORD(wp) == CBN_SELCHANGE)
+		{
+			int sel = int(SendDlgItemMessage(hdlg, IDC_WATCH_BANK, CB_GETCURSEL, 0, 0));
+			if (sel >= 0)
+				editbank = int(SendDlgItemMessage(hdlg, IDC_WATCH_BANK, CB_GETITEMDATA, sel, 0));
+			return 0;
+		}
+		if ((LOWORD(wp) == IDC_WATCH_ADDR && HIWORD(wp) == EN_CHANGE)
+			|| ((LOWORD(wp) == IDC_WATCH_WORD || LOWORD(wp) == IDC_WATCH_SUBCPU) && HIWORD(wp) == BN_CLICKED))
+		{
+			FillBankCombo(hdlg);
+			return 0;
+		}
 		if (HIWORD(wp) == BN_CLICKED)
 		{
 			switch (LOWORD(wp))
@@ -328,7 +359,27 @@ BOOL WatchMonitor::EDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 					w.cpu = uint8(IsDlgButtonChecked(hdlg, IDC_WATCH_SUBCPU) == BST_CHECKED
 								  ? Debugger::cpu_sub : Debugger::cpu_main);
 					w.size = uint8(IsDlgButtonChecked(hdlg, IDC_WATCH_WORD) == BST_CHECKED ? 2 : 1);
+					w.bank = uint8(editbank);
 					GetDlgItemText(hdlg, IDC_WATCH_LABEL, w.label, sizeof(w.label));
+
+					// 番地がバンクの範囲に入るか (M88gn。先にバンクを選んでから番地を入れたとき)
+					uint lo = watchsub_lo, hi = watchsub_hi;
+					const char* bname = "Sub CPU";
+					if (w.cpu != Debugger::cpu_sub)
+					{
+						const WatchBank* wb = FindWatchBank(editbank);
+						lo = wb ? wb->lo : 0, hi = wb ? wb->hi : 0xffff;
+						bname = wb ? wb->name : "?";
+					}
+					if (w.addr < lo || w.addr + w.size - 1 > hi)
+					{
+						char msg[128];
+						wsprintf(msg, "%s で置ける番地は %.4X～%.4X です%s。", bname, lo, hi,
+								 w.size == 2 ? " (Word は 2 バイトとも)" : "");
+						MessageBox(hdlg, msg, "Set Watch", MB_OK | MB_ICONWARNING);
+						SetFocus(GetDlgItem(hdlg, IDC_WATCH_ADDR));
+						return 0;
+					}
 
 					core->Lock();
 					if (editindex >= 0)
@@ -376,6 +427,49 @@ BOOL CALLBACK WatchMonitor::EDlgProcGate(HWND hwnd, UINT m, WPARAM w, LPARAM l)
 }
 
 // ---------------------------------------------------------------------------
+//	追加・編集の窓のバンクの選び (M88gn)。番地が入っていれば、その番地 (Word なら 2 バイトとも)
+//	が入るバンクだけを並べる。今選んでいるバンクは、範囲に入らなくても残す
+//	(先にバンクを選んだときは、OK で番地の範囲を確かめる)。Sub CPU のときは選べない
+//
+void WatchMonitor::FillBankCombo(HWND hdlg)
+{
+	HWND hcb = GetDlgItem(hdlg, IDC_WATCH_BANK);
+	if (!hcb)
+		return;
+
+	char buf[16];
+	char* dum;
+	GetDlgItemText(hdlg, IDC_WATCH_ADDR, buf, 5);
+	bool hasaddr = isxdigit((uint8) buf[0]) != 0;
+	uint addr = hasaddr ? (strtoul(buf, &dum, 16) & 0xffff) : 0;
+	uint size = IsDlgButtonChecked(hdlg, IDC_WATCH_WORD) == BST_CHECKED ? 2 : 1;
+	bool subcpu = IsDlgButtonChecked(hdlg, IDC_WATCH_SUBCPU) == BST_CHECKED;
+
+	SendMessage(hcb, CB_RESETCONTENT, 0, 0);
+	if (subcpu)
+	{
+		int i = int(SendMessage(hcb, CB_ADDSTRING, 0, (LPARAM) "(Sub CPU)"));
+		SendMessage(hcb, CB_SETITEMDATA, i, editbank);
+		SendMessage(hcb, CB_SETCURSEL, i, 0);
+		EnableWindow(hcb, false);
+		return;
+	}
+	EnableWindow(hcb, true);
+	for (int k = 0; k < nwatchbanks; k++)
+	{
+		const WatchBank* wb = &watchbanks[k];
+		if (hasaddr && !WatchBankFits(wb, addr, size) && wb->type != editbank)
+			continue;
+		char name[32];
+		wsprintf(name, "%s (%.4X-%.4X)", wb->name, wb->lo, wb->hi);
+		int i = int(SendMessage(hcb, CB_ADDSTRING, 0, (LPARAM) name));
+		SendMessage(hcb, CB_SETITEMDATA, i, wb->type);
+		if (wb->type == editbank)
+			SendMessage(hcb, CB_SETCURSEL, i, 0);
+	}
+}
+
+// ---------------------------------------------------------------------------
 //	値そのものの編集(IDD_MEMORY_EDIT を流用。B は2桁、W は4桁の16進)
 //
 void WatchMonitor::ShowValueDialog(int index)
@@ -399,7 +493,7 @@ BOOL WatchMonitor::VDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 			uint value = 0;
 			if (has)
 			{
-				MemoryBus* bus = GetWatchBus(w.cpu);
+				MemoryBus* bus = GetWatchBus(w);
 				value = bus->Read8(w.addr) & 0xff;
 				if (w.size == 2)
 					value |= (bus->Read8((w.addr + 1) & 0xffff) & 0xff) << 8;
@@ -431,7 +525,7 @@ BOOL WatchMonitor::VDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 					Debugger::WatchEntry w;
 					if (core->GetDebugger()->GetWatch(editindex, &w))
 					{
-						MemoryBus* bus = GetWatchBus(w.cpu);
+						MemoryBus* bus = GetWatchBus(w);
 						bus->Write8(w.addr, v & 0xff);
 						if (w.size == 2)
 							bus->Write8((w.addr + 1) & 0xffff, (v >> 8) & 0xff);

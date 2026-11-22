@@ -49,6 +49,8 @@ protected:
 
 	void SetTxCol(COLORREF col) { txcol = col; }
 	void SetBkCol(COLORREF col) { bkcol = col; }
+	// 左半分と右半分で背景色の違う空白を 1 文字書く (M88gn。メモリの窓の印を隙間の真ん中で切り替える)
+	void PutSplitSpace(COLORREF left, COLORREF right);
 
 	int  GetWidth() { return width; }
 	int  GetHeight() { return height; }
@@ -125,6 +127,7 @@ private:
 		char ch;
 		COLORREF txcol;
 		COLORREF bkcol;
+		COLORREF bkcol2;	// 右半分の背景色 (M88gn。ふつうは bkcol と同じ。違えば左右で塗り分けた空白)
 	};
 
 	TXCHAR* txtbuf;

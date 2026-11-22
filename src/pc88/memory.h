@@ -57,6 +57,8 @@ public:
 	uint8* GetTVRAM() { return tvram; }
 	quadbyte* GetGVRAM() { return gvram; }
 	uint8* GetROM() { return rom; }
+	uint8* GetN80ROM() { return n80rom; }		// N80 モードの ROM (M88gn。無ければ 0)
+	uint8* GetN80V2ROM() { return n80v2rom; }	// N80 V2 (N80SR) の ROM (0x0000-0x9fff)
 	uint8* GetDirtyFlag() { return dirty; }
 	
 	uint IFCALL GetRdBank(uint addr);
@@ -153,6 +155,7 @@ private:
 	uint8* dicrom;		// 辞書ROM
 	uint8* cdbios;		// CD-ROM BIOS ROM
 	uint8* n80rom;		// N80-BASIC ROM
+	uint GetN80RdBank(uint addr);		// N80 モードの GetRdBank (M88gn)
 	uint8* n80v2rom;	// N80SR
 	uint8* erom[8+1];	// 拡張 ROM
 

@@ -25,6 +25,9 @@
 #include "bpmon.h"
 #include "watchmon.h"
 #include "tracemon.h"
+#include "mnemmon.h"
+#include "sublogmon.h"
+#include "videomon.h"
 #include "dbgsettings.h"
 #include "softkbd.h"
 #include "tapewin.h"
@@ -180,8 +183,15 @@ private:
 	PC8801::BasicMonitor basmon;
 	PC8801::IOMonitor iomon;
 	PC8801::BreakMonitor bpmon;
+	PC8801::BreakMonitor iobpmon;		// I/O ポートのブレークポイント (M88gn)
 	PC8801::WatchMonitor watchmon;
 	PC8801::TraceMonitor tracemon;
+	PC8801::MnemonicMonitor mnemmon;
+	PC8801::SubLogMonitor sublogmon;
+	PC8801::VideoMonitor videomon;
+	uint32 stoptick;		// 前に止まったときのメインの CPU のクロック数 (ストップウォッチ、M88gn)
+	bool stoptickvalid;
+	char laptext[48];		// 前に出した差 (同じ時刻で 2 回呼ばれたときはこれを出す)
 	bool debugnodiskwarned;		// ディスクが無いので保存できないことを一度知らせた
 	void SyncDebugSettings(const char* oldkey, const char* newkey);
 	char debugkey[MAX_PATH];	// デバッガの設定を保存・読み込みしている今のイメージ (ドライブ 1 のディスクかテープ。空: 無し)

@@ -46,7 +46,25 @@ public:
 	bool Init(IOBus* bus, Memory* memory, CRTC* crtc);
 	void IOCALL Reset(uint=0, uint=0);
 	bool UpdatePalette(Draw* draw);
-	bool Is400Line() const { return line400 && !n80mode; }	// 400 ライン (200 ラインなら 640x400 の偶数の行だけが絵)
+	bool Is400Line() const { return line400 && !n80mode; }
+
+	// デバッガの Video の窓用 (M88gn)。パレットは 0～7 の 3 ビットの値
+	struct DebugInfo
+	{
+		uint8 pal[8][3];		// [色][0 = 赤, 1 = 緑, 2 = 青]
+		uint8 bg[3];
+		uint8 port30, port31, port32, port53;
+		bool color, line400, line320, n80mode, displaygraphics;
+	};
+	void GetDebugInfo(DebugInfo* d) const
+	{
+		for (int i = 0; i < 8; i++)
+			d->pal[i][0] = pal[i].red, d->pal[i][1] = pal[i].green, d->pal[i][2] = pal[i].blue;
+		d->bg[0] = bgpal.red, d->bg[1] = bgpal.green, d->bg[2] = bgpal.blue;
+		d->port30 = port30, d->port31 = port31, d->port32 = port32, d->port53 = port53;
+		d->color = color, d->line400 = line400 && !n80mode, d->line320 = line320;
+		d->n80mode = n80mode, d->displaygraphics = displaygraphics;
+	}	// 400 ライン (200 ラインなら 640x400 の偶数の行だけが絵)
 	void UpdateScreen(uint8* image, int bpl, Draw::Region& region, bool refresh);
 	void ApplyConfig(const Config* config);
 	
