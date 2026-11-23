@@ -397,6 +397,26 @@
 #define IDM_MEM_LOADRANGE               40389
 #define IDM_SUBLOGMON                   40390
 #define IDM_VIDEOMON                    40400
+#define IDM_DISP_CRT                    40401
+#define IDM_DISP_PLASMA                 40402
+#define IDM_PLASMALV_0                  40403
+#define IDM_PLASMALV_1                  40404
+#define IDM_PLASMALV_2                  40405
+#define IDM_PLASMALV_3                  40406
+#define IDM_DISP_GREEN                  40407
+#define IDM_DISP_WHITE                  40408
+#define IDM_DISP_AMBER                  40409
+#define IDM_PLASMABG                    40410
+#define IDM_DISP_DIGITAL                40411
+#define IDM_CRTVIGNETTE_0               40412
+#define IDM_CRTVIGNETTE_1               40413
+#define IDM_CRTVIGNETTE_2               40414
+#define IDM_CRTVIGNETTE_3               40415
+#define IDM_CRTCBLUR_0                  40416
+#define IDM_CRTCBLUR_1                  40417
+#define IDM_CRTCBLUR_2                  40418
+#define IDM_CRTCBLUR_3                  40419
+#define IDM_CRTMASK_4                   40420
 #define IDM_SUBLOG_ENABLE               40391
 #define IDM_SUBLOG_HANDSHAKE            40392
 #define IDM_SUBLOG_CLEAR                40393
@@ -447,7 +467,7 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        159
-#define _APS_NEXT_COMMAND_VALUE         40401
+#define _APS_NEXT_COMMAND_VALUE         40421
 #define _APS_NEXT_CONTROL_VALUE         1178
 #define _APS_NEXT_SYMED_VALUE           101
 #endif

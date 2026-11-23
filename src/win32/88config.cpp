@@ -178,7 +178,7 @@ void LoadConfig(Config* cfg, const char* inifile, bool applydefault)
 	if (LoadConfigEntry(inifile, "CrtScanline", &n, 0, applydefault))
 		cfg->crtscan = Limit(n, 3, 0);
 	if (LoadConfigEntry(inifile, "CrtMask", &n, 0, applydefault))
-		cfg->crtmask = Limit(n, 3, 0);
+		cfg->crtmask = Limit(n, 4, 0);
 	if (LoadConfigEntry(inifile, "CrtSharpness", &n, 1, applydefault))
 		cfg->crtsharp = Limit(n, 2, 0);
 	if (LoadConfigEntry(inifile, "CrtBrightness", &n, 1, applydefault))
@@ -197,6 +197,17 @@ void LoadConfig(Config* cfg, const char* inifile, bool applydefault)
 		cfg->crtbreath = Limit(n, 3, 0);
 	if (LoadConfigEntry(inifile, "CrtBreathExpand", &n, 0, applydefault))
 		cfg->crtbreathexp = Limit(n, 1, 0);
+	if (LoadConfigEntry(inifile, "CrtVignette", &n, 0, applydefault))
+		cfg->crtvignette = Limit(n, 3, 0);
+	if (LoadConfigEntry(inifile, "CrtCornerBlur", &n, 0, applydefault))
+		cfg->crtcornerblur = Limit(n, 3, 0);
+	// 表示の型。無ければ前の版の CrtDirect から (CrtDirect は前の版のために書き続ける)
+	if (LoadConfigEntry(inifile, "ScreenDisplay", &n, cfg->crtdirect ? 1 : 0, applydefault))
+		cfg->screendisplay = Limit(n, int(Config::disp_max), 0);
+	if (LoadConfigEntry(inifile, "PlasmaLevels", &n, 2, applydefault))
+		cfg->plasmalevels = Limit(n, 3, 0);
+	if (LoadConfigEntry(inifile, "PlasmaBackground", &n, 0, applydefault))
+		cfg->plasmabg = n ? 1 : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -284,8 +295,13 @@ void SaveConfig(Config* cfg, const char* inifile, bool writedefault)
 	SaveEntry(inifile, "CrtGlow", cfg->crtglow, writedefault);
 	SaveEntry(inifile, "CrtBreathing", cfg->crtbreath, writedefault);
 	SaveEntry(inifile, "CrtBreathExpand", cfg->crtbreathexp, writedefault);
+	SaveEntry(inifile, "CrtVignette", cfg->crtvignette, writedefault);
+	SaveEntry(inifile, "CrtCornerBlur", cfg->crtcornerblur, writedefault);
 	SaveEntry(inifile, "CrtMaskPitch", cfg->crtpitch, writedefault);
 	SaveEntry(inifile, "CrtDirect", cfg->crtdirect, writedefault);
+	SaveEntry(inifile, "ScreenDisplay", cfg->screendisplay, writedefault);
+	SaveEntry(inifile, "PlasmaLevels", cfg->plasmalevels, writedefault);
+	SaveEntry(inifile, "PlasmaBackground", cfg->plasmabg, writedefault);
 	SaveEntry(inifile, "FullScreenHideMenu", cfg->fullhidemenu, writedefault);
 	SaveEntry(inifile, "WindowHideMenu", cfg->winhidemenu, writedefault);
 	SaveEntry(inifile, "SoftKbdX", cfg->softkbdx, writedefault);

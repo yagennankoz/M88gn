@@ -442,8 +442,10 @@ void StatusDisplay::RedrawOverlay()
 	POINT br = { cr.right, cr.bottom };
 	ClientToScreen(hwndparent, &br);
 	int margin = Scale(12);
-	SetWindowPos(hwndov, HWND_TOPMOST, br.x - margin - w, br.y - margin - h, w, h,
-				 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+	// 重なり順は変えない (作るときに WS_EX_TOPMOST、持ち主の本体の窓より上にいつもある)。HWND_TOPMOST で上げ直すと、
+	// 持ち主の本体の窓 (全画面では最前面) もいっしょに上がり、先に開いていた右クリックのメニューを隠していた
+	SetWindowPos(hwndov, 0, br.x - margin - w, br.y - margin - h, w, h,
+				 SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
 	InvalidateRect(hwndov, 0, FALSE);
 	UpdateWindow(hwndov);
 }

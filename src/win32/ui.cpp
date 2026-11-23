@@ -772,6 +772,22 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		SetCrtFilter();
 		break;
 
+	case IDM_CRTVIGNETTE_0:
+	case IDM_CRTVIGNETTE_1:
+	case IDM_CRTVIGNETTE_2:
+	case IDM_CRTVIGNETTE_3:
+		config.crtvignette = wid - IDM_CRTVIGNETTE_0;
+		SetCrtFilter();
+		break;
+
+	case IDM_CRTCBLUR_0:
+	case IDM_CRTCBLUR_1:
+	case IDM_CRTCBLUR_2:
+	case IDM_CRTCBLUR_3:
+		config.crtcornerblur = wid - IDM_CRTCBLUR_0;
+		SetCrtFilter();
+		break;
+
 	case IDM_CRTGLOW_0:
 	case IDM_CRTGLOW_1:
 	case IDM_CRTGLOW_2:
@@ -791,12 +807,37 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 	case IDM_CRTMASK_1:
 	case IDM_CRTMASK_2:
 	case IDM_CRTMASK_3:
-		config.crtmask = wid - IDM_CRTMASK_0;
+	case IDM_CRTMASK_4:
+		config.crtmask = (wid == IDM_CRTMASK_4) ? 4 : wid - IDM_CRTMASK_0;
 		SetCrtFilter();
 		break;
 
 	case IDM_CRTDIRECT:
-		config.crtdirect = !config.crtdirect;
+	case IDM_DISP_CRT:
+	case IDM_DISP_PLASMA:
+	case IDM_DISP_GREEN:
+	case IDM_DISP_WHITE:
+	case IDM_DISP_AMBER:
+	case IDM_DISP_DIGITAL:
+		// 表示の型 (Screen → Display)。CrtDirect は前の版のために合わせて書く
+		config.screendisplay = (wid == IDM_CRTDIRECT) ? Config::disp_direct : (wid == IDM_DISP_PLASMA) ? Config::disp_plasma
+							 : (wid == IDM_DISP_GREEN) ? Config::disp_green : (wid == IDM_DISP_WHITE) ? Config::disp_white
+							 : (wid == IDM_DISP_AMBER) ? Config::disp_amber : (wid == IDM_DISP_DIGITAL) ? Config::disp_digital
+							 : Config::disp_crt;
+		config.crtdirect = config.screendisplay == Config::disp_direct;
+		SetCrtFilter();
+		break;
+
+	case IDM_PLASMALV_0:
+	case IDM_PLASMALV_1:
+	case IDM_PLASMALV_2:
+	case IDM_PLASMALV_3:
+		config.plasmalevels = wid - IDM_PLASMALV_0;
+		SetCrtFilter();
+		break;
+
+	case IDM_PLASMABG:
+		config.plasmabg = !config.plasmabg;
 		SetCrtFilter();
 		break;
 
@@ -1336,14 +1377,42 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 		CheckMenuItem(hmenu, IDM_ROTATE_0 + r, (config.screenrotate == r) ? MF_CHECKED : MF_UNCHECKED);
 		EnableMenuItem(hmenu, IDM_ROTATE_0 + r, draw.CanCrtFilter() ? MF_ENABLED : MF_GRAYED);
 	}
-	// CRT 風のフィルターは Direct3D 11 で描くときだけ。Direct (フィルター無し) のときは各項目を灰色にする (値は残す)
-	CheckMenuItem(hmenu, IDM_CRTDIRECT, config.crtdirect ? MF_CHECKED : MF_UNCHECKED);
+	// 表示の型 (Screen → Display) は Direct3D 11 で描くときだけ選べる。CRT のフィルターの項目はブラウン管 (Analogue RGB CRT・
+	// Digital RGB・白黒の管) のときだけ (Mask・Mask pitch はカラーの管だけ)、Glow は Plasma でも (ハレーションに使う)、
+	// Plasma levels は Plasma のときだけ。ほかは灰色にする (値は残す)
+	int disp = Limit(config.screendisplay, int(Config::disp_max), 0);
+	bool iscrt = disp == Config::disp_crt || disp == Config::disp_green || disp == Config::disp_white || disp == Config::disp_amber
+			  || disp == Config::disp_digital;
+	UINT enmask = (draw.CanCrtFilter() && (disp == Config::disp_crt || disp == Config::disp_digital)) ? MF_ENABLED : MF_GRAYED;
+	CheckMenuItem(hmenu, IDM_DISP_DIGITAL, (disp == Config::disp_digital) ? MF_CHECKED : MF_UNCHECKED);
+	EnableMenuItem(hmenu, IDM_DISP_DIGITAL, draw.CanCrtFilter() ? MF_ENABLED : MF_GRAYED);
+	CheckMenuItem(hmenu, IDM_DISP_GREEN, (disp == Config::disp_green) ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_DISP_WHITE, (disp == Config::disp_white) ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_DISP_AMBER, (disp == Config::disp_amber) ? MF_CHECKED : MF_UNCHECKED);
+	EnableMenuItem(hmenu, IDM_DISP_GREEN, draw.CanCrtFilter() ? MF_ENABLED : MF_GRAYED);
+	EnableMenuItem(hmenu, IDM_DISP_WHITE, draw.CanCrtFilter() ? MF_ENABLED : MF_GRAYED);
+	EnableMenuItem(hmenu, IDM_DISP_AMBER, draw.CanCrtFilter() ? MF_ENABLED : MF_GRAYED);
+	CheckMenuItem(hmenu, IDM_CRTDIRECT, (disp == Config::disp_direct) ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_DISP_CRT, (disp == Config::disp_crt) ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_DISP_PLASMA, (disp == Config::disp_plasma) ? MF_CHECKED : MF_UNCHECKED);
 	EnableMenuItem(hmenu, IDM_CRTDIRECT, draw.CanCrtFilter() ? MF_ENABLED : MF_GRAYED);
+	EnableMenuItem(hmenu, IDM_DISP_CRT, draw.CanCrtFilter() ? MF_ENABLED : MF_GRAYED);
+	EnableMenuItem(hmenu, IDM_DISP_PLASMA, draw.CanCrtFilter() ? MF_ENABLED : MF_GRAYED);
+	UINT enplasma = (draw.CanCrtFilter() && disp == Config::disp_plasma) ? MF_ENABLED : MF_GRAYED;
+	for (int c = 0; c < 4; c++)
+	{
+		CheckMenuItem(hmenu, IDM_PLASMALV_0 + c, (config.plasmalevels == c) ? MF_CHECKED : MF_UNCHECKED);
+		EnableMenuItem(hmenu, IDM_PLASMALV_0 + c, enplasma);
+	}
+	CheckMenuItem(hmenu, IDM_PLASMABG, config.plasmabg ? MF_CHECKED : MF_UNCHECKED);
+	EnableMenuItem(hmenu, IDM_PLASMABG, enplasma);
 	{
 		// Scanlines・Mask などのサブメニューそのものを灰色にする
-		// (メニューバーの各メニューの中で、最初の項目が CRT の項目のサブメニューを探す)
-		static const UINT crtfirst[7] = { IDM_CRTSCAN_0, IDM_CRTMASK_0, IDM_CRTPITCH_0, IDM_CRTSHARP_0, IDM_CRTBRIGHT_0, IDM_CRTGLOW_0, IDM_CRTBREATH_0 };
-		UINT en = (draw.CanCrtFilter() && !config.crtdirect) ? MF_ENABLED : MF_GRAYED;
+		// (メニューバーの各メニューの中で、最初の項目が CRT・プラズマの項目のサブメニューを探す)
+		static const UINT crtfirst[10] = { IDM_CRTSCAN_0, IDM_CRTMASK_0, IDM_CRTPITCH_0, IDM_CRTSHARP_0, IDM_CRTBRIGHT_0, IDM_CRTGLOW_0, IDM_CRTBREATH_0,
+										   IDM_CRTVIGNETTE_0, IDM_CRTCBLUR_0, IDM_PLASMALV_0 };
+		UINT englow = (draw.CanCrtFilter() && disp != Config::disp_direct) ? MF_ENABLED : MF_GRAYED;
+		UINT en = (draw.CanCrtFilter() && iscrt) ? MF_ENABLED : MF_GRAYED;
 		int nbar = GetMenuItemCount(hmenu);
 		for (int b = 0; b < nbar; b++)
 		{
@@ -1357,25 +1426,36 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 				if (!sub)
 					continue;
 				UINT first = GetMenuItemID(sub, 0);
-				for (int k = 0; k < 7; k++)
+				for (int k = 0; k < 10; k++)
 					if (first == crtfirst[k])
-						EnableMenuItem(pop, i, MF_BYPOSITION | en);
+						EnableMenuItem(pop, i, MF_BYPOSITION | (first == IDM_CRTGLOW_0 ? englow : first == IDM_PLASMALV_0 ? enplasma
+															 : (first == IDM_CRTMASK_0 || first == IDM_CRTPITCH_0) ? enmask : en));
 			}
 		}
 	}
 	for (int c = 0; c < 4; c++)
 	{
-		UINT en = (draw.CanCrtFilter() && !config.crtdirect) ? MF_ENABLED : MF_GRAYED;
+		UINT englow = (draw.CanCrtFilter() && disp != Config::disp_direct) ? MF_ENABLED : MF_GRAYED;
+		UINT en = (draw.CanCrtFilter() && iscrt) ? MF_ENABLED : MF_GRAYED;
 		CheckMenuItem(hmenu, IDM_CRTSCAN_0 + c, (config.crtscan == c) ? MF_CHECKED : MF_UNCHECKED);
 		CheckMenuItem(hmenu, IDM_CRTMASK_0 + c, (config.crtmask == c) ? MF_CHECKED : MF_UNCHECKED);
 		EnableMenuItem(hmenu, IDM_CRTSCAN_0 + c, en);
-		EnableMenuItem(hmenu, IDM_CRTMASK_0 + c, en);
+		EnableMenuItem(hmenu, IDM_CRTMASK_0 + c, enmask);
+		if (c == 0)
+		{
+			CheckMenuItem(hmenu, IDM_CRTMASK_4, (config.crtmask == 4) ? MF_CHECKED : MF_UNCHECKED);
+			EnableMenuItem(hmenu, IDM_CRTMASK_4, enmask);
+		}
 		CheckMenuItem(hmenu, IDM_CRTPITCH_0 + c, (config.crtpitch == c) ? MF_CHECKED : MF_UNCHECKED);
-		EnableMenuItem(hmenu, IDM_CRTPITCH_0 + c, en);
+		EnableMenuItem(hmenu, IDM_CRTPITCH_0 + c, enmask);
 		CheckMenuItem(hmenu, IDM_CRTGLOW_0 + c, (config.crtglow == c) ? MF_CHECKED : MF_UNCHECKED);
-		EnableMenuItem(hmenu, IDM_CRTGLOW_0 + c, en);
+		EnableMenuItem(hmenu, IDM_CRTGLOW_0 + c, englow);
 		CheckMenuItem(hmenu, IDM_CRTBREATH_0 + c, (config.crtbreath == c) ? MF_CHECKED : MF_UNCHECKED);
 		EnableMenuItem(hmenu, IDM_CRTBREATH_0 + c, en);
+		CheckMenuItem(hmenu, IDM_CRTVIGNETTE_0 + c, (config.crtvignette == c) ? MF_CHECKED : MF_UNCHECKED);
+		EnableMenuItem(hmenu, IDM_CRTVIGNETTE_0 + c, en);
+		CheckMenuItem(hmenu, IDM_CRTCBLUR_0 + c, (config.crtcornerblur == c) ? MF_CHECKED : MF_UNCHECKED);
+		EnableMenuItem(hmenu, IDM_CRTCBLUR_0 + c, en);
 		if (c == 0)
 		{
 			CheckMenuItem(hmenu, IDM_CRTBREATH_EXPAND, config.crtbreathexp ? MF_CHECKED : MF_UNCHECKED);
@@ -1523,11 +1603,25 @@ void WinUI::SetCrtFilter()
 		else
 			ResizeWindow(640, 400);
 	}
-	if (config.crtdirect)
+	int disp = Limit(config.screendisplay, int(Config::disp_max), 0);
+	// ブラウン管の周辺減光 (bit14-13) と周辺のぼけ (bit16-15)
+	int edge = (Limit(config.crtvignette, 3, 0) << 13) | (Limit(config.crtcornerblur, 3, 0) << 15);
+	if (disp == Config::disp_direct)
 		draw.SetCrtFilter(0, 0, config.crtsharp, config.crtbright, 0, config.crtpitch, 0);	// 走査線・マスク・ぼけが無ければ、フィルター無し (最近傍)
+	else if (disp == Config::disp_plasma)
+		draw.SetCrtFilter(0, 0, config.crtsharp, config.crtbright, config.crtglow, config.crtpitch,
+			0x20 | (Limit(config.plasmalevels, 3, 0) << 6) | (config.plasmabg ? 0x1000 : 0));
+			// 0x20: プラズマディスプレイ (ぼけはハレーション)、bit7-6: 階調 (2・4・8・16)、bit12: 黒も弱く光らせる
+	else if (disp == Config::disp_green || disp == Config::disp_white || disp == Config::disp_amber)
+	{
+		int phos = disp == Config::disp_green ? 1 : disp == Config::disp_white ? 2 : 3;
+		draw.SetCrtFilter(config.crtscan, 0, config.crtsharp, config.crtbright, config.crtglow, config.crtpitch,
+			config.crtbreath | (config.crtbreathexp ? 0x10 : 0) | (phos << 8) | edge);	// bit11-8: 白黒の管の蛍光体 (1: 緑 2: 白 3: 琥珀)。マスクは無い
+	}
 	else
 		draw.SetCrtFilter(config.crtscan, config.crtmask, config.crtsharp, config.crtbright, config.crtglow, config.crtpitch,
-			config.crtbreath | (config.crtbreathexp ? 0x10 : 0));	// 0x10: 明るいと膨らむ
+			config.crtbreath | (config.crtbreathexp ? 0x10 : 0) | (disp == Config::disp_digital ? 0x400 : 0) | edge);
+			// 0x10: 明るいと膨らむ、bit11-8 = 4: デジタル RGB (R・G・B をそれぞれ点く・消えるの 2 値に)
 }
 
 // ---------------------------------------------------------------------------
@@ -2322,7 +2416,9 @@ void WinUI::ShowOverlay(const char* msg)
 	ClientToScreen(hwnd, &c);
 
 	SetWindowText(hoverlay, msg);
-	SetWindowPos(hoverlay, HWND_TOPMOST, c.x - w / 2, c.y - h / 2, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+	// 重なり順は変えない (持ち主の本体の窓より上にいつもある。HWND_TOPMOST で上げ直すと本体の窓もいっしょに上がり、
+	// 開いているメニューを隠す。StatusDisplay の右下の表示と同じ)
+	SetWindowPos(hoverlay, 0, c.x - w / 2, c.y - h / 2, w, h, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
 	InvalidateRect(hoverlay, 0, TRUE);
 	::SetTimer(hwnd, 9, 4000, 0);
 }

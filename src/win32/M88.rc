@@ -146,7 +146,16 @@ BEGIN
             MENUITEM "&270Åã (clockwise)",           IDM_ROTATE_270
         END
         MENUITEM SEPARATOR
-        MENUITEM "&Direct (no filter)",         IDM_CRTDIRECT
+        POPUP "&Display"
+        BEGIN
+            MENUITEM "&Direct (no filter)",         IDM_CRTDIRECT
+            MENUITEM "A&nalogue RGB CRT",           IDM_DISP_CRT
+            MENUITEM "Digital &RGB CRT (8 colors)", IDM_DISP_DIGITAL
+            MENUITEM "&Green monochrome CRT",       IDM_DISP_GREEN
+            MENUITEM "&Amber monochrome CRT",       IDM_DISP_AMBER
+            MENUITEM "&White monochrome CRT",       IDM_DISP_WHITE
+            MENUITEM "&Plasma (orange)",            IDM_DISP_PLASMA
+        END
         POPUP "Scan&lines"
         BEGIN
             MENUITEM "&Off",                        IDM_CRTSCAN_0
@@ -158,6 +167,7 @@ BEGIN
         BEGIN
             MENUITEM "&None",                       IDM_CRTMASK_0
             MENUITEM "&Aperture grille",            IDM_CRTMASK_1
+            MENUITEM "Aperture grille (&FD, flat)", IDM_CRTMASK_4
             MENUITEM "S&hadow mask",                IDM_CRTMASK_2
             MENUITEM "Sl&ot mask",                  IDM_CRTMASK_3
         END
@@ -195,6 +205,29 @@ BEGIN
             MENUITEM "&Strong",                     IDM_CRTBREATH_3
             MENUITEM SEPARATOR
             MENUITEM "&Expand when bright (mid = normal size)", IDM_CRTBREATH_EXPAND
+        END
+        POPUP "&Vignette"
+        BEGIN
+            MENUITEM "&Off",                        IDM_CRTVIGNETTE_0
+            MENUITEM "&Weak",                       IDM_CRTVIGNETTE_1
+            MENUITEM "&Normal",                     IDM_CRTVIGNETTE_2
+            MENUITEM "&Strong",                     IDM_CRTVIGNETTE_3
+        END
+        POPUP "&Corner blur"
+        BEGIN
+            MENUITEM "&Off",                        IDM_CRTCBLUR_0
+            MENUITEM "&Weak",                       IDM_CRTCBLUR_1
+            MENUITEM "&Normal",                     IDM_CRTCBLUR_2
+            MENUITEM "&Strong",                     IDM_CRTCBLUR_3
+        END
+        POPUP "Pl&asma levels"
+        BEGIN
+            MENUITEM "&2 (on/off)",                 IDM_PLASMALV_0
+            MENUITEM "&4",                          IDM_PLASMALV_1
+            MENUITEM "&8",                          IDM_PLASMALV_2
+            MENUITEM "1&6",                         IDM_PLASMALV_3
+            MENUITEM SEPARATOR
+            MENUITEM "Dim &lit background",         IDM_PLASMABG
         END
     END
     POPUP "&Tools"

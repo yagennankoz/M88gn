@@ -101,15 +101,23 @@ Tapeメニューの**Tape window**で、テープの様子を小さなウィン�
 
 ブラウン管のモニターで見たような絵にします。Screenメニューで選びます。
 
-* **Direct (no filter)**：オンにすると、フィルターを掛けずに元の絵をそのまま出します。下の設定は残したまま灰色になります。
+* **Display**：表示の型を1つ選びます。下の各項目は、選んだ型で使えるものだけ選べます（使えないものは設定を残したまま灰色になります）。
+  * **Direct (no filter)**：フィルターを掛けずに元の絵をそのまま出します。
+  * **Analogue RGB CRT**：カラーのブラウン管です。下の項目がすべて使えます。
+  * **Digital RGB CRT (8 colors)**：8色のデジタルRGBのブラウン管です。アナログのパレットの色は、R・G・Bそれぞれ0〜7の4以上で点きます（デジタルの端子につないだときのつもり）。下の項目がすべて使えます。
+  * **Green/Amber/White monochrome CRT**：白黒（緑・琥珀・白）のブラウン管です。パレットの色を明るさにして蛍光体の色で描き、明るい所は白っぽくします。Mask・Mask pitchは使えません。
+  * **Plasma (orange)**：橙色の白黒のプラズマディスプレイです。明るさをディザで階調にして描き、Glowはハレーションに使います。ブラウン管の項目（Scanlines〜Corner blur）は使えません。
+* **Plasma levels**：プラズマの階調（2 (on/off)/4/8/16）。**Dim lit background**をオンにすると、消えている所も弱く光ります。
 * **Scanlines**：走査線の強さ（Off/Weak/Medium/Strong）。走査線の本数は、画面のモードに合わせます（200ライン/400ライン）。
-* **Mask**：蛍光体のマスク（None/Aperture grille/Shadow mask/Slot mask）。Aperture grilleのときは、トリニトロン管のように横のダンパーワイヤーの影を2本（画面の高さの1/3と2/3）描きます。
+* **Mask**：蛍光体のマスク（None/Aperture grille/Aperture grille (FD, flat)/Shadow mask/Slot mask）。Aperture grilleのときは、トリニトロン管のように横のダンパーワイヤーの影を2本（画面の高さの1/3と2/3）描きます。Aperture grille (FD, flat)は、縦横とも平らな画面のアパーチャグリルです（模様とワイヤーはAperture grilleと同じで、BreathingとVignette・Corner blurの出方が違います）。
 * **Mask pitch**：マスクの間隔。**Pixel**は画面のピクセル単位の模様です。**0.25mm/0.31mm/0.39mm**は、PC-8801の画面（横640ドット）を14インチのモニターの表示の幅（240mm）とみなしたときの、実在のブラウン管の蛍光体の間隔です。ウィンドウを大きくするほど、しまも大きくなります。
 * **Sharpness**：横のにじみ（Sharp/Normal/Soft）。SoftはGlowのぼけも広くします。
 * **Brightness**：走査線とマスクで暗くなる分の明るさの補正（Low/Normal/High）。
 * **Glow**：明るい所の周りの、丸いぼけ（Off/Weak/Normal/Strong）。
-* **Breathing**：画面全体の明るさで絵が伸び縮みします（Off/Weak/Normal/Strong）。外周ほど大きく動き、Aperture grilleは円筒の画面（辺はまっすぐ）、ほかのマスクは球面の画面（縮むと太鼓型）として歪みます。
+* **Breathing**：画面全体の明るさで絵が伸び縮みします（Off/Weak/Normal/Strong）。外周ほど大きく動き、Aperture grilleは円筒の画面（辺はまっすぐ）、Aperture grille (FD, flat)は平らな画面（縮むと辺の中ほどが内側に凹む）、ほかのマスクは球面の画面（縮むと太鼓型）として歪みます。
   * **Expand when bright (mid = normal size)**：オンにすると、中間の明るさのときが基準の大きさになり、暗いと縮み、明るいと膨らみます。膨らむと画面の端の絵が少し切れます。
+* **Vignette**：周辺減光（Off/Weak/Normal/Strong、四隅で10/25/40%暗くなる）。Aperture grilleは左右の端が、ほかのマスクは四隅が暗くなります。
+* **Corner blur**：周辺のぼけ（Off/Weak/Normal/Strong）。画面の端ほどビームの点が大きくなり、にじみます。Aperture grilleは左右の端に、ほかのマスクは四隅に出ます。
 * 既定は、すべてのフィルターがオフ（今までと同じ絵）です。
 
 ### 音量
@@ -253,15 +261,20 @@ M88gnで増えた設定です。メニューで変えると保存されます。
 | `ScreenRotate` | 画面の回転（0: 0° 1: 90° 2: 180° 3: 270°、右回り） | 0 |
 | `FullScreenHideMenu` | 全画面でメニューバーを隠す（0/1） | 0 |
 | `WindowHideMenu` | ウィンドウでメニューバーを隠す（0/1） | 0 |
-| `CrtDirect` | CRT風のフィルターを掛けない（0/1） | 0 |
+| `ScreenDisplay` | 表示の型（0: Analogue RGB CRT 1: Direct 2: Plasma 3: Green 4: White 5: Amber 6: Digital RGB） | 無ければ`CrtDirect`から決める |
+| `CrtDirect` | 1.4.2までの「Direct」の設定（前の版のために、`ScreenDisplay`に合わせて書きます） | 0 |
+| `PlasmaLevels` | プラズマの階調（0: 2 1: 4 2: 8 3: 16） | 2 |
+| `PlasmaBackground` | プラズマの消えている所も弱く光らせる（0/1） | 0 |
 | `CrtScanline` | 走査線（0: Off 1: Weak 2: Medium 3: Strong） | 0 |
-| `CrtMask` | マスク（0: None 1: Aperture grille 2: Shadow mask 3: Slot mask） | 0 |
+| `CrtMask` | マスク（0: None 1: Aperture grille 2: Shadow mask 3: Slot mask 4: Aperture grille (FD, flat)） | 0 |
 | `CrtMaskPitch` | マスクの間隔（0: Pixel 1: 0.25mm 2: 0.31mm 3: 0.39mm） | 0 |
 | `CrtSharpness` | 横のにじみ（0: Sharp 1: Normal 2: Soft） | 1 |
 | `CrtBrightness` | 明るさの補正（0: Low 1: Normal 2: High） | 1 |
 | `CrtGlow` | 明るい所の周りのぼけ（0: Off 1: Weak 2: Normal 3: Strong） | 0 |
 | `CrtBreathing` | 明るさで絵が伸び縮みする（0: Off 1: Weak 2: Normal 3: Strong） | 0 |
 | `CrtBreathExpand` | 伸び縮みの基準（0: 真っ白で基準の大きさ 1: 中間の明るさで基準の大きさ） | 0 |
+| `CrtVignette` | 周辺減光（0: Off 1: Weak 2: Normal 3: Strong） | 0 |
+| `CrtCornerBlur` | 周辺のぼけ（0: Off 1: Weak 2: Normal 3: Strong） | 0 |
 | `VolumeMaster` | 全体の音量（dB + 100。60で消音） | 100 |
 
 デバッグの窓は、それぞれのセクション（`[MonitorCode]`、`[MonitorMemory]`、`[MonitorRegister]`、`[MonitorSound]`、`[MonitorBasic]`、`[MonitorIO]`、`[MonitorBP]`、`[MonitorIOBP]`、`[MonitorWatch]`、`[MonitorTrace]`、`[MonitorMnemonic]`、`[MonitorSubLog]`、`[MonitorVideo]`）に、位置と大きさ（`PosX`/`PosY`/`Width`/`Height`、物理ピクセル）、そのときのDPI（`Dpi`）、文字の大きさ（`FontSize`、96DPIでのピクセル）を保存します。`Dpi`の無い値（1.3.0までの値）は、96DPIの値として読み替えます。フォントは`[Monitor]`の`FontFace`・`FontCharset`に保存します。コードの窓はPCを追うか（`PCFollow`）、トレースの窓は記録件数（`Capacity`）と並び順（`Ascending`）、コードの窓はサイクル数を出すか（`Cycles`）、メモリの窓はチェックサムの方式（`Checksum`）、Videoの窓は開いていたタブ（`Tab`）・拡大（`Zoom`）・文字の大きさ（`TextZoom`）・セミグラフィックの表示（`Semigraphics`）も保存します。

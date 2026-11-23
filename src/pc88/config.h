@@ -134,6 +134,12 @@ public:
 	int crtpitch;			// CRT 風のフィルター: マスクの間隔 (0: Pixel 1: 0.25mm 2: 0.31mm 3: 0.39mm)
 	int crtbreathexp;		// CRT 風のフィルター: 伸び縮みの基準 (0: 真っ白で本来の大きさ、暗いと縮む 1: 中間の明るさで本来の大きさ、暗いと縮み明るいと膨らむ)
 	int crtbreath;			// CRT 風のフィルター: 画面全体の明るさで絵が伸び縮みする (0: Off 1: Weak 2: Normal 3: Strong)
+	enum { disp_crt = 0, disp_direct = 1, disp_plasma = 2, disp_green = 3, disp_white = 4, disp_amber = 5, disp_digital = 6, disp_max = 6 };	// screendisplay の値
+	int screendisplay;		// 画面の表示の型 (0: Analogue RGB CRT 1: Direct (フィルター無し) 2: Plasma (橙色の白黒のプラズマディスプレイ) 3: Green 4: White 5: Amber (白黒のブラウン管、蛍光体の色) 6: Digital RGB (8 色のブラウン管))
+	int plasmalevels;		// プラズマディスプレイの階調 (0～3: 2・4・8・16)
+	int crtvignette;		// CRT 風のフィルター: 周辺減光 (0: Off 1: Weak 2: Normal 3: Strong。四隅で 10%・25%・40% 暗い)
+	int crtcornerblur;		// CRT 風のフィルター: 周辺のぼけ (0: Off 1: Weak 2: Normal 3: Strong。四隅でビームの点が 1.3・1.6・2 倍)
+	int plasmabg;			// プラズマディスプレイの背景 (0: 黒 1: 黒も弱く光らせる。黒をいちばん弱い階調に当てるソフトの設定のつもり)
 	int crtglow;			// CRT 風のフィルター: 明るい所の周りの丸いぼけ (0: Off 1: Weak 2: Normal 3: Strong)
 
 	BASICMode basicmode;

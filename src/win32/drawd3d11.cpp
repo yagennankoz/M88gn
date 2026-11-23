@@ -236,7 +236,7 @@ bool WinDrawD3D11::CreateDevice()
 
 	D3D11_BUFFER_DESC bd;
 	memset(&bd, 0, sizeof(bd));
-	bd.ByteWidth = 96;
+	bd.ByteWidth = 128;
 	bd.Usage = D3D11_USAGE_DEFAULT;
 	bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 	if (FAILED(device->CreateBuffer(&bd, 0, &cb)))
@@ -427,18 +427,31 @@ void WinDrawD3D11::Render()
 	static const float hardpix[3] = { -10, -6, -3 };
 	static const float brightexp[3] = { 0.35f, 0.7f, 1.0f };
 	static const float glowamount[4] = { 0, 0.1f, 0.2f, 0.35f };
-	float hscan = hardscan[Limit(crtscan, 3, 0)];
-	int mtype = Limit(crtmask, 3, 0);
+	// プラズマディスプレイ (crtbreath の bit5): 走査線・マスク・伸び縮みは使わず、ぼけはハレーションに使う
+	bool plasma = (crtbreath & 0x20) != 0;
+	float hscan = plasma ? 0 : hardscan[Limit(crtscan, 3, 0)];
+	// マスク: 0 なし 1 アパーチャグリル (円筒の画面) 2 シャドウマスク 3 スロットマスク 4 アパーチャグリル (FD、平らな画面)。
+	// 4 の模様は 1 と同じ (mpat)
+	int mtype = plasma ? 0 : Limit(crtmask, 4, 0);
+	int mpat = mtype == 4 ? 1 : mtype;
 	int sharp = Limit(crtsharp, 2, 0);
 	float gamount = glowamount[Limit(crtglow, 3, 0)];
-	bool filter = crtscan > 0 || mtype > 0 || gamount > 0;
+	// ブラウン管の周辺 (crtbreath の bit14-13・bit16-15。プラズマでは使わない)
+	//	周辺減光: 四隅で 10%・25%・40% 暗い。ビームがマスクに斜めに当たることと、周辺ほど厚いガラスのため。
+	//	  アパーチャグリルはすき間が縦につながっていて画面も縦に平らなので、縦の効きを弱くする (左右が暗い)
+	//	周辺のぼけ: 偏向で焦点がずれ、ビームの点が中心からの距離の 2 乗で大きくなる。四隅で 1.3・1.6・2 倍
+	static const float vigamount[4] = { 0, 0.1f, 0.25f, 0.4f };
+	static const float blurgrow[4] = { 0, 0.3f, 0.6f, 1.0f };
+	float vig = plasma ? 0 : vigamount[(crtbreath >> 13) & 3];
+	float cblur = plasma ? 0 : blurgrow[(crtbreath >> 15) & 3];
+	bool filter = plasma || hscan < 0 || mtype > 0 || gamount > 0 || vig > 0 || cblur > 0;
 	float mdark = 0.5f, mlight = 1.5f;
 	float mean = 1;
 	if (hscan < 0)
 		mean *= sqrtf(3.14159265f / (-hscan * 0.69314718f));	// ガウスの面積 (1 本の間隔あたり)
-	if (mtype == 3)
+	if (mpat == 3)
 		mean *= (mlight + 2 * mdark) / 3 * (3 + mdark) / 4;	// スロットマスクは 4 行に 1 行暗い
-	else if (mtype > 0)
+	else if (mpat > 0)
 		mean *= (mlight + 2 * mdark) / 3;
 	static const float pitchmm[4] = { 0, 0.25f, 0.31f, 0.39f };
 	float ppitch = pitchmm[Limit(crtpitch, 3, 0)] * dw / 240.0f;		// 蛍光体の 1 組の幅 (出力のピクセル)
@@ -448,22 +461,47 @@ void WinDrawD3D11::Render()
 		mean /= (3 + mdark) / 4;									// ピクセル単位のスロットマスクの区切りは使わない
 	float bright = powf(1 / (mean > 0.1f ? mean : 0.1f), brightexp[Limit(crtbright, 2, 0)]);
 	float hpix = hardpix[sharp];
+	float gwidth = sharp == 2 ? 1.4f : 0.7f;
+
+	// 白黒の管 (crtbreath の bit11-8): 蛍光体の色 (sRGB)。色はパレットの色の輝度に掛ける
+	//	1: 緑 (P1)、2: 白 (P4、わずかに青み)、3: 琥珀 (P3)
+	// マスクが無いので明るく、ビームも太めなので、メニューの段階のまま、明るさ 1.2 倍、横のにじみを強く (指数 0.6 倍)、
+	// 丸いぼけの量 1.5 倍・広さ 1.3 倍にする
+	static const float phosphor[4][3] = { { 0, 0, 0 }, { 0.25f, 1.0f, 0.35f }, { 0.92f, 0.96f, 1.0f }, { 1.0f, 0.66f, 0.1f } };
+	int mono = (crtbreath >> 8) & 15;
+	bool digital = mono == 4;		// デジタル RGB (bit11-8 = 4): パレットの色の R・G・B を、0～7 の最上位ビット (4 以上) で点く・消えるに
+	if (mono > 3)
+		mono = 0;
+	if (mono)
+	{
+		bright *= 1.2f;
+		hpix *= 0.6f;
+		gamount *= 1.5f;
+		gwidth *= 1.3f;
+	}
 
 	// 伸び縮み: 偏向の角度に掛ける倍率 (真っ白で 1)。画面の端の偏向の角度の tan は、14 インチの 90° の管 (4:3) を想定して
 	// 横 0.8・縦 0.6。シェーダーが出力の画素ごとに元の位置を逆算する (外周ほど大きく動く。画面の形はマスクで決める)
 	// アパーチャグリルの横のワイヤーの影: 太さ 0.09mm を、14 インチの画面の高さ 180mm として出力のピクセルに直す
 	// 伸び縮みの元の明るさは、フィルターで出す明るさ (走査線・マスクで落ちる分 × 明るさの補正、ぼけの足し分)
 	float bs = BreathScale(filter ? mean * bright * (1 + gamount) : 1);
-	float wire = (mtype == 1) ? 0.09f * dh / 180.0f : 0;
+	float wire = (mpat == 1) ? 0.09f * dh / 180.0f : 0;
 
-	float cbdata[24] =
+
+	float cbdata[32] =
 	{
 		dx, dy, dw, dh,
 		float(lines == 200 ? 200 : 400), hscan, hpix, bright,
 		float(mtype), mdark, mlight, filter ? 1.0f : 0.0f,
-		sharp == 2 ? 1.4f : 0.7f, gamount, 0, ppitch,
+		gwidth, gamount, 0, ppitch,
 		bs, 0.8f, 0.6f, wire,
-		float(rotation & 3), 0, 0, 0,
+		float(rotation & 3), plasma ? 1.0f : 0.0f, 0.5f, float((2 << ((crtbreath >> 6) & 3)) - 1),	// プラズマ: あり, セルの間の隔壁の濃さ, 階調の数 - 1 (1・3・7・15)
+		// 白黒の管: 蛍光体の色, あり。プラズマのときは x = 黒の所の明るさ (0: 消す。crtbreath の bit12 で弱く光らせる)
+		plasma ? ((crtbreath & 0x1000) ? 0.3f : 0.0f) : phosphor[mono][0], phosphor[mono][1], phosphor[mono][2], mono ? 1.0f : digital ? 2.0f : 0.0f,
+		// 周辺減光の量, 減光の縦の重み (横は 1 - 縦), 周辺のぼけ (四隅でビームの点が 1 + この値の倍), ぼけの縦の重み。
+		// アパーチャグリル (円筒) は、すき間が縦につながり画面も縦に平らなので、減光・ぼけとも左右の端に出る (縦の重み 0.1)。
+		// FD は画面が平らで四隅がいちばん遠いので、ぼけは四隅 (0.5)、減光はマスクのため縦を少し弱く (0.3)
+		vig, mtype == 1 ? 0.1f : mtype == 4 ? 0.3f : 0.5f, cblur, mtype == 1 ? 0.1f : 0.5f,
 	};
 
 	context->IASetInputLayout(0);
@@ -500,7 +538,7 @@ void WinDrawD3D11::Render()
 //
 void WinDrawD3D11::RenderGlow(const float* cbdata)
 {
-	float c[24];
+	float c[32];
 	memcpy(c, cbdata, sizeof(c));
 	D3D11_VIEWPORT vp = { 0, 0, float(srcw), float(srch), 0, 1 };
 	context->RSSetViewports(1, &vp);
@@ -628,14 +666,19 @@ static double BreathUnbend(double target, double f)
 	return th;
 }
 
-static double BreathEdgeShrink(double g, bool grille)
+static double BreathEdgeShrink(double g, int tube)
 {
 	const double tx = 0.8;							// 画面の端の偏向の角度の tan (横)
 	double lo = 0.5, hi = 1;						// 出力の位置 (中心 0、端 1)
 	for (int i = 0; i < 40; i++)
 	{
 		double pm = (lo + hi) / 2, src;
-		if (grille)
+		if (tube == 2)
+		{
+			// FD (平らな画面): 辺の中ほど (縦の位置 0) は糸巻き型の分 (1 - g) だけ余分に縮む
+			src = tan(atan(pm * tx) / g) / tx * (1 + (1 - g));
+		}
+		else if (tube == 1)
 		{
 			double pmax = BreathBend(atan(tx), 0.7);
 			src = BreathBend(BreathUnbend(pm * pmax, 0.7) / g, 0.7) / pmax;
@@ -666,7 +709,7 @@ static double BreathEdgeShrink(double g, bool grille)
 float WinDrawD3D11::BreathScale(float gain)
 {
 	static const float amount[4] = { 0, 0.01f, 0.02f, 0.03f };
-	static float ratio[2] = { 0, 0 };				// 辺の中ほどの動き / (1 - 倍率)。0: ほかの管 1: アパーチャグリル
+	static float ratio[3] = { 0, 0, 0 };			// 辺の中ほどの動き / (1 - 倍率)。0: ほかの管 1: アパーチャグリル 2: FD
 	float k = amount[crtbreath & 3];
 	lumgain = gain;
 	DWORD now = timeGetTime();
@@ -684,9 +727,9 @@ float WinDrawD3D11::BreathScale(float gain)
 		eff = 1;
 	lumnow += (eff - lumnow) * (1 - expf(-dt / 0.03f));
 	float l = lumnow < 0 ? 0 : (lumnow > 1 ? 1 : lumnow);
-	int gi = (crtmask == 1) ? 1 : 0;
+	int gi = (crtmask == 1) ? 1 : (crtmask == 4) ? 2 : 0;
 	if (ratio[gi] == 0)
-		ratio[gi] = float(BreathEdgeShrink(0.98, gi == 1) / 0.02);
+		ratio[gi] = float(BreathEdgeShrink(0.98, gi) / 0.02);
 	// 黒から明るくなり始めた所で大きく伸び、白に近づくほど緩やかにする (平方根)。
 	// 基準: 真っ白で本来の大きさ (暗いと縮む)、または中間の明るさ (平方根で半分、出す明るさ 0.25) で本来の大きさ
 	// (暗いと縮み、明るいと膨らむ。それぞれ強さの半分。膨らむと端の絵は少し切れる)。

@@ -17,10 +17,12 @@ cbuffer CB : register(b0)
 {
 	float4 Dst;							// 描く範囲 (x, y, 幅, 高さ。出力のピクセル)
 	float4 Scan;						// 走査線の数 (200 / 400), 走査線の鋭さ (0: 走査線なし), 横のにじみの鋭さ, 明るさの補正
-	float4 Mask;						// マスクの種類 (0: なし 1: アパーチャグリル 2: シャドウマスク 3: スロットマスク), 暗い所, 明るい所, フィルター (0: なし 1: あり)
+	float4 Mask;						// マスクの種類 (0: なし 1: アパーチャグリル 2: シャドウマスク 3: スロットマスク 4: アパーチャグリル (FD)), 暗い所, 明るい所, フィルター (0: なし 1: あり)
 	float4 Glow;						// ぼけの広さ (元の画素), ぼけの量 (0: なし), ぼかす向き (drawd3d11_glow.hlsl), マスクの蛍光体の 1 組の幅 (出力のピクセル。0: ピクセル単位のマスク)
 	float4 Breath;						// 伸び縮み: 偏向の角度に掛ける倍率 (1: なし), 画面の端の偏向の角度の tan (横, 縦), アパーチャグリルのワイヤーの影の太さ (出力のピクセル。0: なし)
-	float4 View;						// 画面の回転 (0～3、右に 90° ずつ), 未使用, 未使用, 未使用
+	float4 View;						// 画面の回転 (0～3、右に 90° ずつ), プラズマ (0: なし 1: あり), プラズマの隔壁の濃さ, プラズマの階調の数 - 1
+	float4 Mono;						// 白黒の管: 蛍光体の色 (sRGB), 種類 (0: なし 1: 白黒の管 2: デジタル RGB)
+	float4 Edge;						// 周辺減光の量 (四隅で暗くなる割合), 減光の縦の重み (横は 1 - 縦), 周辺のぼけ (四隅でビームの点が 1 + この値の倍), ぼけの縦の重み
 };
 
 static const int2 SrcSize = int2(640, 400);
@@ -38,7 +40,12 @@ float3 ToSrgb(float3 c)
 float3 Fetch(int x, int row)
 {
 	int2 p = clamp(int2(x, row), int2(0, 0), SrcSize - 1);
-	return Pal.Load(int3(Src.Load(int3(p, 0)), 0, 0)).rgb;
+	float3 c = Pal.Load(int3(Src.Load(int3(p, 0)), 0, 0)).rgb;
+	if (Mono.w > 1.5)
+		c = step(0.5, c);											// デジタル RGB: 0～7 の 4 以上 (146/255 以上) で点く
+	else if (Mono.w > 0)
+		c = dot(c, float3(0.27, 0.55, 0.18)) * Mono.rgb;		// 白黒の管: 輝度を蛍光体の色で (NTSC の重みより青を持ち上げる)
+	return c;
 }
 
 // 指数が h のガウス (d = 0 で 1)
@@ -47,17 +54,17 @@ float Gaus(float d, float h)
 	return exp2(h * d * d);
 }
 
-// 横: 近くの 4 画素をビームの太さでなじませる (リニアな明るさ。重みの和で割る)
-float3 Horz(float sx, int row)
+// 横: 近くの 6 画素をビームの太さ (ガウスの指数 h) でなじませる (リニアな明るさ。重みの和で割る)
+float3 Horz(float sx, int row, float h)
 {
 	float x = sx - 0.5;
 	int i = (int) floor(x);
 	float f = x - i;
 	float3 s = 0;
 	float w = 0;
-	[unroll] for (int k = -1; k <= 2; k++)
+	[unroll] for (int k = -2; k <= 3; k++)
 	{
-		float wk = Gaus(k - f, Scan.z);
+		float wk = Gaus(k - f, h);
 		s += ToLinear(Fetch(i + k, row)) * wk;
 		w += wk;
 	}
@@ -119,7 +126,7 @@ float3 MaskPhys(float2 pos)
 float3 MaskPixel(float2 pos)
 {
 	uint x = (uint) pos.x, y = (uint) pos.y;
-	if (Mask.x == 1)
+	if (Mask.x == 1 || Mask.x == 4)
 	{
 		// アパーチャグリル: R・G・B の縦じま (3 ピクセルで 1 組)
 		return Phosphor(x % 3);
@@ -175,6 +182,17 @@ float2 Unbend(float2 p, float g)
 	}
 	// 倍率を戻した角度の位置
 	return Bend(th / g, f) / pmax;
+}
+
+// FD (平らな画面のアパーチャグリル): 画面の位置 = tan(角度) を横と縦で別々に。平らな画面はそのままでは糸巻き型になるのを
+// 回路で引き伸ばしてまっすぐにしているので、高圧が下がると引き伸ばしが追いつかず、辺の中ほどが角より余分に縮む
+// (辺が内側に凹む。縮んだ分 (1 - g) に比例して、もう一方の軸の中ほどで最大、角で 0)
+float2 UnbendFD(float2 p, float g)
+{
+	float2 t = Breath.yz;
+	float2 q = tan(atan(p * t) / g) / t;
+	q *= 1 + (1 - g) * (1 - p.yx * p.yx);
+	return q;
 }
 
 float Bend1(float th, float f)
@@ -236,19 +254,109 @@ float2 Unrotate(float2 pos)
 	return Dst.xy + l;
 }
 
+// ---------------------------------------------------------------------------
+// 橙色の白黒のプラズマディスプレイ風: 640x400 のセルを、色の明るさを 4x4 のディザで階調にして橙色で光らせる。
+// セルの間に隔壁、消えている所はガラスの色、明るい所の周りにハレーション (ぼけの絵の明るさ)。
+// 前面の平らなガラス: 四隅に向けてごく薄い周辺減光と、上からの環境光の赤茶色の映り込み。
+// 計算は sRGB のまま (最後に ToSrgb しない)
+
+static const float Bayer[16] =
+{
+	 0.0 / 16,  8.0 / 16,  2.0 / 16, 10.0 / 16,
+	12.0 / 16,  4.0 / 16, 14.0 / 16,  6.0 / 16,
+	 3.0 / 16, 11.0 / 16,  1.0 / 16,  9.0 / 16,
+	15.0 / 16,  7.0 / 16, 13.0 / 16,  5.0 / 16,
+};
+
+// 明るさ。青が見えなくならないよう、ふつうの係数より B を少し持ち上げる
+float PlasmaLuma(float3 rgb)
+{
+	return dot(rgb, float3(0.28, 0.54, 0.18));
+}
+
+float4 Plasma(float2 pos, float2 uv)
+{
+	// セル (640x400)。200 ラインなら偶数の行を 2 行に使う
+	int2 ip = clamp(int2(floor(uv * SrcSize)), int2(0, 0), SrcSize - 1);
+	int row = Scan.x == 200 ? (ip.y & ~1) : ip.y;
+	float luma = PlasmaLuma(Fetch(ip.x, row));
+
+	// 4x4 のディザで階調にする
+	float dither = Bayer[(ip.y & 3) * 4 + (ip.x & 3)] - 0.5;
+	float levels = View.w;
+	float q = floor(saturate(luma + dither / levels) * levels + 0.5) / levels;
+	q = Mono.x + (1 - Mono.x) * q;			// 黒も弱く光らせる: 階調をその分ずらす (Mono.x: 黒の所の明るさ。プラズマのときだけこの意味)
+
+	// 発光の色: 弱いと赤橙、ふつうはネオンの橙、最大でわずかに黄色
+	float3 darkOrange = float3(0.45, 0.05, 0.00);
+	float3 midOrange  = float3(1.00, 0.30, 0.01);
+	float3 brightCore = float3(1.00, 0.68, 0.22);
+	float3 col = lerp(darkOrange, midOrange, smoothstep(0.0, 0.5, q));
+	col = lerp(col, brightCore, smoothstep(0.5, 1.0, q));
+	col *= q;
+
+	// セルの間の隔壁: 出力のピクセルに隔壁 (セルの境の両側 0.1 ずつ) が占める割合で暗くする
+	float2 cell = Dst.zw / float2(SrcSize);			// 1 セルの大きさ (出力のピクセル)
+	float2 a = (pos - Dst.xy - 0.5) / cell + 0.1;		// 隔壁を [0, 0.2) に置く
+	float2 b = a + 1 / cell;
+	float gx = Cover(a.x, b.x, 0, 0.2), gy = Cover(a.y, b.y, 0, 0.2);
+	float mask = lerp(1 - View.z, 1, (1 - gx) * (1 - gy));
+
+	// 消えている所のガラスの色 + 発光 + ハレーション
+	float3 glass = float3(0.075, 0.022, 0.012);		// 消えている所: 前面の橙のフィルターで暗い赤茶に見える
+	glass += float3(0.022, 0.010, 0.006) * (1 - uv.y) * (1 - uv.y);	// 映り込み (上ほど明るい)
+	float3 c = glass + col * mask;
+	if (Glow.y > 0)
+	{
+		float gl = PlasmaLuma(ToSrgb(saturate(GlowTex.Sample(Lin, uv).rgb)));
+		c += midOrange * pow(gl, 1.5) * Glow.y;
+	}
+	float2 v = uv * 2 - 1;
+	float r2 = dot(v, v) / 2;					// 四隅で 1
+	c *= 1 - 0.12 * r2 * r2;					// 周辺減光 (四隅で 12%)
+	return float4(saturate(c), 1);
+}
+
+// 白黒の管の明るい所: 明るさ (最も明るい成分) が 0.8 を超えたら、なだらかに 1 に近づけ (上限で同じ色に張り付かないように)、
+// 1 を超えた分の割合だけ白に寄せる (強く光る蛍光体は白っぽく見える)
+float3 MonoTone(float3 c)
+{
+	float m = max(c.r, max(c.g, c.b));
+	const float knee = 0.8;
+	if (m <= knee)
+		return c;
+	float nm = knee + (1 - knee) * (1 - exp(-(m - knee) / (1 - knee)));
+	float3 s = c * (nm / m);
+	float t = saturate((m - 1) / m) * 0.6;
+	return lerp(s, nm, t);
+}
+
+// 周辺減光: ガラスの上の位置 g (0～1) の明るさの割合。真ん中は平らで端ほど急に落ちる (四隅で 1 - Edge.x)
+float Vignette(float2 g)
+{
+	float2 v = g * 2 - 1;
+	float d = (1 - Edge.y) * v.x * v.x + Edge.y * v.y * v.y;	// 四隅で 1
+	return 1 - Edge.x * d * d;
+}
+
 float4 main(float4 pos : SV_Position) : SV_Target
 {
 	pos.xy = Unrotate(pos.xy);
 	float2 uv = (pos.xy - Dst.xy) / Dst.zw;
+	float2 glassuv = uv;					// ガラスの上の位置 (伸び縮みしない)
 	if (Breath.x != 1)
 	{
 		// 伸び縮み: 角度が Breath.x 倍になった絵の、この位置に来る元の位置を求める (中央を原点に -1～1、横と縦は別々に)。
 		// 外に出た所は黒
-		float2 p = Mask.x == 1 ? Unbend(uv * 2 - 1, Breath.x) : UnbendRadial(uv * 2 - 1, Breath.x);
+		float2 p = Mask.x == 1 ? Unbend(uv * 2 - 1, Breath.x) : Mask.x == 4 ? UnbendFD(uv * 2 - 1, Breath.x)
+				 : UnbendRadial(uv * 2 - 1, Breath.x);
 		if (abs(p.x) > 1 || abs(p.y) > 1)
 			return float4(0, 0, 0, 1);
 		uv = (p + 1) / 2;
 	}
+
+	if (View.y > 0)
+		return Plasma(pos.xy, uv);
 
 	if (Mask.w == 0)
 	{
@@ -258,25 +366,47 @@ float4 main(float4 pos : SV_Position) : SV_Target
 	}
 
 	float sx = uv.x * SrcSize.x;
+	// 周辺のぼけ: ビームの点の大きさ (中心で 1、四隅で 1 + Edge.z)。ガウスの指数は 2 乗で割る
+	float2 bv = uv * 2 - 1;
+	float spot = 1 + Edge.z * ((1 - Edge.w) * bv.x * bv.x + Edge.w * bv.y * bv.y);	// 四隅で 1 + Edge.z
+	float sp2 = 1 / (spot * spot);
 	float3 c;
-	if (Scan.y == 0)
+	if (Scan.y == 0 && Edge.z == 0)
 	{
 		// 走査線なし: 縦は今までどおり (640x400 の行をそのまま)
-		c = Horz(sx, (int) floor(uv.y * SrcSize.y));
+		c = Horz(sx, (int) floor(uv.y * SrcSize.y), Scan.z);
+	}
+	else if (Scan.y == 0)
+	{
+		// 走査線なしで周辺のぼけ: 縦も 640x400 の行をガウスでなじませる (真ん中は行がほぼそのまま。重みの和で割る)
+		float y = uv.y * SrcSize.y - 0.5;
+		int l = (int) floor(y);
+		float f = y - l;
+		c = 0;
+		float w = 0;
+		[unroll] for (int k = -2; k <= 3; k++)
+		{
+			float wk = Gaus(k - f, -40 * sp2);
+			c += Horz(sx, clamp(l + k, 0, SrcSize.y - 1), Scan.z * sp2) * wk;
+			w += wk;
+		}
+		c /= w;
 	}
 	else
 	{
-		// 走査線: 近くの 4 本をガウスで重ねる (明るい線も太さは同じ。明るさのにじみはぼけで出す)
+		// 走査線: 近くの 6 本をガウスで重ねる (明るい線も太さは同じ。明るさのにじみはぼけで出す)。
+		// 周辺のぼけで線が太くなった分は、重なりで明るくならないよう点の大きさで割る
 		int step = Scan.x == 200 ? 2 : 1;		// 200 ラインなら偶数の行だけを読む
 		float y = uv.y * Scan.x - 0.5;
 		int l = (int) floor(y);
 		float f = y - l;
 		c = 0;
-		[unroll] for (int k = -1; k <= 2; k++)
+		[unroll] for (int k = -2; k <= 3; k++)
 		{
 			int ln = clamp(l + k, 0, (int) Scan.x - 1);
-			c += Horz(sx, ln * step) * Gaus(k - f, Scan.y);
+			c += Horz(sx, ln * step, Scan.z * sp2) * Gaus(k - f, Scan.y * sp2);
 		}
+		c /= spot;
 	}
 
 	if (Mask.x != 0)
@@ -286,5 +416,10 @@ float4 main(float4 pos : SV_Position) : SV_Target
 	c *= Scan.w;
 	if (Glow.y > 0)
 		c += GlowTex.Sample(Lin, uv).rgb * Glow.y;		// 明るい所の周りの丸いぼけ
-	return float4(ToSrgb(saturate(c)), 1);
+	if (Mono.w > 0 && Mono.w < 1.5)
+		c = MonoTone(c);
+	c = saturate(c);
+	if (Edge.x > 0)
+		c *= Vignette(glassuv);		// 光った後にガラスで暗くなるので、明るさの上限で切った後に掛ける
+	return float4(ToSrgb(c), 1);
 }

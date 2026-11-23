@@ -17,6 +17,9 @@ cbuffer CB : register(b0)
 	float4 Scan;						// ‘–¸ü‚Ì” (200 / 400), ...
 	float4 Mask;
 	float4 Glow;						// ‚Ú‚¯‚ÌL‚³, ‚Ú‚¯‚Ì—Ê, ‚Ú‚©‚·Œü‚« (0: ‰¡ 1: c), –¢Žg—p
+	float4 Breath;
+	float4 View;
+	float4 Mono;						// ”’•‚ÌŠÇ: ŒuŒõ‘Ì‚ÌF (sRGB), ‚ ‚è (drawd3d11_ps.hlsl ‚Æ“¯‚¶)
 };
 
 static const int2 SrcSize = int2(640, 400);
@@ -40,7 +43,14 @@ float4 main(float4 pos : SV_Position) : SV_Target
 			int x = p.x + k;
 			int row = Scan.x == 200 ? (p.y & ~1) : p.y;
 			if (x >= 0 && x < SrcSize.x)		// ŠG‚ÌŠO‚Í•
-				c = ToLinear(Pal.Load(int3(Src.Load(int3(x, row, 0)), 0, 0)).rgb);
+			{
+				float3 s0 = Pal.Load(int3(Src.Load(int3(x, row, 0)), 0, 0)).rgb;
+				if (Mono.w > 1.5)
+					s0 = step(0.5, s0);
+				else if (Mono.w > 0)
+					s0 = dot(s0, float3(0.27, 0.55, 0.18)) * Mono.rgb;
+				c = ToLinear(s0);
+			}
 		}
 		else
 		{
