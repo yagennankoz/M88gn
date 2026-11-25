@@ -24,6 +24,8 @@ public:
 	~WatchMonitor();
 
 	bool Init(WinCore*);
+	// 右クリックの Show in Code / Memory で使う窓 (M88gn)
+	void SetMonitors(class CodeMonitor* c, class MemoryMonitor* m) { codemon = c; memmon = m; }
 
 private:
 	void UpdateText();
@@ -35,6 +37,7 @@ private:
 	// ではなく、MemoryMonitor と同じ MemoryViewer の私設バス(常に RAM を
 	// 指すバンク固定)を使う。main/sub でバスが別なので2つ持つ
 	// M88gn: メインの CPU はウォッチのバンク (w.bank) のメモリを見る
+	const char* WatchAddrLabel(const Debugger::WatchEntry& w);	// M88gn
 	MemoryBus* GetWatchBus(const Debugger::WatchEntry& w);
 
 	MemoryViewer mvmain;
@@ -44,6 +47,7 @@ private:
 	// なら値の編集、それ以外の列ならエントリの編集ダイアログを開く
 	void OnClick(POINT p, bool dblclick);
 	void DeleteSelected();
+	void ShowRowMenu(HWND hdlg, POINT p);	// 右クリックのメニュー (M88gn)
 	// index < 0 なら追加ダイアログ、それ以外は index 番目の編集ダイアログ
 	void ShowEditDialog(int index);
 	// アドレス/サイズ/CPU/ラベルではなく、値そのものの編集(IDD_MEMORY_EDIT を流用)
@@ -55,6 +59,8 @@ private:
 	static BOOL CALLBACK VDlgProcGate(HWND, UINT, WPARAM, LPARAM);
 
 	WinCore* core;
+	class CodeMonitor* codemon;
+	class MemoryMonitor* memmon;
 	int cursor;			// 選択中の行(watchlist のインデックス。-1 = 未選択)
 	int editindex;		// 編集ダイアログの対象(-1 = 追加モード)
 	int editbank;		// 編集ダイアログで選んでいるバンク (M88gn)

@@ -38,6 +38,9 @@ public:
 	virtual void SetLines(int lines) {}
 	virtual void SetCrtFilter(int scan, int mask, int sharp, int bright, int glow, int pitch, int breath) {}
 	virtual void SetRotation(int rot) {}
+	// 全画面用 (縦横比を保って拡大) に作ったとき、子の窓を置く四角 (親の窓のクライアント座標)。
+	// 0 なら親の窓のクライアント領域いっぱい (M88gn。ドックモード)
+	virtual void SetViewRect(const RECT* r) {}
 
 protected:
 	uint status;
@@ -81,6 +84,7 @@ public:
 	void WindowMoved(int cx, int cy);
 	void SetCrtFilter(int scan, int mask, int sharp, int bright, int glow, int pitch, int breath);
 	void SetRotation(int rot);
+	void SetViewRect(const RECT* r);	// ドックモード: 画面を置く四角 (0 なら窓いっぱい。M88gn)
 	bool CanCrtFilter() { return drawtype == D3D11; }
 
 	int CaptureScreen(uint8* dest);
@@ -140,6 +144,8 @@ private:
 	int crtbright;		// CRT 風のフィルター: 明るさの補正 (0: Low 1: Normal 2: High)
 	int crtpitch;		// CRT 風のフィルター: マスクの間隔 (0: Pixel 1: 0.25mm 2: 0.31mm 3: 0.39mm)
 	int crtbreath;		// CRT 風のフィルター: 画面全体の明るさで絵が伸び縮みする (0: なし 1: 弱 2: 中 3: 強)
+	RECT viewrect;		// ドックモードで画面を置く四角 (hasview のとき)
+	bool hasview;
 	int rotation;		// 画面の回転 (0～3、右に 90° ずつ。D3D11 で描くときだけ効く)
 	int crtglow;		// CRT 風のフィルター: 明るい所の周りの丸いぼけ (0: なし 1: 弱 2: 中 3: 強)
 };

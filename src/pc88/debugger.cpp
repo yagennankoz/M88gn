@@ -12,6 +12,8 @@
 #include "headers.h"
 #include "pc88/debugger.h"
 #include "pc88/pc88.h"
+#include "pc88/memory.h"
+#include "pc88/memview.h"
 #include "misc.h"
 
 namespace PC8801
@@ -21,7 +23,7 @@ namespace PC8801
 //	構築/消滅
 //
 Debugger::Debugger()
-: vm(0), hasmembreak(false), broken(false), reason(brk_none), breakcpu(cpu_main), breakaddr(0), suppressbreak(false),
+: vm(0), hasmembreak(false), broken(false), reason(brk_none), breakcpu(cpu_main), breakaddr(0), breaklen(0), breakindex(-1), breakdata(-1), breakpc(0), suppressbreak(false),
   stepmode(step_none), steptarget(cpu_main), stepfirstcheck(false), stepoveraddr(0), stepoversp(0),
   intskipenabled(true), intskip(false), intskipretaddr(0), intskipsp(0), intskipcount(0), active(false),
   tracemode(false), tracecapacity(0), tracebuf(0), tracehead(0), tracecount(0),
@@ -33,6 +35,7 @@ Debugger::Debugger()
 		iodev[c].cpu = CpuTarget(c);
 		iobus[c] = 0;
 		lastpc[c] = 0;
+		haspatbreak[c] = false;
 	}
 	memset(execbreak, 0, sizeof(execbreak));
 	execbreakcount[cpu_main] = execbreakcount[cpu_sub] = 0;
@@ -51,8 +54,12 @@ Debugger::Debugger()
 	}
 }
 
+Debugger* Debugger::current = 0;
+
 Debugger::~Debugger()
 {
+	if (current == this)
+		current = 0;
 	delete[] tracebuf;
 	delete[] sublogbuf;
 }
@@ -63,6 +70,7 @@ Debugger::~Debugger()
 bool Debugger::Init(PC88* _vm)
 {
 	vm = _vm;
+	current = this;		// 条件式の書き方の確認でラベルを引くため (M88gn)
 
 	// メモリ読み書きブレークポイント用に、MemoryMonitor とは別の
 	// Connect ID を取得しておく(MemoryMonitor は開いたときだけ接続するが、
@@ -228,7 +236,8 @@ int Debugger::AddBreakPoint(const BreakPoint& bp)
 	for (size_t i = 0; i < bplist.size(); i++)
 	{
 		BreakPoint& e = bplist[i];
-		if (e.cpu == nb.cpu && e.addr == nb.addr && e.length == nb.length && e.io == nb.io)
+		if (e.cpu == nb.cpu && e.addr == nb.addr && e.length == nb.length && e.io == nb.io
+			&& !e.pattern && !nb.pattern)		// パターンのブレークはまとめない (M88gn)
 		{
 			e.exec |= nb.exec;
 			e.read |= nb.read;
@@ -343,6 +352,70 @@ void Debugger::DeleteAllWatches()
 }
 
 // ---------------------------------------------------------------------------
+//	ラベル (M88gn)
+//
+const char* Debugger::GetLabelExact(int cpu, uint addr, int bank) const
+{
+	std::map<uint, std::string>::const_iterator i = labels.find(LabelKey(cpu, addr, bank));
+	return i != labels.end() ? i->second.c_str() : 0;
+}
+
+const char* Debugger::GetLabel(int cpu, uint addr, int bank, int* foundbank) const
+{
+	if (!(cpu & 1) && bank >= 0 && bank != label_anybank)
+	{
+		const char* n = GetLabelExact(cpu, addr, bank);
+		if (n)
+		{
+			if (foundbank)
+				*foundbank = bank;
+			return n;
+		}
+	}
+	const char* n = GetLabelExact(cpu, addr, label_anybank);
+	if (n && foundbank)
+		*foundbank = label_anybank;
+	return n;
+}
+
+void Debugger::SetLabel(int cpu, uint addr, int bank, const char* name)
+{
+	uint key = LabelKey(cpu, addr, bank);
+	if (!name || !name[0])
+		labels.erase(key);
+	else
+		labels[key] = std::string(name).substr(0, labelmax - 1);
+}
+
+bool Debugger::FindLabelAddr(const char* name, uint* addr, int* cpu) const
+{
+	for (std::map<uint, std::string>::const_iterator i = labels.begin(); i != labels.end(); ++i)
+	{
+		if (!lstrcmpi(i->second.c_str(), name))
+		{
+			*addr = i->first & 0xffff;
+			if (cpu)
+				*cpu = int(i->first >> 24);
+			return true;
+		}
+	}
+	return false;
+}
+
+bool Debugger::GetLabelAt(int index, int* cpu, uint* addr, int* bank, const char** name) const
+{
+	if (index < 0 || index >= int(labels.size()))
+		return false;
+	std::map<uint, std::string>::const_iterator i = labels.begin();
+	std::advance(i, index);
+	*cpu = int(i->first >> 24);
+	*bank = int(i->first >> 16) & 0xff;
+	*addr = i->first & 0xffff;
+	*name = i->second.c_str();
+	return true;
+}
+
+// ---------------------------------------------------------------------------
 //	bplist から実行BPビットマップとメモリフックを作り直す。
 //	bplist を変更した箇所は必ず最後にこれを呼ぶこと
 //
@@ -386,12 +459,26 @@ void Debugger::RebuildBreakTables()
 	}
 
 	hasmembreak = false;
+	haspatbreak[cpu_main] = haspatbreak[cpu_sub] = false;
+	patold.assign(bplist.size(), -1);
 	for (size_t i = 0; i < bplist.size(); i++)
 	{
 		const BreakPoint& bp = bplist[i];
+		uint cpu = bp.cpu & 1;
+		// パターンのブレーク (M88gn): 範囲の書き込みを見張る
+		if (bp.pattern)
+		{
+			if (bp.enabled && bp.patlen && bp.length >= bp.patlen && mm[cpu] && memmid[cpu] >= 0)
+			{
+				mm[cpu]->AllocW(uint(memmid[cpu]), bp.addr, bp.length,
+								 cpu == cpu_main ? MemWriteMain : MemWriteSub);
+				hasmembreak = true;
+				haspatbreak[cpu] = true;
+			}
+			continue;
+		}
 		if (!bp.enabled || (!bp.read && !bp.write) || bp.io)
 			continue;
-		uint cpu = bp.cpu & 1;
 		if (!mm[cpu] || memmid[cpu] < 0)
 			continue;
 
@@ -483,7 +570,7 @@ void Debugger::DoIOIn(CpuTarget cpu, uint port)
 		if (!CondHit(bplist[i], cpu, lastpc[cpu], port, -1))		// IN で読む値はまだ分からない
 			continue;
 		// メモリのブレークと同じく、この命令は最後まで実行され、次の命令の前で止まる
-		RequestBreak(brk_ioread, cpu, port);
+		RequestBreak(brk_ioread, cpu, port, int(i));
 		stepmode = step_none;
 		break;
 	}
@@ -516,7 +603,7 @@ void Debugger::DoIOOut(CpuTarget cpu, uint port, uint data)
 			continue;
 		if (!CondHit(bplist[i], cpu, lastpc[cpu], port, int(data)))
 			continue;
-		RequestBreak(brk_iowrite, cpu, port);
+		RequestBreak(brk_iowrite, cpu, port, int(i), int(data));
 		stepmode = step_none;
 		break;
 	}
@@ -720,15 +807,18 @@ int CondEval::Primary()
 			p++;
 		return int(v);
 	}
-	if (isalpha(uint8(*p)))
+	// 名前: レジスター・フラグ、無ければラベル (M88gn。ラベルに使える字 _ . ? @ $ も読む)
+	if (isalpha(uint8(*p)) || *p == '_' || *p == '.' || *p == '?' || *p == '@')
 	{
-		char name[8];
+		char name[Debugger::labelmax];
 		int n = 0;
-		while ((isalnum(uint8(*p)) || *p == '\'') && n < 7)
+		while ((isalnum(uint8(*p)) || *p == '\'' || *p == '_' || *p == '.' || *p == '?' || *p == '@' || *p == '$')
+			   && n < Debugger::labelmax - 1)
 			name[n++] = *p++;
 		name[n] = 0;
 		uint v;
-		if (!Reg(name, &v))
+		const Debugger* ld = dbg ? dbg : Debugger::current;
+		if (!Reg(name, &v) && !(ld && ld->FindLabelAddr(name, &v)))
 		{
 			static char msg[64];
 			wsprintf(msg, "「%s」は知らない名前です", name);
@@ -851,6 +941,7 @@ const char* Debugger::CondHelp()
 		"DATA: 読み書きした値 (メモリの読み・書き、OUT。実行と IN では使えません)\r\n"
 		"ADDR: アクセスした番地・ポート\r\n"
 		"[式]: その番地の 1 バイト、W[式]: 2 バイト (CPU が今見ているメモリ)\r\n"
+		"ラベルの名前: その番地 (例: [WORK]==0、PC==START)\r\n"
 		"演算子: ( ) ! ~ - * / % + - << >> < <= > >= == != & ^ | && ||\r\n"
 		"\r\n"
 		"例:  A==3   BC>=1000   ZF && HL==0E000   [0E6CB]==0FF   DATA&80\r\n"
@@ -882,9 +973,9 @@ bool Debugger::CondHit(BreakPoint& bp, CpuTarget cpu, uint pc, uint addr, int da
 }
 
 // 実行のブレーク: その番地を含む実行のブレークポイントのどれかの条件が成り立てば止める
-bool Debugger::ExecCondHit(int cpuid, uint pc)
+int Debugger::ExecCondHit(int cpuid, uint pc)
 {
-	bool hit = false;
+	int hit = -1;
 	for (size_t i = 0; i < bplist.size(); i++)
 	{
 		BreakPoint& bp = bplist[i];
@@ -892,8 +983,8 @@ bool Debugger::ExecCondHit(int cpuid, uint pc)
 			continue;
 		if (pc < bp.addr || pc >= bp.addr + bp.length)
 			continue;
-		if (CondHit(bp, CpuTarget(cpuid), pc, pc, -1))
-			hit = true;			// 回数を数えるため、残りも見る
+		if (CondHit(bp, CpuTarget(cpuid), pc, pc, -1) && hit < 0)
+			hit = int(i);			// 回数を数えるため、残りも見る
 	}
 	return hit;
 }
@@ -919,12 +1010,17 @@ void Debugger::UpdateActive()
 // ---------------------------------------------------------------------------
 //	ブレーク状態の設定/解除
 //
-void Debugger::RequestBreak(BreakReason r, CpuTarget cpu, uint addr)
+void Debugger::RequestBreak(BreakReason r, CpuTarget cpu, uint addr, int index, int data)
 {
 	broken = true;
 	reason = r;
 	breakcpu = cpu;
 	breakaddr = addr & 0xffff;
+	breaklen = 0;
+	breakindex = index;
+	breakdata = data;
+	// 読み書き・I/O は命令の途中で来るので、その命令の番地 (lastpc はデバッガが有効な間は正しい)
+	breakpc = (r == brk_exec || r == brk_step || r == brk_user) ? (addr & 0xffff) : lastpc[cpu & 1];
 	UpdateActive();
 }
 
@@ -1224,9 +1320,10 @@ bool Debugger::CheckExecBreak(int cpuid, uint pc)
 	if (!hasexecbreak[cpuid])
 		return false;
 
-	if ((execbreak[cpuid][pc >> 3] & (1 << (pc & 7))) && ExecCondHit(cpuid, pc))
+	int bi;
+	if ((execbreak[cpuid][pc >> 3] & (1 << (pc & 7))) && (bi = ExecCondHit(cpuid, pc)) >= 0)
 	{
-		RequestBreak(brk_exec, CpuTarget(cpuid), pc);
+		RequestBreak(brk_exec, CpuTarget(cpuid), pc, bi);
 		stepmode = step_none;
 		return true;
 	}
@@ -1283,7 +1380,7 @@ uint Debugger::DoMemRead(CpuTarget cpu, uint addr)
 		if (!CondHit(bplist[i], cpu, lastpc[cpu], addr, int(data & 0xff)))
 			continue;
 
-		RequestBreak(brk_memread, cpu, addr);
+		RequestBreak(brk_memread, cpu, addr, int(i), int(data & 0xff));
 		stepmode = step_none;
 
 		// メモリアクセスは命令の途中で起きる。この命令は最後まで実行され、次の命令の前の判定
@@ -1297,11 +1394,43 @@ uint Debugger::DoMemRead(CpuTarget cpu, uint addr)
 void Debugger::DoMemWrite(CpuTarget cpu, uint addr, uint data)
 {
 	addr &= 0xffff;
+	// パターンのブレーク (M88gn): 書く前の値を覚える (書き込みがそのバンクを変えたかを見るため)
+	bool pat = haspatbreak[cpu] && !suppressbreak && !broken;
+	if (pat)
+	{
+		for (size_t i = 0; i < bplist.size() && i < patold.size(); i++)
+		{
+			const BreakPoint& bp = bplist[i];
+			patold[i] = (bp.pattern && bp.enabled && bp.cpu == uint8(cpu)
+						 && addr >= bp.addr && addr < bp.addr + bp.length)
+						? PatRead(cpu, bp.patbank, addr) : -1;
+		}
+	}
+
 	// ブレークするかどうかに関わらず、書き込みは先に実際へ反映する
 	mm[cpu]->Write8P(uint(memmid[cpu]), addr, data);
 
 	if (suppressbreak || broken)
 		return;
+
+	if (pat)
+	{
+		for (size_t i = 0; i < bplist.size() && i < patold.size(); i++)
+		{
+			if (patold[i] < 0)
+				continue;
+			const BreakPoint& bp = bplist[i];
+			uint start;
+			if (!PatHit(bp, cpu, addr, patold[i], PatRead(cpu, bp.patbank, addr), &start))
+				continue;
+			if (!CondHit(bplist[i], cpu, lastpc[cpu], addr, int(data & 0xff)))
+				continue;
+			RequestBreak(brk_pattern, cpu, start, int(i), int(data & 0xff));
+			breaklen = bp.patlen;
+			stepmode = step_none;
+			return;		// DoMemRead と同じく、次の命令の前で止まる
+		}
+	}
 
 	for (size_t i = 0; i < bplist.size(); i++)
 	{
@@ -1313,12 +1442,89 @@ void Debugger::DoMemWrite(CpuTarget cpu, uint addr, uint data)
 		if (!CondHit(bplist[i], cpu, lastpc[cpu], addr, int(data & 0xff)))
 			continue;
 
-		RequestBreak(brk_memwrite, cpu, addr);
+		RequestBreak(brk_memwrite, cpu, addr, int(i), int(data & 0xff));
 		stepmode = step_none;
 
 		// DoMemRead と同じく、次の命令の前で止まる (Stop(0) は呼ばない)
 		break;
 	}
+}
+
+// ---------------------------------------------------------------------------
+//	パターンのブレーク (M88gn)。バンクの 1 バイトを読む。読めない所 (バンクの範囲の外、
+//	つながっていない拡張 RAM) は -1。サブの CPU はバンクが無く、CPU から見えるとおりに読む
+//
+int Debugger::PatRead(CpuTarget cpu, uint bank, uint addr)
+{
+	addr &= 0xffff;
+	if (cpu == cpu_sub)
+		return (mm[cpu] && memmid[cpu] >= 0) ? int(mm[cpu]->Read8P(uint(memmid[cpu]), addr) & 0xff) : -1;
+
+	Memory* m = vm ? vm->GetMem1() : 0;
+	if (!m)
+		return -1;
+	switch (bank)
+	{
+	case MemoryViewer::mainram:
+		return m->GetRAM()[addr];
+	case MemoryViewer::eram0: case MemoryViewer::eram1:
+	case MemoryViewer::eram2: case MemoryViewer::eram3:
+		{
+			if (addr >= 0x8000)
+				return -1;
+			uint8* p = m->GetERAM(bank - MemoryViewer::eram0);
+			return p == m->GetRAM() ? -1 : p[addr];		// 無いバンクなら GetERAM は本体の RAM を返す
+		}
+	case MemoryViewer::gvram0: case MemoryViewer::gvram1: case MemoryViewer::gvram2:
+		return addr >= 0xc000 ? m->GetGVRAM()[addr & 0x3fff].byte[bank - MemoryViewer::gvram0] : -1;
+	case MemoryViewer::tvram:
+		return addr >= 0xf000 ? m->GetTVRAM()[addr & 0xfff] : -1;
+	}
+	return -1;
+}
+
+// addr への書き込みでバンクの値が oldv → newv になったとき、addr を含む位置にパターンが
+// 揃ったか (前は揃っていなかったか) を調べる。揃ったら start に先頭の番地
+bool Debugger::PatHit(const BreakPoint& bp, CpuTarget cpu, uint addr, int oldv, int newv, uint* start)
+{
+	if (newv < 0 || oldv == newv)
+		return false;			// このバンクは変わっていない
+	bool nocase = (bp.patflags & pat_nocase) != 0;
+	struct Fold
+	{
+		static int F(int v, bool nc) { return (nc && v >= 'a' && v <= 'z') ? v - 0x20 : v; }
+	};
+	int fo = Fold::F(oldv, nocase), fn = Fold::F(newv, nocase);
+	if (fo == fn)
+		return false;
+
+	uint len = bp.patlen;
+	uint lo = bp.addr, hi = bp.addr + bp.length;		// hi は含まない
+	for (uint k = 0; k < len; k++)
+	{
+		if (addr < lo + k)
+			break;
+		uint s = addr - k;
+		if (s + len > hi)
+			continue;
+		int pk = Fold::F(bp.pat[k], nocase);
+		if (fn != pk || fo == pk)
+			continue;			// この書き込みで k バイト目が揃ったのではない
+		bool ok = true;
+		for (uint j = 0; j < len && ok; j++)
+		{
+			if (j == k)
+				continue;
+			int v = PatRead(cpu, bp.patbank, s + j);
+			ok = v >= 0 && Fold::F(v, nocase) == Fold::F(bp.pat[j], nocase);
+		}
+		if (ok)
+		{
+			*start = s;
+			return true;
+		}
+	}
+	return false;
 }
 
 // ---------------------------------------------------------------------------

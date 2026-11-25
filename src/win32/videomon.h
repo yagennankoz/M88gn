@@ -10,6 +10,7 @@
 #include "types.h"
 #include "pc88/screen.h"
 #include "dbgbuttons.h"
+#include "dockclient.h"
 
 class WinCore;
 
@@ -18,7 +19,7 @@ namespace PC8801
 
 class MemoryMonitor;
 
-class VideoMonitor
+class VideoMonitor : public DockClient
 {
 public:
 	VideoMonitor();
@@ -29,6 +30,13 @@ public:
 	bool IsOpen() { return hwnd != 0; }
 	void Refresh();					// 止まっているときに呼ぶ。中身を写し取って描き直す
 	void Close();					// 終わるとき (位置を残す)
+
+	// DockClient (ペインに入れる。M88gn)
+	HWND DockWindow() { return hwnd; }
+	const char* DockSection() { return "MonitorVideo"; }
+	void DockFloatRect(RECT* r) { SetRect(r, posx, posy, posx + width, posy + height); }
+	bool DockIsOpen() { return hwnd != 0; }
+	void DockOpen(HINSTANCE hi, HWND own) { Show(hi, own, true); }
 
 private:
 	enum { tab_graphic = 0, tab_text, tab_palette, ntabs };
@@ -74,7 +82,13 @@ private:
 	WinCore* core;
 	MemoryMonitor* memmon;
 	HINSTANCE hinst;
-	HWND hwnd, owner, htab;
+	HWND hwnd, owner;
+	// タブ (自分で描く。M88gn: タブの部品は字が詰まって崩れて見えたため)
+	HFONT tabfont;
+	RECT tabrc[ntabs];
+	int tabh;						// タブの段の高さ
+	void PaintTabs(HDC hdc, const RECT& rc);
+	int TabHit(int x, int y);
 	HFONT font;
 	int dpi;
 	int tab;

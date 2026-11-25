@@ -13,6 +13,7 @@
 #include "resource.h"
 #include "wincore.h"
 #include "dbgbuttons.h"
+#include "uitheme.h"
 #include "misc.h"
 #include "dpi.h"
 
@@ -237,6 +238,15 @@ namespace
 
 	void DrawMenuBarBack(HWND hwnd, HDC dc, const RECT& r, bool active, bool hot, bool pushed)
 	{
+		if (Theme::stripdrawing)
+		{
+			// ペインのメニューの帯 (M88gn): テーマの色
+			const Theme::Colors& c = Theme::C();
+			HBRUSH b = CreateSolidBrush(pushed ? Theme::Mix(c.tabselbg, c.stripfg, 60) : hot ? Theme::Mix(c.tabselbg, c.stripfg, 30) : c.tabselbg);
+			FillRect(dc, &r, b);
+			DeleteObject(b);
+			return;
+		}
 		static HMODULE uxtheme = LoadLibrary("uxtheme.dll");
 		static OpenThemeDataFn open = uxtheme ? (OpenThemeDataFn) GetProcAddress(uxtheme, "OpenThemeData") : 0;
 		static DrawThemeBackgroundFn draw = uxtheme ? (DrawThemeBackgroundFn) GetProcAddress(uxtheme, "DrawThemeBackground") : 0;
@@ -269,7 +279,7 @@ namespace
 //
 DebugButtons::DebugButtons()
 : core(0), hwnd(0), hinst(0), state(-1), inlayout(false), layoutwidth(-1),
-  hwndtip(0), tipid(0), tipshown(false), tiptracking(false)
+  hwndtip(0), tipid(0), tipshown(false), tiptracking(false), menu(0)
 {
 }
 
@@ -379,7 +389,7 @@ bool DebugButtons::Message(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 //
 void DebugButtons::SetOwnerDraw()
 {
-		HMENU hmenu = hwnd ? GetMenu(hwnd) : 0;
+		HMENU hmenu = Menu();
 	if (!hmenu)
 		return;
 
@@ -421,6 +431,62 @@ void DebugButtons::SetOwnerDraw()
 	}
 	tipid = 0;
 	tipshown = false;
+}
+
+// 窓のメニュー。ドックモードでペインに入れると窓からは外れるので、覚えておいたもの (M88gn)
+HMENU DebugButtons::Menu()
+{
+	HMENU m = hwnd ? ::GetMenu(hwnd) : 0;
+	if (m)
+		menu = m;
+	return menu;
+}
+
+void DebugButtons::PaintBarBack(HWND hwnd, HDC dc, const RECT& r, bool active)
+{
+	DrawMenuBarBack(hwnd, dc, r, active, false, false);
+}
+
+// ---------------------------------------------------------------------------
+//	本体のメニューバーのペインの開閉ボタン (M88gn)。窓の形の四角の中に、
+//	そのペインの所を塗る (開いているとき) か、仕切りの線だけ (閉じているとき) を描く
+//
+void DebugButtons::DrawPaneIcon(HDC dc, const RECT& ir, int side, bool shown, COLORREF c)
+{
+	int size = ir.right - ir.left;
+	int ox = ir.left, oy = ir.top;
+	int lw = Max(1, (size + 8) / 16);		// 線の太さ
+	HBRUSH br = CreateSolidBrush(c);
+	auto X = [&](int v) { return ox + MulDiv(v, size, 16); };
+	auto Y = [&](int v) { return oy + MulDiv(v, size, 16); };
+	RECT o = { X(1), Y(2), X(15), Y(14) };		// 窓の形
+	auto fill = [&](int l, int t, int rr, int b) { RECT f = { l, t, rr, b }; FillRect(dc, &f, br); };
+	fill(o.left, o.top, o.right, o.top + lw);
+	fill(o.left, o.bottom - lw, o.right, o.bottom);
+	fill(o.left, o.top, o.left + lw, o.bottom);
+	fill(o.right - lw, o.top, o.right, o.bottom);
+	RECT p = o;		// ペインの所
+	switch (side)
+	{
+	case 0:	p.right = X(6); break;
+	case 1:	p.left = X(10); break;
+	case 2:	p.bottom = Y(6); break;
+	default: p.top = Y(10); break;
+	}
+	if (shown)
+		FillRect(dc, &p, br);
+	else
+	{
+		// 仕切りの線
+		switch (side)
+		{
+		case 0:	fill(p.right - lw, o.top, p.right, o.bottom); break;
+		case 1:	fill(p.left, o.top, p.left + lw, o.bottom); break;
+		case 2:	fill(o.left, p.bottom - lw, o.right, p.bottom); break;
+		default: fill(o.left, p.top, o.right, p.top + lw); break;
+		}
+	}
+	DeleteObject(br);
 }
 
 bool DebugButtons::Measure(MEASUREITEMSTRUCT* mis)
@@ -475,7 +541,7 @@ bool DebugButtons::Draw(const DRAWITEMSTRUCT* dis)
 //
 void DebugButtons::MouseMove(POINT screen)
 {
-		HMENU hmenu = GetMenu(hwnd);
+		HMENU hmenu = Menu();
 	int pos = hmenu ? MenuItemFromPoint(hwnd, hmenu, screen) : -1;
 	uint id = pos >= 0 ? GetMenuItemID(hmenu, pos) : 0;
 	if (!FindButton(id))
@@ -505,7 +571,7 @@ void DebugButtons::ShowTip(bool show)
 		return;
 	}
 	const ButtonDef* def = FindButton(tipid);
-	HMENU hmenu = GetMenu(hwnd);
+	HMENU hmenu = Menu();
 	if (!hwndtip || !def || !hmenu)
 		return;
 
@@ -514,7 +580,10 @@ void DebugButtons::ShowTip(bool show)
 	lstrcpyn(text, def->name, sizeof(text));
 	HWND owner = GetWindow(hwnd, GW_OWNER);
 	char label[128];
-	if (owner && GetMenuString(GetMenu(owner), def->id, label, sizeof(label), MF_BYCOMMAND) > 0)
+	HMENU ownermenu = owner ? (HMENU) GetProp(owner, "M88gnMainMenu") : 0;	// 本体はメニューバーを使っていない (M88gn)
+	if (!ownermenu && owner)
+		ownermenu = GetMenu(owner);
+	if (ownermenu && GetMenuString(ownermenu, def->id, label, sizeof(label), MF_BYCOMMAND) > 0)
 	{
 		char* tab = strchr(label, '\t');
 		if (tab && tab[1])
@@ -554,7 +623,7 @@ void DebugButtons::Layout()
 {
 		if (!hwnd || inlayout)
 		return;
-	HMENU hmenu = GetMenu(hwnd);
+	HMENU hmenu = Menu();
 	if (!hmenu)
 		return;
 
@@ -613,7 +682,7 @@ void DebugButtons::Update()
 {
 		if (!hwnd || !core)
 		return;
-	HMENU hmenu = GetMenu(hwnd);
+	HMENU hmenu = Menu();
 	if (!hmenu)
 		return;
 
@@ -632,3 +701,169 @@ void DebugButtons::Update()
 	DrawMenuBar(hwnd);
 }
 
+// ---------------------------------------------------------------------------
+//	メニューバーの Addr の欄 (M88gn。コード・メモリの窓で、マウスの下の番地を出す)
+//	自分で描く項目にして幅を一定にし (右寄せ、ボタンの左)、変わったらその欄だけ描き直す。
+//	メニューバー全体を描き直すと、字の長さが変わったときに並べ直しが起きて窓全体が光ることがあった
+//
+AddrBarItem::AddrBarItem()
+: hwnd(0), id(0), font(0), fontdpi(0)
+{
+	lstrcpy(text, "Addr: ----");
+}
+
+AddrBarItem::~AddrBarItem()
+{
+	if (font)
+		DeleteObject(font);
+}
+
+void AddrBarItem::Setup(HWND h, UINT itemid)
+{
+	hwnd = h, id = itemid;
+	HMENU hmenu = ::GetMenu(hwnd);
+	if (!hmenu)
+		return;
+	int n = GetMenuItemCount(hmenu);
+	for (int pos = 0; pos < n; pos++)
+	{
+		if (GetMenuItemID(hmenu, pos) != id)
+			continue;
+		// 種類を書き換えるだけでは前に測った幅のままなので、外して入れ直す (ボタンと同じ)
+		RemoveMenu(hmenu, pos, MF_BYPOSITION);
+		MENUITEMINFO mii;
+		memset(&mii, 0, sizeof(mii));
+		mii.cbSize = sizeof(mii);
+		mii.fMask = MIIM_FTYPE | MIIM_ID | MIIM_STATE;
+		mii.fType = MFT_OWNERDRAW | MFT_RIGHTJUSTIFY;	// 右寄せ (ボタンの左)
+		mii.fState = MFS_DISABLED;
+		mii.wID = id;
+		InsertMenuItem(hmenu, pos, TRUE, &mii);
+		DrawMenuBar(hwnd);
+		break;
+	}
+}
+
+HFONT AddrBarItem::Font()
+{
+	UINT dpi = Dpi::GetForWindow(hwnd);
+	if (font && fontdpi == dpi)
+		return font;
+	if (font)
+		DeleteObject(font);
+	NONCLIENTMETRICSW ncm;
+	Dpi::GetNonClientMetrics(&ncm, dpi);
+	font = CreateFontIndirectW(&ncm.lfMenuFont);
+	fontdpi = dpi;
+	return font;
+}
+
+void AddrBarItem::Paint(HDC dc, const RECT& r, bool active)
+{
+	int w = r.right - r.left, h = r.bottom - r.top;
+	if (w <= 0 || h <= 0)
+		return;
+	// 地と字を作ってから一度に写す (ちらつかないように)
+	HDC mdc = CreateCompatibleDC(dc);
+	HBITMAP bmp = CreateCompatibleBitmap(dc, w, h);
+	HGDIOBJ oldbmp = SelectObject(mdc, bmp);
+	RECT lr = { 0, 0, w, h };
+	// 地はメニューバーの普通の項目と同じ色 (テーマで描くと右のボタンと同じ白になり、周りの灰色と違って見える)
+	BOOL flat = FALSE;
+	SystemParametersInfo(SPI_GETFLATMENU, 0, &flat, 0);
+	if (Theme::stripdrawing)
+	{
+		HBRUSH b = CreateSolidBrush(Theme::C().tabselbg);	// ペインのメニューの帯 (M88gn)
+		FillRect(mdc, &lr, b);
+		DeleteObject(b);
+	}
+	else
+		FillRect(mdc, &lr, GetSysColorBrush(flat ? COLOR_MENUBAR : COLOR_MENU));
+	HGDIOBJ oldfont = SelectObject(mdc, Font());
+	SetBkMode(mdc, TRANSPARENT);
+	if (Theme::stripdrawing)
+		SetTextColor(mdc, active ? Theme::C().stripfg : Theme::C().stripgray);
+	else
+		SetTextColor(mdc, GetSysColor(active ? COLOR_MENUTEXT : COLOR_GRAYTEXT));
+	RECT tr = lr;
+	tr.left += MulDiv(6, Dpi::GetForWindow(hwnd), 96);
+	DrawText(mdc, text, -1, &tr, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
+	BitBlt(dc, r.left, r.top, w, h, mdc, 0, 0, SRCCOPY);
+	SelectObject(mdc, oldfont);
+	SelectObject(mdc, oldbmp);
+	DeleteObject(bmp);
+	DeleteDC(mdc);
+}
+
+void AddrBarItem::SetText(const char* t)
+{
+	if (!lstrcmp(text, t))
+		return;
+	lstrcpyn(text, t, sizeof(text));
+	HMENU hmenu = hwnd ? ::GetMenu(hwnd) : 0;
+	if (!hmenu)
+	{
+		// ドックモードでペインに入っている (メニューはペインの帯に描く。M88gn): ペインに描き直させる
+		if (hwnd && (GetWindowLong(hwnd, GWL_STYLE) & WS_CHILD))
+			InvalidateRect(GetParent(hwnd), 0, FALSE);
+		return;
+	}
+	// その欄だけ、窓の DC に描き直す
+	int n = GetMenuItemCount(hmenu);
+	for (int pos = 0; pos < n; pos++)
+	{
+		if (GetMenuItemID(hmenu, pos) != id)
+			continue;
+		RECT r, wr;
+		if (!GetMenuItemRect(hwnd, hmenu, pos, &r))
+			break;
+		GetWindowRect(hwnd, &wr);
+		OffsetRect(&r, -wr.left, -wr.top);
+		HDC dc = GetWindowDC(hwnd);
+		if (dc)
+		{
+			Paint(dc, r, GetForegroundWindow() == hwnd);
+			ReleaseDC(hwnd, dc);
+		}
+		break;
+	}
+}
+
+bool AddrBarItem::Message(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+	if (!hwnd || h != hwnd)
+		return false;
+	switch (msg)
+	{
+	case WM_DPICHANGED:
+		Setup(hwnd, id);		// 字の大きさが変わるので幅を測り直させる
+		return false;			// ほかの処理にも回す
+
+	case WM_MEASUREITEM:
+		{
+			MEASUREITEMSTRUCT* mis = (MEASUREITEMSTRUCT*) lp;
+			if (mis->CtlType != ODT_MENU || mis->itemID != id)
+				return false;
+			// 幅は一定: 「Addr: FFFF  」とラベル 12 字ほど (長いラベルは … で切る)
+			HDC dc = GetDC(hwnd);
+			HGDIOBJ old = SelectObject(dc, Font());
+			SIZE sz;
+			GetTextExtentPoint32(dc, "Addr: FFFF  MMMMMMMMMMMM", 24, &sz);
+			SelectObject(dc, old);
+			ReleaseDC(hwnd, dc);
+			mis->itemWidth = sz.cx;
+			mis->itemHeight = sz.cy;
+			return true;
+		}
+
+	case WM_DRAWITEM:
+		{
+			DRAWITEMSTRUCT* dis = (DRAWITEMSTRUCT*) lp;
+			if (dis->CtlType != ODT_MENU || dis->itemID != id)
+				return false;
+			Paint(dis->hDC, dis->rcItem, !(dis->itemState & ODS_INACTIVE));
+			return true;
+		}
+	}
+	return false;
+}

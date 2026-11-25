@@ -6,6 +6,7 @@
 
 #include "headers.h"
 #include "status.h"
+#include "uitheme.h"
 
 //#define LOGNAME "status"
 #include "diag.h"
@@ -41,6 +42,9 @@ StatusDisplay::StatusDisplay()
 	ovfont = 0;
 	ovlastlit = 0;
 	litstat[0] = litstat[1] = litstat[2] = 0;
+	shown[0] = 0;
+	perftext[0] = 0;
+	barproc = 0;
 	litcurrent[0] = litcurrent[1] = litcurrent[2] = 0;
 	updatemessage = 0;
 	showfdstat = false;
@@ -74,6 +78,8 @@ bool StatusDisplay::Enable(bool showfd)
 		
 		if (!hwnd)
 			return false;
+		// 描くのは自分で (テーマの色。M88gn)
+		barproc = (WNDPROC) SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG_PTR) BarProc);
 
 		// ステータスバーは高さをシステムの DPI (主モニターの DPI) で決め、窓のある画面の DPI では
 		// 決め直さない。作ったときの高さを覚えておき、高さと位置はこちらで決める
@@ -110,6 +116,7 @@ bool StatusDisplay::Enable(bool showfd)
 		InvalidateRect(hwndparent, 0, false);
 	
 		PostMessage(hwnd,  SB_SETTEXT, SBT_OWNERDRAW | 1, 0);
+		PostMessage(hwnd,  SB_SETTEXT, SBT_OWNERDRAW | 2, 0);
 	}
 	return true;
 }
@@ -124,10 +131,12 @@ void StatusDisplay::Layout()
 
 		// ランプの欄の幅は画面の DPI に合わせ、位置は窓の中の幅から決める (枠の太さは DPI で変わる)。
 		// 窓の幅は画面の回転・倍率で変わるので、大きさが変わるたびに決め直す
-		int widths[2];
-		widths[0] = (rect.right-rect.left-border.vertical) - 1*(LampWidth()+border.split);
-		widths[1] = -1;
-		SendMessage(hwnd, SB_SETPARTS, 2, (LPARAM) widths);
+		// 知らせ・速さ (fps と動作周波数。M88gn)・ランプ
+		int widths[3];
+		widths[1] = (rect.right-rect.left-border.vertical) - 1*(LampWidth()+border.split);
+		widths[0] = widths[1] - (PerfWidth()+border.split);
+		widths[2] = -1;
+		SendMessage(hwnd, SB_SETPARTS, 3, (LPARAM) widths);
 	}
 }
 
@@ -183,9 +192,9 @@ void StatusDisplay::DrawItem(DRAWITEMSTRUCT* dis)
 	case 0:
 		{
 			// デバッガで止まっている間は地の色を変える (M88am と同じ色)
-			COLORREF bk = stopped ? RGB(0xe6, 0x82, 0xc8) : GetSysColor(COLOR_3DFACE);
+			COLORREF bk = stopped ? RGB(0xe6, 0x82, 0xc8) : Theme::C().statusbg;
 			SetBkColor(dis->hDC, bk);
-			SetTextColor(dis->hDC, stopped ? RGB(0, 0, 0) : GetSysColor(COLOR_MENUTEXT));
+			SetTextColor(dis->hDC, stopped ? RGB(0, 0, 0) : Theme::C().statusfg);
 			char* text = reinterpret_cast<char*>(dis->itemData);
 			// 自分で描く欄の DC にはステータスバーの字が選ばれていないので、窓の DPI の字を選ぶ
 			HGDIOBJ oldfont = statusfont ? SelectObject(dis->hDC, statusfont) : 0;
@@ -199,10 +208,62 @@ void StatusDisplay::DrawItem(DRAWITEMSTRUCT* dis)
 		}
 	case 1:
 		{
+			// 速さ (M88gn)
+			char text[64];
+			{
+				CriticalSection::Lock lock(cs);
+				lstrcpyn(text, perftext, sizeof(text));
+			}
+			HGDIOBJ oldfont = statusfont ? SelectObject(dis->hDC, statusfont) : 0;
+			SetBkMode(dis->hDC, TRANSPARENT);
+			SetTextColor(dis->hDC, Theme::C().statusfg);
+			RECT r = dis->rcItem;
+			DrawText(dis->hDC, text, -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+			if (oldfont)
+				SelectObject(dis->hDC, oldfont);
+			break;
+		}
+	case 2:
+		{
 			DrawLamps(dis->hDC, dis->rcItem.left, height/2);
 			break;
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+//	速さ (fps と動作周波数。M88gn)
+//
+void StatusDisplay::SetPerf(const char* text)
+{
+	{
+		CriticalSection::Lock lock(cs);
+		if (!strcmp(perftext, text))
+			return;
+		lstrcpyn(perftext, text, sizeof(perftext));
+	}
+	if (hwnd)
+		PostMessage(hwnd, SB_SETTEXT, SBT_OWNERDRAW | 1, 0);
+}
+
+void StatusDisplay::GetPerf(char* out, int size)
+{
+	CriticalSection::Lock lock(cs);
+	lstrcpyn(out, perftext, size);
+}
+
+// 速さの欄の幅: いちばん長くなる字の幅
+int StatusDisplay::PerfWidth()
+{
+	HDC hdc = GetDC(hwnd);
+	HGDIOBJ old = statusfont ? SelectObject(hdc, statusfont) : 0;
+	SIZE sz = { 0, 0 };
+	const char* sample = "000 fps  00.00 MHz";
+	GetTextExtentPoint32(hdc, sample, lstrlen(sample), &sz);
+	if (old)
+		SelectObject(hdc, old);
+	ReleaseDC(hwnd, hdc);
+	return sz.cx + Scale(16);
 }
 
 // ---------------------------------------------------------------------------
@@ -571,6 +632,7 @@ void StatusDisplay::Update()
 		{
 			LOG3("show: [%s] p:%5d d:%8d\n", entry->msg, entry->priority, entry->duration);
 			memcpy(buf, entry->msg, 128);
+			memcpy(shown, entry->msg, 128);
 			if (hwnd)
 				PostMessage(hwnd,  SB_SETTEXT, SBT_OWNERDRAW | 0, (LPARAM) buf);
 			else
@@ -598,6 +660,7 @@ void StatusDisplay::Update()
 		}
 		else
 		{
+			shown[0] = 0;
 			LOG0("clear\n");
 			if (hwnd)
 				PostMessage(hwnd, SB_SETTEXT, 0, (LPARAM) " ");
@@ -614,6 +677,29 @@ void StatusDisplay::Update()
 			}
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+//	今出している知らせとランプ (M88gn。ステータスの窓から)
+//
+void StatusDisplay::GetText(char* out, int size)
+{
+	// Update と同じ選び方。ステータスバーを隠していても読めるように、一覧から選ぶ
+	CriticalSection::Lock lock(cs);
+	int pc = 10000;
+	List* entry = 0;
+	int c = GetTickCount();
+	for (List* l = list; l; l = l->next)
+		if ((l->priority < pc) && ((!l->clear) || (l->duration - c) > 0))
+			entry = l, pc = l->priority;
+	// 期限の無い知らせは出した後に一覧から消えるので、出しているものを返す
+	lstrcpyn(out, entry ? entry->msg : shown, size);
+}
+
+void StatusDisplay::GetLamps(int lamps[3])
+{
+	for (int i = 0; i < 3; i++)
+		lamps[i] = litcurrent[i];
 }
 
 // ---------------------------------------------------------------------------
@@ -668,7 +754,7 @@ void StatusDisplay::UpdateDisplay()
 	if (hwnd)
 	{
 		if (update)
-			PostMessage(hwnd,  SB_SETTEXT, SBT_OWNERDRAW | 1, 0);
+			PostMessage(hwnd,  SB_SETTEXT, SBT_OWNERDRAW | 2, 0);
 		if (updatemessage)
 			Update();
 	}
@@ -682,3 +768,90 @@ void StatusDisplay::UpdateDisplay()
 }
 
 // 
+
+// ---------------------------------------------------------------------------
+//	ステータスバーを自分で描く (M88gn): 地と欄の区切りをテーマの色にし、各欄は DrawItem で描く
+//
+LRESULT CALLBACK StatusDisplay::BarProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+	StatusDisplay* sd = &statusdisplay;
+	switch (msg)
+	{
+	case WM_ERASEBKGND:
+		return 1;
+	case WM_PAINT:
+		{
+			PAINTSTRUCT ps;
+			HDC dc = BeginPaint(hwnd, &ps);
+			sd->PaintBar(dc);
+			EndPaint(hwnd, &ps);
+		}
+		return 0;
+	}
+	return CallWindowProc(sd->barproc, hwnd, msg, wp, lp);
+}
+
+void StatusDisplay::PaintBar(HDC hdc)
+{
+	RECT cr;
+	GetClientRect(hwnd, &cr);
+	int w = cr.right, h = cr.bottom;
+	if (w <= 0 || h <= 0)
+		return;
+	HDC dc = CreateCompatibleDC(hdc);
+	HBITMAP bmp = CreateCompatibleBitmap(hdc, w, h);
+	HGDIOBJ oldbmp = SelectObject(dc, bmp);
+	const Theme::Colors& c = Theme::C();
+	HBRUSH bg = CreateSolidBrush(c.statusbg);
+	FillRect(dc, &cr, bg);
+	DeleteObject(bg);
+	// 上の端の線 (画面との境)
+	HBRUSH sep = CreateSolidBrush(c.statussep);
+	RECT top = { 0, 0, w, 1 };
+	FillRect(dc, &top, sep);
+	int n = (int) SendMessage(hwnd, SB_GETPARTS, 0, 0);
+	for (int i = 0; i < n && i < 3; i++)
+	{
+		RECT r;
+		if (!SendMessage(hwnd, SB_GETRECT, i, (LPARAM) &r))
+			continue;
+		DRAWITEMSTRUCT dis;
+		memset(&dis, 0, sizeof(dis));
+		dis.CtlType = ODT_STATIC;
+		dis.itemID = i;
+		dis.hwndItem = hwnd;
+		dis.hDC = dc;
+		dis.rcItem = r;
+		LRESULT len = SendMessage(hwnd, SB_GETTEXTLENGTH, i, 0);
+		if (HIWORD(len) & SBT_OWNERDRAW)
+		{
+			dis.itemData = (ULONG_PTR) SendMessage(hwnd, SB_GETTEXT, i, 0);
+			if (i == 0 && !dis.itemData)
+				continue;
+			DrawItem(&dis);
+		}
+		else
+		{
+			char text[256] = "";
+			SendMessage(hwnd, SB_GETTEXT, i, (LPARAM) text);
+			HGDIOBJ of = statusfont ? SelectObject(dc, statusfont) : 0;
+			SetBkMode(dc, TRANSPARENT);
+			SetTextColor(dc, c.statusfg);
+			TextOut(dc, r.left, r.top, text, lstrlen(text));
+			if (of)
+				SelectObject(dc, of);
+		}
+		// 欄の区切り
+		if (i + 1 < n)
+		{
+			int m = Scale(4);
+			RECT sr = { r.right, r.top + m, r.right + 1, r.bottom - m };
+			FillRect(dc, &sr, sep);
+		}
+	}
+	DeleteObject(sep);
+	BitBlt(hdc, 0, 0, w, h, dc, 0, 0, SRCCOPY);
+	SelectObject(dc, oldbmp);
+	DeleteObject(bmp);
+	DeleteDC(dc);
+}

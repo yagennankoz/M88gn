@@ -10,6 +10,10 @@
 #include "pc88/pc88.h"
 #include "bpmon.h"
 #include "ioports.h"
+#include "patbp.h"
+#include "labeledit.h"
+#include "codemon.h"
+#include "memmon.h"
 #include "misc.h"
 #include "winexapi.h"
 
@@ -40,7 +44,7 @@ namespace
 //	構築/消滅
 //
 BreakMonitor::BreakMonitor()
-: core(0), iomode(false), cursor(-1), editindex(-1)
+: core(0), iomode(false), codemon(0), memmon(0), cursor(-1), editindex(-1)
 {
 }
 
@@ -113,9 +117,29 @@ void BreakMonitor::UpdateText()
 			else
 				wsprintf(hits, "%u", bp.hits);
 			// 条件とコメント
-			char cc[160];
+			// 長さ (M88gn): 10000 (64KB) でも後ろの列がずれないように、5 桁の欄 + 空白 1 つ
+			char lenstr[8];
+			wsprintf(lenstr, "%.4x", bp.length);
+			char cc[256];
+			// 番地のラベル (M88gn。メモリの実行・読み書きのとき。説明の欄の先頭に黄色で)
+			const char* bl = (!iomode && !bp.pattern) ? LabelNow(bp.cpu, bp.addr) : 0;
 			wsprintf(cc, "%s%s%s%s", bp.cond[0] ? "if " : "", bp.cond,
 					 (bp.cond[0] && bp.comment[0]) ? "  ; " : "", bp.comment);
+			// パターンのブレーク (M88gn): W の列に P、説明の前にパターンとバンク
+			if (bp.pattern)
+			{
+				char pd[256];
+				DescribePatternBreak(bp, pd);
+				char full[420];
+				wsprintf(full, "%s%s%s", pd, cc[0] ? "  " : "", cc);
+				Putf("%3d  %-4s  %.4x  %-5s %c %c %c  %-7s  %-9s  %s\n",
+					 index,
+					 bp.cpu == Debugger::cpu_sub ? "SUB" : "MAIN",
+					 bp.addr, lenstr, '-', '-', 'P',
+					 bp.enabled ? "on" : "off",
+					 hits, full);
+				continue;
+			}
 			if (iomode)
 			{
 				char port[8], name[96];
@@ -134,15 +158,25 @@ void BreakMonitor::UpdateText()
 					 hits, name);
 			}
 			else
-				Putf("%3d  %-4s  %.4x  %.4x  %c %c %c  %-7s  %-9s  %s\n",
+			{
+				Putf("%3d  %-4s  %.4x  %-5s %c %c %c  %-7s  %-9s  ",
 					 index,
 					 bp.cpu == Debugger::cpu_sub ? "SUB" : "MAIN",
-					 bp.addr, bp.length,
+					 bp.addr, lenstr,
 					 bp.exec  ? '*' : '-',
 					 bp.read  ? '*' : '-',
 					 bp.write ? '*' : '-',
 					 bp.enabled ? "on" : "off",
-					 hits, cc);
+					 hits);
+				if (bl)
+				{
+					PutLabel(bl);
+					if (cc[0])
+						Puts("  ");
+				}
+				Puts(cc);
+				Puts("\n");
+			}
 		}
 		else
 		{
@@ -194,12 +228,83 @@ void BreakMonitor::OnClick(POINT p, bool dblclick)
 	Update();
 }
 
+// ---------------------------------------------------------------------------
+//	右クリックのメニュー (M88gn)。その行を選んでから出す
+//
+void BreakMonitor::ShowRowMenu(HWND hdlg, POINT p)
+{
+	if (p.y < 1)
+		return;
+	core->Lock();
+	BuildView();
+	int count = int(view.size());
+	int row = GetLine() + p.y - 1;
+	int index = (row >= 0 && row < count) ? view[row] : -1;
+	Debugger::BreakPoint bp;
+	bool ok = index >= 0 && core->GetDebugger()->GetBreakPoint(index, &bp);
+	core->Unlock();
+	if (!ok)
+		return;
+	cursor = index;
+	Update();
+
+	enum { cmd_edit = 1, cmd_delete, cmd_enable, cmd_disable, cmd_code, cmd_mem };
+	HMENU hmenu = CreatePopupMenu();
+	if (!bp.io)		// I/O のポートは番地ではないので出さない
+	{
+		char at[64], buf[96];
+		AddrLabelText(at, bp.cpu, bp.addr, true);
+		wsprintf(buf, "Show %s in &Code", at);
+		AppendMenu(hmenu, MF_STRING | (codemon ? 0 : MF_GRAYED), cmd_code, buf);
+		wsprintf(buf, "Show %s in &Memory", at);
+		AppendMenu(hmenu, MF_STRING | (memmon ? 0 : MF_GRAYED), cmd_mem, buf);
+		AppendMenu(hmenu, MF_SEPARATOR, 0, 0);
+	}
+	AppendMenu(hmenu, MF_STRING, cmd_edit, "&Edit...");
+	AppendMenu(hmenu, MF_STRING, cmd_delete, "&Delete");
+	AppendMenu(hmenu, MF_SEPARATOR, 0, 0);
+	AppendMenu(hmenu, MF_STRING | (bp.enabled ? MF_GRAYED : 0), cmd_enable, "E&nable");
+	AppendMenu(hmenu, MF_STRING | (bp.enabled ? 0 : MF_GRAYED), cmd_disable, "D&isable");
+	POINT sp;
+	GetCursorPos(&sp);
+	int cmd = TrackPopupMenu(hmenu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, sp.x, sp.y, 0, hdlg, 0);
+	DestroyMenu(hmenu);
+
+	HWND owner = GetWindow(hdlg, GW_OWNER) ? GetWindow(hdlg, GW_OWNER) : GetAncestor(hdlg, GA_ROOT);
+	// パターンはそのバンク、ほかは今のバンク。メモリの窓は範囲に印を付ける
+	int bank = bp.pattern ? bp.patbank : 0xff;
+	uint len = Min(int(bp.length ? bp.length : 1), 0x10000 - int(bp.addr & 0xffff));
+	switch (cmd)
+	{
+	case cmd_code:
+		if (codemon)
+			codemon->ShowAt(bp.addr, bp.cpu == Debugger::cpu_sub, bank, GetHInst(), owner);
+		break;
+	case cmd_mem:
+		if (memmon)
+			memmon->ShowAddressIn(bp.addr, bp.cpu == Debugger::cpu_sub, bank, len, GetHInst(), owner);
+		break;
+	case cmd_edit:
+		ShowEditDialog(index);
+		break;
+	case cmd_delete:
+		DeleteSelected();
+		break;
+	case cmd_enable:
+	case cmd_disable:
+		if (bp.enabled != (cmd == cmd_enable))
+			ToggleAttr(index, 'e');
+		break;
+	}
+	Update();
+}
+
 void BreakMonitor::ToggleAttr(int index, int col)
 {
 	core->Lock();
 	Debugger* dbg = core->GetDebugger();
 	Debugger::BreakPoint bp;
-	if (dbg->GetBreakPoint(index, &bp))
+	if (dbg->GetBreakPoint(index, &bp) && (!bp.pattern || col == 'e'))	// パターンは E・R・W を使わない
 	{
 		switch (col)
 		{
@@ -241,6 +346,16 @@ BOOL BreakMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		{
 		case IDM_BP_ADD:
 			ShowEditDialog(-1);
+			Update();
+			break;
+
+		case IDM_BP_ADDPATTERN:		// M88gn
+			if (!iomode)
+			{
+				int i = EditPatternBreak(hdlg, GetHInst(), core, -1, 0);
+				if (i >= 0)
+					cursor = i;
+			}
 			Update();
 			break;
 
@@ -288,6 +403,10 @@ BOOL BreakMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		}
 		break;
 
+	case WM_INITMENUPOPUP:
+		EnableMenuItem(HMENU(wp), IDM_BP_ADDPATTERN, MF_BYCOMMAND | (iomode ? MF_GRAYED : MF_ENABLED));
+		break;
+
 	case WM_LBUTTONDOWN:
 		p.x = LOWORD(lp);
 		p.y = HIWORD(lp);
@@ -301,6 +420,14 @@ BOOL BreakMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		if (GetTextPos(&p))
 			OnClick(p, true);
 		break;
+
+	case WM_RBUTTONUP:
+		// 右クリックのメニュー (M88gn): Edit / Delete / Enable / Disable
+		p.x = (short) LOWORD(lp);
+		p.y = (short) HIWORD(lp);
+		if (GetTextPos(&p))
+			ShowRowMenu(hdlg, p);
+		return TRUE;
 
 	case WM_KEYDOWN:
 		if (wp == VK_DELETE)
@@ -324,6 +451,19 @@ BOOL BreakMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 //
 void BreakMonitor::ShowEditDialog(int index)
 {
+	// パターンのブレークは専用の窓 (M88gn)
+	if (index >= 0)
+	{
+		Debugger::BreakPoint bp;
+		core->Lock();
+		bool pat = core->GetDebugger()->GetBreakPoint(index, &bp) && bp.pattern;
+		core->Unlock();
+		if (pat)
+		{
+			EditPatternBreak(GetHWnd(), GetHInst(), core, index, 0);
+			return;
+		}
+	}
 	editindex = index;
 	// M88 は起動時に IME を切っている(ui.cpp:1092)ので、
 	// 日本語を入れるダイアログでは戻してから開く。
@@ -336,7 +476,7 @@ void BreakMonitor::ShowEditDialog(int index)
 
 BOOL BreakMonitor::EDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 {
-	char buf[16];
+	char buf[64];
 
 	switch (msg)
 	{
@@ -413,11 +553,14 @@ BOOL BreakMonitor::EDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 				return 0;
 
 			case IDOK:
-				GetDlgItemText(hdlg, IDC_BP_ADDR, buf, 5);
-				if (isxdigit((uint8) buf[0]))
+				GetDlgItemText(hdlg, IDC_BP_ADDR, buf, sizeof(buf));
+				uint inaddr;
+				// メモリはラベルの名前も読む (M88gn)。I/O のポートは 16 進だけ
+				if (iomode ? (isxdigit((uint8) buf[0]) && (inaddr = strtoul(buf, &dum, 16), true))
+						   : ParseAddrInput(buf, &inaddr))
 				{
 					Debugger::BreakPoint bp;
-					bp.addr = strtoul(buf, &dum, 16) & 0xffff;
+					bp.addr = inaddr & 0xffff;
 					bp.io = iomode;
 					bp.cpu = uint8(IsDlgButtonChecked(hdlg, IDC_BP_SUBCPU) == BST_CHECKED
 								   ? Debugger::cpu_sub : Debugger::cpu_main);

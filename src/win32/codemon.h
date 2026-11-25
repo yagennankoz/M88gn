@@ -44,6 +44,8 @@ public:
 	// 表示する CPU を切り替える (ブレークした CPU への自動追従)。
 	// main へ戻すときは、sub へ切り替える前に見ていたバンクを復元する
 	void ShowCpu(Debugger::CpuTarget cpu);
+	// CPU とバンクを合わせて番地を見せる (M88gn。ブレークポイント・ウォッチ・ラベルの窓から。bank は ShowAddressIn と同じ)
+	void ShowAt(uint addr, bool sub, int bank, HINSTANCE hinst, HWND parent);
 
 private:
 	void ScrollToPC();
@@ -58,8 +60,15 @@ private:
 	void UpdateCaption();		// タイトルに表示中の CPU / バンクを出す
 
 	bool DumpTo(TextBuffer& tb, int from, int to);	// 中身を組み立てる
+	// ラベル付き (M88gn): ラベルの行「名前:」、飛び先を名前に、命令の途中に当たるラベルは先頭に EQU
+	// source なら、アセンブラに通せる形 (ORG・ラベル・命令、番地とバイトはコメント。公式の命令以外は DB)
+	// from-to (両端を含む) の命令。最後の命令は to を越えることがある
+	bool DumpToLabeled(TextBuffer& tb, bool source, uint from, uint to);
+	bool AskDumpRange(const char* title);	// 範囲を聞く (dumpfrom・dumpto)
+	uint dumpfrom, dumpto;					// 前に指定した範囲 (窓を閉じるまで覚える)
 	bool Dump(FILE* fp, int from, int to);			// DumpTo を呼んで書き出すだけ
-	bool DumpImage();
+	enum { dump_plain = 0, dump_labeled, dump_source };
+	bool DumpImage(int mode = dump_plain);
 	bool CopyToClipboard();	// 0000-ffff の逆アセンブル全体をコピーする(F-3)
 	void ToggleBreakAt(POINT p);
 	void ShowLineMenu(HWND hdlg, POINT p);		// 右クリックのメニュー (M88gn)
@@ -71,6 +80,7 @@ private:
 	class MemoryMonitor* memmon;
 	bool showcycles;		// 命令のサイクル数 (T ステート) を行の右に出す (M88gn)
 	MemoryViewer::Type lasta0;		// ShowCpu(sub) に切り替える前に見ていたバンク
+	AddrBarItem addritem;			// メニューバーの Addr の欄 (M88gn)
 	DebugButtons buttons;			// メニューバーの Pause/Play/Step のボタン (M88gn)
 
 	// UpdateText() が描画時に計算した、各行の先頭アドレス。可変長命令

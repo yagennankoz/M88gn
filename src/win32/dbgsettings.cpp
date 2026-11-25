@@ -8,6 +8,7 @@
 #include "headers.h"
 #include "dbgsettings.h"
 #include "watchbank.h"
+#include "labeledit.h"
 
 namespace
 {
@@ -73,6 +74,17 @@ bool SaveDebugSettings(Debugger* dbg, const char* diskimage)
 		wsprintf(key, "BPN%d", i);
 		if (!WritePrivateProfileString("Breakpoints", key, bp.hitcount ? num : 0, path))
 			ok = false;
+		// パターン (M88gn): バンク,印,バイトの並び (16 進)
+		wsprintf(key, "BPP%d", i);
+		char pv[16 + Debugger::patmax * 2];
+		if (bp.pattern)
+		{
+			char* w = pv + wsprintf(pv, "%x,%x,", bp.patbank, bp.patflags);
+			for (int j = 0; j < bp.patlen; j++)
+				w += wsprintf(w, "%.2x", bp.pat[j]);
+		}
+		if (!WritePrivateProfileString("Breakpoints", key, bp.pattern ? pv : 0, path))
+			ok = false;
 	}
 
 	WritePrivateProfileString("Watch", 0, 0, path);
@@ -98,13 +110,37 @@ bool SaveDebugSettings(Debugger* dbg, const char* diskimage)
 			ok = false;
 	}
 
+	// ラベル (M88gn): L%d = cpu,addr,名前
+	WritePrivateProfileString("Labels", 0, 0, path);
+	int lcount = dbg->GetLabelCount();
+	wsprintf(buf, "%d", lcount);
+	if (!WritePrivateProfileString("Labels", "Count", buf, path))
+		ok = false;
+	for (int i = 0; i < lcount; i++)
+	{
+		int cpu, bank;
+		uint addr;
+		const char* name;
+		if (!dbg->GetLabelAt(i, &cpu, &addr, &bank, &name))
+			continue;
+		char key[16], val[16 + Debugger::labelmax];
+		wsprintf(key, "L%d", i);
+		wsprintf(val, "%x,%x,%s", cpu, addr, name);
+		if (!WritePrivateProfileString("Labels", key, val, path))
+			ok = false;
+		// バンク (Any でなければ名前で)
+		wsprintf(key, "LB%d", i);
+		if (!WritePrivateProfileString("Labels", key, (!cpu && bank != Debugger::label_anybank) ? WatchBankName(bank) : 0, path))
+			ok = false;
+	}
+
 	return ok;
 }
 
 // ---------------------------------------------------------------------------
 //	読み込み。既存の一覧は読み込み前に丸ごと消す
 //
-bool LoadDebugSettings(Debugger* dbg, const char* diskimage)
+bool LoadDebugSettings(Debugger* dbg, const char* diskimage, int* renamed)
 {
 	if (!diskimage || !diskimage[0])
 		return false;
@@ -118,6 +154,7 @@ bool LoadDebugSettings(Debugger* dbg, const char* diskimage)
 
 	dbg->DeleteAllBreakPoints();
 	dbg->DeleteAllWatches();
+	dbg->DeleteAllLabels();
 
 	int bpcount = GetPrivateProfileInt("Breakpoints", "Count", 0, path);
 	for (int i = 0; i < bpcount; i++)
@@ -148,6 +185,31 @@ bool LoadDebugSettings(Debugger* dbg, const char* diskimage)
 		bp.exec = exec != 0;
 		bp.read = read != 0;
 		bp.write = write != 0;
+		// パターン (M88gn)
+		{
+			char pv[16 + Debugger::patmax * 2];
+			wsprintf(key, "BPP%d", i);
+			unsigned int bank = 0, flags = 0;
+			char hex[Debugger::patmax * 2 + 1] = "";
+			if (GetPrivateProfileString("Breakpoints", key, "", pv, sizeof(pv), path)
+				&& sscanf_s(pv, "%x,%x,%128[0-9a-fA-F]", &bank, &flags, hex, (unsigned) sizeof(hex)) == 3)
+			{
+				int n = int(strlen(hex)) / 2;
+				for (int j = 0; j < n; j++)
+				{
+					char b[3] = { hex[j * 2], hex[j * 2 + 1], 0 };
+					bp.pat[j] = uint8(strtoul(b, 0, 16));
+				}
+				if (n > 0)
+				{
+					bp.pattern = true;
+					bp.patlen = uint8(n);
+					bp.patbank = uint8(bank);
+					bp.patflags = uint8(flags);
+					bp.exec = bp.read = bp.write = false;
+				}
+			}
+		}
 		// 復元した BP は必ず無効な状態から始める。有効なまま復元すると
 		// ROM のブート中に即ヒットして「起動が固まった」ように見える
 		// (特にメモリ BP)。有効化は BP 管理ウインドウで行う
@@ -180,6 +242,32 @@ bool LoadDebugSettings(Debugger* dbg, const char* diskimage)
 		const WatchBank* wb = FindWatchBankByName(bname);
 		w.bank = uint8(wb ? wb->type : MemoryViewer::mainram);
 		dbg->AddWatch(w);
+	}
+
+	// ラベル (M88gn)
+	int lcount = GetPrivateProfileInt("Labels", "Count", 0, path);
+	if (renamed)
+		*renamed = 0;
+	for (int i = 0; i < lcount; i++)
+	{
+		char key[16], val[16 + Debugger::labelmax];
+		wsprintf(key, "L%d", i);
+		if (!GetPrivateProfileString("Labels", key, "", val, sizeof(val), path) || !val[0])
+			continue;
+		unsigned int cpu = 0, addr = 0;
+		char name[Debugger::labelmax] = "";
+		if (sscanf_s(val, "%x,%x,%31[^\r\n]", &cpu, &addr, name, (unsigned) sizeof(name)) == 3)
+		{
+			char bname[16];
+			wsprintf(key, "LB%d", i);
+			GetPrivateProfileString("Labels", key, "", bname, sizeof(bname), path);
+			const WatchBank* wb = bname[0] ? FindWatchBankByName(bname) : 0;
+			int bank = wb ? int(wb->type) : int(Debugger::label_anybank);
+			// 名前の決まり (重複・使えない字) に合わせる。前の版で付けたものは合っていないことがある
+			if (FixLabelForSet(dbg, int(cpu), addr, bank, name, sizeof(name)) && renamed)
+				(*renamed)++;
+			dbg->SetLabel(int(cpu), addr, bank, name);
+		}
 	}
 
 	return true;

@@ -232,6 +232,12 @@ static int FindEntry(const uint8* code)
 //	コードの窓の右クリックのメニューから: 命令に当たる行へ移って色を付ける。
 //	窓が閉じていれば開く。表に無い命令 (非公式の命令など) ならステータスバーで知らせる
 //
+bool PC8801::IsOfficialInstruction(const uint8* code, int size)
+{
+	int i = FindEntry(code);
+	return i >= 0 && mnemtable[i].size == size;
+}
+
 void MnemonicMonitor::ShowInstruction(const uint8* code, HINSTANCE hinst, HWND parent)
 {
 	memcpy(selcode, code, sizeof(selcode));

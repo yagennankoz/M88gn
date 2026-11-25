@@ -14,6 +14,7 @@
 #include "pc88/pc88.h"
 #include "sublogmon.h"
 #include "misc.h"
+#include "labeledit.h"
 #include "88config.h"
 #include "winvars.h"
 
@@ -129,13 +130,21 @@ void SubLogMonitor::UpdateText()
 			uint32 d = (i > 0 && dbg->GetSubLogEntry(i - 1, &prev)) ? e.tick - prev.tick : 0;
 			char note[16];
 			Describe(e, note);
+			const char* sl = LabelNow(e.cpu, e.pc);		// PC ‚Ìƒ‰ƒxƒ‹ (M88gnBà–¾‚ÌŒã‚ë‚É‰©F‚Å)
 
 			SetBkCol(RGB(0, 0, 0x20));
 			SetTxCol(e.cpu == Debugger::cpu_main ? 0xffffff : 0xa0ffa0);
-			Putf("%5d  %6u.%.3u  %8u  %-3s  %.2X    %.2X    %.4X  %s\n",
+			Putf("%5d  %6u.%.3u  %8u  %-3s  %.2X    %.2X    %.4X  %s",
 				 i, us / 1000, us % 1000, d,
 				 e.cpu == Debugger::cpu_main ? "M>S" : "S>M",
 				 e.port, e.data, e.pc, note);
+			if (sl)
+			{
+				if (note[0])
+					Puts("  ");
+				PutLabel(sl);
+			}
+			Puts("\n");
 			continue;
 		}
 		SetBkCol(RGB(0, 0, 0x20));
@@ -163,8 +172,10 @@ bool SubLogMonitor::BuildText(TextBuffer& tb)
 		uint32 t = hasfirst ? e.tick - first.tick : 0;
 		uint us = uint((unsigned __int64)(t) * 10 / clock);
 		uint32 d = (i > 0 && dbg->GetSubLogEntry(i - 1, &prev)) ? e.tick - prev.tick : 0;
-		char note[16];
+		char note[16 + Debugger::labelmax + 4];
 		Describe(e, note);
+		if (const char* sl = LabelNow(e.cpu, e.pc))
+			lstrcat(note, note[0] ? "  " : ""), lstrcat(note, sl);
 		tb.Addf("%d\t%u.%.3u\t%u\t%s\t%.2X\t%.2X\t%.4X\t%s\r\n", i, us / 1000, us % 1000, d,
 				e.cpu == Debugger::cpu_main ? "M>S" : "S>M", e.port, e.data, e.pc, note);
 	}

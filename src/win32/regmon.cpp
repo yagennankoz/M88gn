@@ -10,6 +10,8 @@
 #include "misc.h"
 #include "pc88/pc88.h"
 #include "wincore.h"
+#include "codemon.h"
+#include "memmon.h"
 
 using namespace PC8801;
 
@@ -40,7 +42,7 @@ const Z80RegMonitor::RegField Z80RegMonitor::fields[reg_max] =
 //	構築/消滅
 //
 Z80RegMonitor::Z80RegMonitor()
-: core(0), editcpu(0), editid(0)
+: core(0), codemon(0), memmon(0), editcpu(0), editid(0)
 {
 }
 
@@ -184,8 +186,71 @@ BOOL Z80RegMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 			}
 		}
 		return 0;
+
+	case WM_RBUTTONUP:
+		// 右クリック (M88gn): 番地のレジスターなら、メモリの窓・コードの窓のその番地へ
+		{
+			POINT p;
+			p.x = (short) LOWORD(lp);
+			p.y = (short) HIWORD(lp);
+			if (GetTextPos(&p))
+				ShowFieldMenu(hdlg, p);
+		}
+		return TRUE;
 	}
 	return WinMonitor::DlgProc(hdlg, msg, wp, lp);
+}
+
+// ---------------------------------------------------------------------------
+//	右クリックのメニュー (M88gn)。16 ビットのレジスター (AF・AF' を除く) の値を番地として、
+//	メモリの窓・コードの窓で見せる。サブ CPU の欄ならサブの CPU のメモリ
+//
+void Z80RegMonitor::ShowFieldMenu(HWND hdlg, POINT p)
+{
+	int cpu, id;
+	if (!FindField(p, &cpu, &id))
+		return;
+	const RegField& f = fields[id];
+	if (f.vallen != 4 || id == reg_af || id == reg_af2)
+		return;
+	uint addr = GetRegValue(cpu, id) & 0xffff;
+
+	enum { cmd_mem = 1, cmd_code };
+	HMENU hmenu = CreatePopupMenu();
+	// 番地にラベルがあれば「名前(1234H)」(M88gn。コード・メモリの窓のメニューと同じ)。
+	// バンクは CPU がその番地で今見ているもの (サブ CPU はバンクが無い)
+	int bank = cpu ? -1 : int(core->GetMem1()->GetRdBank(addr));
+	const char* label = core->GetDebugger()->GetLabel(cpu, addr, bank);
+	char at[64];
+	if (label)
+		wsprintf(at, "%s(%.4XH)", label, addr);
+	else
+		wsprintf(at, "%.4XH", addr);
+	char buf[96];
+	wsprintf(buf, "Show %s %s in M&emory", f.name, at);
+	AppendMenu(hmenu, MF_STRING | (memmon ? 0 : MF_GRAYED), cmd_mem, buf);
+	wsprintf(buf, "Show %s %s in &Code", f.name, at);
+	AppendMenu(hmenu, MF_STRING | (codemon ? 0 : MF_GRAYED), cmd_code, buf);
+
+	POINT sp;
+	GetCursorPos(&sp);
+	int cmd = TrackPopupMenu(hmenu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, sp.x, sp.y, 0, hdlg, 0);
+	DestroyMenu(hmenu);
+
+	HWND owner = GetWindow(hdlg, GW_OWNER);
+	switch (cmd)
+	{
+	case cmd_mem:
+		memmon->ShowAddressCpu(addr, cpu == 1, GetHInst(), owner);
+		break;
+
+	case cmd_code:
+		// 開いてから CPU を合わせ (ShowCpu は開いている窓だけ)、もう一度番地へ
+		codemon->ShowAddress(addr, GetHInst(), owner);
+		codemon->ShowCpu(cpu == 1 ? Debugger::cpu_sub : Debugger::cpu_main);
+		codemon->ShowAddress(addr, GetHInst(), owner);
+		break;
+	}
 }
 
 // ---------------------------------------------------------------------------

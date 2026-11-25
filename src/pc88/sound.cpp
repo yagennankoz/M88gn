@@ -40,6 +40,8 @@ bool Sound::Init(PC88* pc88, uint rate, int bufsize)
 	enabled = false;
 	mixthreshold = 16;
 	mastergain = 4096;
+	capturecb = 0;
+	capturectx = 0;
 	
 	if (!SetRate(rate, bufsize))
 		return false;
@@ -142,6 +144,8 @@ int Sound::Get(SampleL* dest, int nsamples)
 	memset(dest, 0, nsamples * 2 * sizeof(int32));
 	CriticalSection::Lock lock(cs_ss);
 	MixAll(dest, nsamples);
+	if (capturecb)
+		capturecb(capturectx, dest, nsamples, mixrate);	// ˜^‰æ (M88gn)
 	return nsamples;
 }
 

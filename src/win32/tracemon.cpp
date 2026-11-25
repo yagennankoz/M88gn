@@ -10,6 +10,7 @@
 #include "pc88/pc88.h"
 #include "tracemon.h"
 #include "misc.h"
+#include "labeledit.h"
 #include "88config.h"
 #include "winvars.h"
 
@@ -124,11 +125,11 @@ void TraceMonitor::UpdateText()
 	SetBkCol(RGB(0, 0, 0x50));
 	// # 列は 100/500/1000 件の -1000 まで欠けないよう %5s/%5d にする(G-1)。
 	// 切り詰め(精度指定)は付けない ― 件数が増えても桁が伸びるだけで壊れない
-	Putf("%5s  %-4s  %-4s  %-4s  %-2s  %-20s  %-4s %-4s %-4s %-4s %-4s %-4s %-4s %-4s %-4s %-4s  %-2s %-2s %-2s %-3s\n",
+	Putf("%5s  %-4s  %-4s  %-4s  %-2s  %-20s  %-4s %-4s %-4s %-4s %-4s %-4s %-4s %-4s %-4s %-4s  %-2s %-2s %-2s %-3s  %s\n",
 		 "#", "CPU", "PC", "SP", "D", "Disassemble",
 		 "AF", "BC", "DE", "HL", "IX", "IY",
 		 "AF'", "BC'", "DE'", "HL'",
-		 "I", "R", "IM", "IFF");
+		 "I", "R", "IM", "IFF", "Label");
 
 	dbg->SetSuppressBreak(true);
 	for (int y = 0; y < rows; y++)
@@ -150,7 +151,7 @@ void TraceMonitor::UpdateText()
 
 				SetTxCol(0xffffff);
 				SetBkCol(RGB(0, 0, 0x20));
-				Putf("%5d  %-4s  %.4x  %.4x  %-2d  %-20.20s  %.4x %.4x %.4x %.4x %.4x %.4x %.4x %.4x %.4x %.4x  %.2x %.2x %-2d %d:%d\n",
+				Putf("%5d  %-4s  %.4x  %.4x  %-2d  %-20.20s  %.4x %.4x %.4x %.4x %.4x %.4x %.4x %.4x %.4x %.4x  %.2x %.2x %-2d %d:%d  ",
 					 num,
 					 e.cpu == Debugger::cpu_sub ? "SUB" : "MAIN",
 					 e.pc, e.sp, e.depth, buf,
@@ -159,6 +160,10 @@ void TraceMonitor::UpdateText()
 					 e.reg.r_af & 0xffff, e.reg.r_bc & 0xffff, e.reg.r_de & 0xffff, e.reg.r_hl & 0xffff,
 					 e.reg.ireg, rcombined, e.reg.intmode,
 					 e.reg.iff1 ? 1 : 0, e.reg.iff2 ? 1 : 0);
+				// PC のラベル (M88gn)
+				const char* tl = LabelNow(e.cpu, e.pc);
+				SetTxCol(RGB(0xff, 0xe0, 0x60));
+				Putf("%s\n", tl ? tl : "");
 				continue;
 			}
 		}
@@ -211,13 +216,13 @@ bool TraceMonitor::BuildText(TextBuffer& tb)
 		// (Z80_x86.cpp の合成式と同じ形。仕様書 §5.4)
 		uint rcombined = (e.reg.rreg & 0x7f) | (e.reg.rreg7 & 0x80);
 
-		tb.Addf("%d\t%s\t%.4x\t%.4x\t%d\t%s\t%.4x\t%.4x\t%.4x\t%.4x\t%.4x\t%.4x\t%.4x\t%.4x\t%.4x\t%.4x\t%.2x\t%.2x\t%d\t%d\t%d\r\n",
+		tb.Addf("%d\t%s\t%.4x\t%.4x\t%d\t%s\t%.4x\t%.4x\t%.4x\t%.4x\t%.4x\t%.4x\t%.4x\t%.4x\t%.4x\t%.4x\t%.2x\t%.2x\t%d\t%d\t%d\t%s\r\n",
 				num, e.cpu == Debugger::cpu_sub ? "SUB" : "MAIN", e.pc, e.sp, e.depth, buf,
 				e.reg.r.w.af & 0xffff, e.reg.r.w.bc & 0xffff, e.reg.r.w.de & 0xffff,
 				e.reg.r.w.hl & 0xffff, e.reg.r.w.ix & 0xffff, e.reg.r.w.iy & 0xffff,
 				e.reg.r_af & 0xffff, e.reg.r_bc & 0xffff, e.reg.r_de & 0xffff, e.reg.r_hl & 0xffff,
 				e.reg.ireg, rcombined, e.reg.intmode,
-				e.reg.iff1 ? 1 : 0, e.reg.iff2 ? 1 : 0);
+				e.reg.iff1 ? 1 : 0, e.reg.iff2 ? 1 : 0, LabelNow(e.cpu, e.pc) ? LabelNow(e.cpu, e.pc) : "");
 	}
 	dbg->SetSuppressBreak(false);
 	core->Unlock();

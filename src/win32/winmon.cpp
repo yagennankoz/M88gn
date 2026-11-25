@@ -8,9 +8,11 @@
 #include <climits>
 #include "resource.h"
 #include "winmon.h"
+#include "labeledit.h"
 #include "misc.h"
 #include "88config.h"
 #include "dpi.h"
+#include "uitheme.h"
 
 #ifndef WM_DPICHANGED
 #define WM_DPICHANGED	0x02e0
@@ -23,7 +25,6 @@ static const int fontsizedefault = 18;
 
 // タイトルバーのメニュー (システムメニュー) に足す項目 (下の 4 ビットは Windows が使うので 0。M88gn)
 enum { sc_fontlarger = 0x1010, sc_fontsmaller = 0x1020, sc_fontdefault = 0x1030 };
-
 // デバッグの窓のフォント (すべての窓で共通。M88gn)
 static const char fontfacedefault[] = "ＭＳ ゴシック";		// Windows のフォントの名前 (M88am の「ＭＳゴシック」は空白が無く、似たフォントで代わりに描いていた)
 char WinMonitor::fontface[LF_FACESIZE] = "";
@@ -59,7 +60,8 @@ static void ClampToWorkArea(RECT* rect)
 //	構築/消滅
 //
 WinMonitor::WinMonitor()
-: txtbuf(0), txpbuf(0), timerinterval(0), timer(0), wheeldelta(0), inisection(0),
+: guidetracking(false), txtbuf(0), txpbuf(0), timerinterval(0), timer(0), wheeldelta(0), inisection(0),
+  guiderow(-1), guidecol1(-1), guidecol2(-1),
   defcols(0), defrows(0), savedpi(0)
 {
 	hwnd = 0;
@@ -154,7 +156,10 @@ void WinMonitor::SaveMonitorConfig()
 		return;
 
 	RECT rect;
-	GetWindowRect(hwnd, &rect);
+	if (docked)
+		rect = wndrect;		// ドックしている間は浮かせたときの位置・大きさ (M88gn)
+	else
+		GetWindowRect(hwnd, &rect);
 
 	const char* ini = PC8801::GetM88IniPath();
 	char buf[32];
@@ -215,6 +220,7 @@ void WinMonitor::Show(HINSTANCE hinstance, HWND hwndparent, bool show)
 			}
 			SetLines(nlines);
 			Start();
+			DockShown();		// 前にペインにあったなら、そのペインへ (M88gn)
 		}
 	}
 	else
@@ -291,7 +297,8 @@ void WinMonitor::ResizeWindow(HWND hwnd)
 {
 	RECT rect;
 
-	GetWindowRect(hwnd, &wndrect);
+	if (!docked)
+		GetWindowRect(hwnd, &wndrect);	// ドックしている間は浮かせたときの位置を残す (M88gn)
 	GetClientRect(hwnd, &rect);
 
 	clientwidth = rect.right;
@@ -589,6 +596,103 @@ void WinMonitor::Putf(const char* msg, ...)
 // ---------------------------------------------------------------------------
 //	窓書き換え
 //
+// マスの字を地を塗らずに書き直す (M88gn)
+void WinMonitor::RedrawCellText(HDC dc, int x, int y, int n)
+{
+	if (!txtbuf || y < 0 || y >= height)
+		return;
+	HGDIOBJ oldfont = SelectObject(dc, hfont);
+	int oldmode = SetBkMode(dc, TRANSPARENT);
+	for (int i = 0; i < n; i++)
+	{
+		int cx = x + i;
+		if (cx < 0 || cx >= width)
+			continue;
+		const TXCHAR& c = txtbuf[y * width + cx];
+		SetTextColor(dc, c.txcol);
+		TextOut(dc, cx * fontwidth, y * fontheightpx, &c.ch, 1);
+	}
+	SetBkMode(dc, oldmode);
+	SelectObject(dc, oldfont);
+}
+
+// ラベルを色付きで書く (M88gn)
+void WinMonitor::PutLabel(const char* label)
+{
+	COLORREF c = txcol;
+	txcol = labelcolor;
+	Puts(label);
+	txcol = c;
+}
+
+void WinMonitor::PutAddrLabel(int cpu, uint addr, int width)
+{
+	const char* l = PC8801::LabelNow(cpu, addr);
+	char buf[16];
+	int n;
+	if (l)
+	{
+		PutLabel(l);
+		wsprintf(buf, "(%.4X)", addr & 0xffff);
+		n = lstrlen(l) + lstrlen(buf);
+	}
+	else
+	{
+		wsprintf(buf, "%.4X", addr & 0xffff);
+		n = lstrlen(buf);
+	}
+	Puts(buf);
+	for (; n < width; n++)
+		Puts(" ");
+}
+
+// マウスの下の行の下線と桁の縦線 (M88gn)
+void WinMonitor::SetGuide(int row, int col1, int col2)
+{
+	if (row == guiderow && col1 == guidecol1 && col2 == guidecol2)
+		return;
+	guiderow = row, guidecol1 = col1, guidecol2 = col2;
+	if (hwnd)
+		InvalidateRect(hwnd, 0, FALSE);
+}
+
+void WinMonitor::TrackGuideLeave(HWND hdlg)
+{
+	if (guidetracking)
+		return;
+	TRACKMOUSEEVENT tme;
+	tme.cbSize = sizeof(tme);
+	tme.dwFlags = TME_LEAVE;
+	tme.hwndTrack = hdlg;
+	tme.dwHoverTime = 0;
+	guidetracking = !!TrackMouseEvent(&tme);
+}
+
+void WinMonitor::DrawGuide(HDC dc)
+{
+	if (guiderow < 0 && guidecol1 < 0 && guidecol2 < 0)
+		return;
+	int th = Max(1, fontheightpx / 16);		// 線の太さ (字の大きさに合わせる)
+	int bottom = Min(clientheight, height * fontheightpx);
+	HBRUSH hb = CreateSolidBrush(RGB(0x60, 0xd0, 0xff));
+	RECT r;
+	if (guiderow >= 0 && guiderow < height)
+	{
+		SetRect(&r, 0, (guiderow + 1) * fontheightpx - th, clientwidth, (guiderow + 1) * fontheightpx);
+		FillRect(dc, &r, hb);
+	}
+	int cols[2] = { guidecol1, guidecol2 };
+	for (int i = 0; i < 2; i++)
+	{
+		if (cols[i] < 0 || cols[i] > width)
+			continue;
+		int x = cols[i] * fontwidth;
+		SetRect(&r, x - th, 0, x, bottom);
+		FillRect(dc, &r, hb);
+	}
+	DeleteObject(hb);
+}
+
 void WinMonitor::Draw(HWND hwnd, HDC hdc)
 {
 	if (!hbitmap)
@@ -607,6 +711,9 @@ void WinMonitor::Draw(HWND hwnd, HDC hdc)
 	SelectObject(hmemdc, holdfont);
 
 	BitBlt(hdc, 0, 0, clientwidth, clientheight, hmemdc, 0, 0, SRCCOPY);
+	// 線は画面の側だけに描く (裏の絵は文字の差分の描き直しに使うので汚さない)
+	DrawOverlay(hdc);
+	DrawGuide(hdc);
 
 	SelectObject(hmemdc, holdbmp);
 	DeleteDC(hmemdc);
@@ -1119,6 +1226,7 @@ BOOL WinMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 	case WM_INITDIALOG:
 		SetFont(hdlg, fontheight);
 		ResizeWindow(hdlg);
+		Theme::ApplyScrollBars(hdlg);		// スクロールバーをテーマに合わせる (M88gn)
 		{
 			// タイトルバーのメニューに、文字の大きさを変える項目を足す (M88gn)
 			HMENU hsys = GetSystemMenu(hdlg, FALSE);
@@ -1128,6 +1236,8 @@ BOOL WinMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 				AppendMenu(hsys, MF_STRING, sc_fontlarger, "文字を大きく(&L)\tCtrl++");
 				AppendMenu(hsys, MF_STRING, sc_fontsmaller, "文字を小さく(&S)\tCtrl+-");
 				AppendMenu(hsys, MF_STRING, sc_fontdefault, "文字の大きさを元に戻す(&D)\tCtrl+0");
+				if (inisection)		// ペインにドック (M88gn)
+					AddDockMenu(hsys);
 			}
 		}
 
@@ -1170,6 +1280,8 @@ BOOL WinMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		break;
 
 	case WM_SYSCOMMAND:
+		if (DockSysCommand(wp))		// ペインにドック (M88gn)
+			return TRUE;
 		switch (wp & 0xfff0)
 		{
 		case sc_fontlarger:		ChangeFontSize(+1); return TRUE;
@@ -1177,6 +1289,13 @@ BOOL WinMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		case sc_fontdefault:	SetFontSize(fontsizedefault); return TRUE;
 		}
 		break;
+
+	case WM_DPICHANGED_AFTERPARENT:
+		// ペインに入っていて、本体の窓が DPI の違う画面へ移った: 文字をその DPI で作り直す (M88gn)
+		SetFont(hdlg, fontheight);
+		ResizeWindow(hdlg);
+		Update();
+		return TRUE;
 
 	case WM_DPICHANGED:
 		// DPI の違う画面へ移った: 文字をその DPI で作り直し、Windows の勧める位置・大きさにする (M88gn)

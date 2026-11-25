@@ -11,6 +11,7 @@
 #include "pc88/memview.h"
 #include "wincore.h"
 #include "dbgbuttons.h"
+#include "patinput.h"
 
 // ---------------------------------------------------------------------------
 
@@ -64,6 +65,13 @@ private:
 	int AddrAtPos(POINT p);					// 文字の位置のデータの番地 (16 進の欄か文字の欄。無ければ -1)
 	void UpdateLabelTip(POINT p, bool inside);	// ラベルのあるウォッチの上ならツールチップを出す
 	HWND hwndtip;
+	// ラベルの付いたデータを囲む角丸の箱 (M88gn)。UpdateText で集めて DrawOverlay で描く
+	struct LabelBox { int x, y, n; };		// 文字の桁・行・幅 (文字数)
+	std::vector<LabelBox> labelboxes;
+	void DrawOverlay(HDC hdc);
+	AddrBarItem addritem;					// メニューバーの Addr の欄 (M88gn)
+	void ShowCursorAddr(int addr);			// メニューバーにマウスの下の番地を出す (-1 なら ----。M88gn)
+	int curaddr;							// メニューバーに出している番地 (-2: まだ出していない)
 	int tipaddr;							// ツールチップを出している番地 (-1 なら出していない)
 	bool tiptracking;
 	std::vector<Debugger::WatchEntry> watchshown;	// 表示中の CPU のウォッチ。UpdateText で作る
@@ -87,6 +95,22 @@ private:					// 1 = ウォッチ、2 = ブレークポイント (両方なら 3)
 	static BOOL CALLBACK RDlgProcGate(HWND, UINT, WPARAM, LPARAM);
 	uint rangestart, rangeend;
 	bool rangeload;
+
+	// 検索 (M88gn)。今表示しているバンクから、文字列か 1～16 バイトの並びを探す
+	bool Find();							// ダイアログを出して探す (パターンのブレークを設定することもある)
+	void FindPattern(bool forward);
+	bool PatternAt(const uint8* p);
+	bool InFound(uint addr) { return foundaddr >= 0 && uint(addr - foundaddr) < uint(foundlen); }
+	void SetPatternBreak();					// 検索のダイアログの Set Breakpoint
+	BOOL SDlgProc(HWND, UINT, WPARAM, LPARAM);
+	static BOOL CALLBACK SDlgProcGate(HWND, UINT, WPARAM, LPARAM);
+	PatternInput search;					// 探しているもの (search.len が 0 ならまだ探していない)
+	int foundaddr, foundlen;				// 見つけた所 (foundaddr が -1 なら無し)
+	bool searchforward;
+public:
+	// パターンのブレークで止まったとき (M88gn)。揃った所を緑にして見せる
+	void ShowMatch(uint addr, uint len);
+private:
 
 	void SetWatch(uint, uint);
 

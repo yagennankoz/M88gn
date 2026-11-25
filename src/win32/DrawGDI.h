@@ -26,6 +26,8 @@ public:
 	void DrawScreen(const RECT& rect, bool refresh);
 	bool Lock(uint8** pimage, int* pbpl);
 	bool Unlock();
+	// 窓の表示で画面を置く位置 (タイトルの段の下。M88gn)
+	void SetViewRect(const RECT* r) { ox = r ? r->left : 0; oy = r ? r->top : 0; }
 
 private:
 	struct BI256		// BITMAPINFO
@@ -49,6 +51,7 @@ private:
 	int		m_nBitmapW;
 	int		m_nBitmapH;
 	int		m_nMag;
+	int		ox, oy;
 };
 
 #endif // !defined(win32_drawgdi_h)

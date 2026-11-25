@@ -195,6 +195,8 @@
     <ClCompile Include="src\win32\loadmon.cpp" />
     <ClCompile Include="src\Win32\main.cpp" />
     <ClCompile Include="src\win32\memmon.cpp" />
+    <ClCompile Include="src\win32\patbp.cpp" />
+    <ClCompile Include="src\win32\patinput.cpp" />
     <ClCompile Include="src\win32\module.cpp" />
     <ClCompile Include="src\win32\mvmon.cpp" />
     <ClCompile Include="src\Win32\newdisk.cpp" />
@@ -221,6 +223,18 @@
     <ClCompile Include="src\win32\bpmon.cpp" />
     <ClCompile Include="src\win32\watchmon.cpp" />
     <ClCompile Include="src\win32\mnemmon.cpp" />
+    <ClCompile Include="src\win32\statmon.cpp" />
+    <ClCompile Include="src\win32\lapmon.cpp" />
+    <ClCompile Include="src\win32\labeledit.cpp" />
+    <ClCompile Include="src\win32\lblmon.cpp" />
+    <ClCompile Include="src\win32\dockhost.cpp" />
+    <ClCompile Include="src\win32\dockclient.cpp" />
+    <ClCompile Include="src\win32\uititle.cpp" />
+    <ClCompile Include="src\win32\uitheme.cpp" />
+    <ClCompile Include="src\win32\videorec.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\win32\sublogmon.cpp" />
     <ClCompile Include="src\win32\videomon.cpp" />
     <ClCompile Include="src\win32\dbgbuttons.cpp" />
@@ -354,6 +368,8 @@
     <ClInclude Include="src\win32\keybconn.h" />
     <ClInclude Include="src\win32\loadmon.h" />
     <ClInclude Include="src\win32\memmon.h" />
+    <ClInclude Include="src\win32\patbp.h" />
+    <ClInclude Include="src\win32\patinput.h" />
     <ClInclude Include="src\Win32\messages.h" />
     <ClInclude Include="src\win32\module.h" />
     <ClInclude Include="src\win32\mvmon.h" />
@@ -385,6 +401,12 @@
     <ClInclude Include="src\win32\bpmon.h" />
     <ClInclude Include="src\win32\watchmon.h" />
     <ClInclude Include="src\win32\mnemmon.h" />
+    <ClInclude Include="src\win32\statmon.h" />
+    <ClInclude Include="src\win32\lapmon.h" />
+    <ClInclude Include="src\win32\labeledit.h" />
+    <ClInclude Include="src\win32\lblmon.h" />
+    <ClInclude Include="src\win32\dockhost.h" />
+    <ClInclude Include="src\win32\dockclient.h" />
     <ClInclude Include="src\win32\sublogmon.h" />
     <ClInclude Include="src\win32\videomon.h" />
     <ClInclude Include="src\win32\dbgbuttons.h" />

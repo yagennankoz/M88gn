@@ -21,6 +21,7 @@
 #include "memmon.h"
 #include "88config.h"
 #include "dpi.h"
+#include "dockclient.h"
 #include "misc.h"
 
 #ifndef WM_DPICHANGED
@@ -39,7 +40,7 @@ static const char* const tabnames[] = { "Graphic", "Text", "Palette" };
 //	構築/消滅
 //
 VideoMonitor::VideoMonitor()
-: core(0), memmon(0), hinst(0), hwnd(0), owner(0), htab(0), font(0), dpi(96), tab(0),
+: core(0), memmon(0), hinst(0), hwnd(0), owner(0), tabfont(0), tabh(0), font(0), dpi(96), tab(0),
   captured(false), textbase(0), textw(0), texth(0), textattrs(0), textbytes(0), textmode(0), textlines(0), capturetick(0),
   usepalette(true), semimode(true), statush(0), textzoom(0), tfont(0), tfontpx(0), tcw(8), tch(16), tscrollx(0), tscrolly(0), zoom(0), scrollx(0), scrolly(0), dragging(false), hovercol(-1), imgw(0), imgh(0), cellw(8), cellh(16), hoverrow(-1),
   posx(0), posy(0), width(0), height(0), placed(false)
@@ -49,6 +50,7 @@ VideoMonitor::VideoMonitor()
 	memset(&sinfo, 0, sizeof(sinfo));
 	memset(text, 0, sizeof(text));
 	memset(btn, 0, sizeof(btn));
+	memset(tabrc, 0, sizeof(tabrc));
 	SetRectEmpty(&imgrect);
 	SetRectEmpty(&textrect);
 	SetRectEmpty(&semibtn);
@@ -64,6 +66,8 @@ VideoMonitor::~VideoMonitor()
 {
 	if (font)
 		DeleteObject(font);
+	if (tabfont)
+		DeleteObject(tabfont);
 	if (tfont)
 		DeleteObject(tfont);
 }
@@ -102,10 +106,13 @@ void VideoMonitor::SavePlacement()
 {
 	if (!hwnd)
 		return;
-	RECT r;
-	GetWindowRect(hwnd, &r);
-	posx = r.left, posy = r.top, width = r.right - r.left, height = r.bottom - r.top;
-	placed = true;
+	if (!docked)		// ペインに入っている間は浮かせたときの位置・大きさのまま (M88gn)
+	{
+		RECT r;
+		GetWindowRect(hwnd, &r);
+		posx = r.left, posy = r.top, width = r.right - r.left, height = r.bottom - r.top;
+		placed = true;
+	}
 	const char* ini = PC8801::GetM88IniPath();
 	char buf[16];
 	wsprintf(buf, "%d", posx);		WritePrivateProfileString("MonitorVideo", "PosX", buf, ini);
@@ -127,13 +134,16 @@ void VideoMonitor::Show(HINSTANCE hi, HWND own, bool show)
 	owner = own;
 	if (show)
 	{
+		bool created = false;
 		if (!hwnd)
-			Create();
+			Create(), created = true;
 		if (hwnd)
 		{
 			ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 			if (core->IsStopped())
 				Refresh();
+			if (created)
+				DockShown();		// 前にペインにあったなら、そのペインへ
 		}
 	}
 	else if (hwnd)
@@ -246,20 +256,83 @@ void VideoMonitor::MakeFont()
 	cellh = tm.tmHeight;
 	SelectObject(hdc, old);
 	ReleaseDC(hwnd, hdc);
-	if (htab)
-		SendMessage(htab, WM_SETFONT, (WPARAM) font, TRUE);
+	// タブの字はメニューと同じ字
+	if (tabfont)
+		DeleteObject(tabfont);
+	NONCLIENTMETRICSW ncm;
+	Dpi::GetNonClientMetrics(&ncm, dpi);
+	tabfont = CreateFontIndirectW(&ncm.lfMenuFont);
 }
 
 void VideoMonitor::Layout()
 {
 	RECT rc;
 	GetClientRect(hwnd, &rc);
-	if (htab)
+	// タブ: 字の幅 + 左右の余白
+	HDC hdc = GetDC(hwnd);
+	HGDIOBJ old = SelectObject(hdc, tabfont);
+	TEXTMETRIC tm;
+	GetTextMetrics(hdc, &tm);
+	tabh = tm.tmHeight + Scale(12);
+	int x = 0;
+	for (int i = 0; i < ntabs; i++)
 	{
-		int th = cellh + Scale(10);
-		MoveWindow(htab, 0, 0, rc.right, th, TRUE);
+		SIZE sz;
+		GetTextExtentPoint32(hdc, tabnames[i], lstrlen(tabnames[i]), &sz);
+		SetRect(&tabrc[i], x, 0, x + sz.cx + Scale(28), tabh);
+		x = tabrc[i].right;
 	}
+	SelectObject(hdc, old);
+	ReleaseDC(hwnd, hdc);
 	InvalidateRect(hwnd, 0, false);
+}
+
+// ---------------------------------------------------------------------------
+//	タブ (M88gn): 選んでいるタブは下の地と同じ色で、上に色の線。ほかは沈んだ地
+//
+void VideoMonitor::PaintTabs(HDC hdc, const RECT& rc)
+{
+	RECT bar = { rc.left, rc.top, rc.right, rc.top + tabh };
+	HBRUSH b = CreateSolidBrush(RGB(0x16, 0x16, 0x2c));
+	FillRect(hdc, &bar, b);
+	DeleteObject(b);
+	HGDIOBJ old = SelectObject(hdc, tabfont);
+	SetBkMode(hdc, TRANSPARENT);
+	for (int i = 0; i < ntabs; i++)
+	{
+		RECT r = tabrc[i];
+		if (i == tab)
+		{
+			HBRUSH sb = CreateSolidBrush(RGB(0, 0, 0x20));
+			FillRect(hdc, &r, sb);
+			DeleteObject(sb);
+			RECT line = { r.left, r.top, r.right, r.top + Max(2, Scale(2)) };
+			HBRUSH lb = CreateSolidBrush(RGB(0x50, 0x90, 0xff));
+			FillRect(hdc, &line, lb);
+			DeleteObject(lb);
+			SetTextColor(hdc, RGB(0xff, 0xff, 0xff));
+		}
+		else
+			SetTextColor(hdc, RGB(0x98, 0x98, 0xb0));
+		DrawText(hdc, tabnames[i], -1, &r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+		// 区切り (選んでいるタブの両脇は描かない)
+		if (i != tab && i + 1 != tab)
+		{
+			RECT sep = { r.right - 1, r.top + Scale(6), r.right, r.bottom - Scale(6) };
+			HBRUSH pb = CreateSolidBrush(RGB(0x40, 0x40, 0x60));
+			FillRect(hdc, &sep, pb);
+			DeleteObject(pb);
+		}
+	}
+	SelectObject(hdc, old);
+}
+
+int VideoMonitor::TabHit(int x, int y)
+{
+	for (int i = 0; i < ntabs; i++)
+		if (PtInRect(&tabrc[i], POINT{ x, y }))
+			return i;
+	return -1;
 }
 
 // ---------------------------------------------------------------------------
@@ -273,13 +346,10 @@ void VideoMonitor::Paint(HDC hdc, const RECT& rc)
 	SetBkMode(hdc, TRANSPARENT);
 	HGDIOBJ oldfont = SelectObject(hdc, font);
 
+	PaintTabs(hdc, rc);
+	SelectObject(hdc, font);
 	RECT area = rc;
-	if (htab)
-	{
-		RECT tr;
-		GetWindowRect(htab, &tr);
-		area.top = tr.bottom - tr.top;
-	}
+	area.top = tabh;
 	InflateRect(&area, -Scale(6), -Scale(4));
 
 	if (!captured)
@@ -1168,19 +1238,21 @@ LRESULT VideoMonitor::WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 	{
 	case WM_CREATE:
 		dpi = Dpi::GetForWindow(h);
-		htab = CreateWindowEx(0, WC_TABCONTROL, "", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_FOCUSNEVER,
-							  0, 0, 100, 20, h, 0, hinst, 0);
-		for (int i = 0; i < ntabs; i++)
-		{
-			TCITEM ti;
-			memset(&ti, 0, sizeof(ti));
-			ti.mask = TCIF_TEXT;
-			ti.pszText = (LPSTR) tabnames[i];
-			TabCtrl_InsertItem(htab, i, &ti);
-		}
-		TabCtrl_SetCurSel(htab, tab);
 		MakeFont();
 		Layout();
+		DockClient::AddDockMenu(GetSystemMenu(h, FALSE));	// タイトルバーのメニューに「ペインにドック」
+		return 0;
+
+	case WM_SYSCOMMAND:
+		if (DockSysCommand(wp))
+			return 0;
+		break;
+
+	case WM_DPICHANGED_AFTERPARENT:		// ペインに入っていて、本体の窓が DPI の違う画面へ移った
+		dpi = Dpi::GetForWindow(h);
+		MakeFont();
+		Layout();
+		InvalidateRect(h, 0, FALSE);
 		return 0;
 
 	case WM_SIZE:
@@ -1197,15 +1269,6 @@ LRESULT VideoMonitor::WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 		Layout();
 		return 0;
 
-	case WM_NOTIFY:
-		if (((NMHDR*) lp)->hwndFrom == htab && ((NMHDR*) lp)->code == TCN_SELCHANGE)
-		{
-			tab = TabCtrl_GetCurSel(htab);
-			hover[0] = 0;
-			hoverrow = -1;
-			InvalidateRect(h, 0, false);
-		}
-		return 0;
 
 	case WM_ERASEBKGND:
 		return 1;
@@ -1220,11 +1283,7 @@ LRESULT VideoMonitor::WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 			HBITMAP bmp = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
 			HGDIOBJ old = SelectObject(mdc, bmp);
 			Paint(mdc, rc);
-			// タブの部品の所は写さない (部品が自分で描く)
-			RECT tr;
-			GetWindowRect(htab, &tr);
-			int top = tr.bottom - tr.top;
-			BitBlt(hdc, 0, top, rc.right, rc.bottom - top, mdc, 0, top, SRCCOPY);
+			BitBlt(hdc, 0, 0, rc.right, rc.bottom, mdc, 0, 0, SRCCOPY);
 			SelectObject(mdc, old);
 			DeleteObject(bmp);
 			DeleteDC(mdc);
@@ -1313,6 +1372,20 @@ LRESULT VideoMonitor::WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 		return 0;
 
 	case WM_LBUTTONDOWN:
+		{
+			int t = TabHit((short) LOWORD(lp), (short) HIWORD(lp));
+			if (t >= 0)
+			{
+				if (t != tab)
+				{
+					tab = t;
+					hover[0] = 0;
+					hoverrow = -1;
+					InvalidateRect(h, 0, false);
+				}
+				return 0;
+			}
+		}
 		OnClick((short) LOWORD(lp), (short) HIWORD(lp));
 		return 0;
 
@@ -1324,7 +1397,6 @@ LRESULT VideoMonitor::WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 	case WM_DESTROY:
 		SavePlacement();		// 本体を閉じると WM_CLOSE 無しで壊れるので、ここでも残す
 		hwnd = 0;
-		htab = 0;
 		return 0;
 	}
 	return DefWindowProc(h, msg, wp, lp);

@@ -31,10 +31,35 @@ public:
 	{
 		if (!IsOpen())
 			Show(hinst, parent, true);
+		SetJumpMark(addr);
+		JumpTo(addr & 0xffff);
+		Update();
+	}
+	// CPU を選んで番地を見せる (M88gn。レジスターの窓から)。サブならサブの RAM、
+	// メインで今サブを見ていればメインに戻す (Auto なら CPU がいま見ているバンク)
+	void ShowAddressCpu(uint addr, bool sub, HINSTANCE hinst, HWND parent)
+	{
+		if (!IsOpen())
+			Show(hinst, parent, true);
+		if (sub)
+			a0 = MemoryViewer::sub;
+		else if (a0 == MemoryViewer::sub)
+		{
+			a0 = MemoryViewer::mainram;
+			AutoBank();
+		}
+		SetBank();
+		SetJumpMark(addr);
 		JumpTo(addr & 0xffff);
 		Update();
 	}
 	// c000 のバンクを選んで番地を見せる (M88gn。Video の窓から)。0000 が Sub ならメインの RAM に
+	// 番地を、そのバンク (MemoryViewer::Type) で見せる (M88gn。ブレークポイント・ウォッチ・ラベルの窓から)。
+	// bank が負か Debugger::label_anybank (0xff) なら今のバンクのまま。len バイトに印を付ける
+	void ShowAddressIn(uint addr, bool sub, int bank, uint len, HINSTANCE hinst, HWND parent);
+	// ジャンプした先 (M88gn)。次のジャンプまで色を変える
+	void SetJumpMark(uint addr, uint len = 1) { jumpaddr = int(addr & 0xffff); jumplen = int(len ? len : 1); }
+	bool InJump(uint addr) { return jumpaddr >= 0 && uint(int(addr & 0xffff) - jumpaddr) < uint(jumplen); }
 	void ShowAddressBank(uint addr, MemoryViewer::Type cbank, HINSTANCE hinst, HWND parent)
 	{
 		if (!IsOpen())
@@ -43,11 +68,13 @@ public:
 			a0 = MemoryViewer::mainram;
 		ac = cbank;
 		SetBank();
+		SetJumpMark(addr);
 		JumpTo(addr & 0xffff);
 		Update();
 	}
 
 protected:
+	int jumpaddr, jumplen;		// ジャンプした先 (M88gn、jumpaddr が負なら無し)
 	MemoryBus* GetBus() { return bus; }
 	BOOL DlgProc(HWND, UINT, WPARAM, LPARAM);
 
@@ -69,6 +96,10 @@ protected:
 	MemoryViewer::Type GetA6() { return a6; }
 	// 6000-7FFF に実際に出しているバンク (M88gn。a6 は 0000 が N88 / N80SR のときだけ効く)
 	MemoryViewer::Type GetShown6();
+public:
+	// 番地に今出しているバンク (MemoryViewer::Type。M88gn、ラベル・ウォッチの色の判定に使う)。サブ CPU を見ていれば -1
+	int ShownBankAt(uint addr);
+protected:
 	MemoryViewer::Type GetAc() { return ac; }
 	MemoryViewer::Type GetAf() { return af; }
 

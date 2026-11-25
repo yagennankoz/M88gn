@@ -26,6 +26,12 @@
 #include "watchmon.h"
 #include "tracemon.h"
 #include "mnemmon.h"
+#include "statmon.h"
+#include "lapmon.h"
+#include "labeledit.h"
+#include "lblmon.h"
+#include <vector>
+#include "dockhost.h"
 #include "sublogmon.h"
 #include "videomon.h"
 #include "dbgsettings.h"
@@ -187,6 +193,73 @@ private:
 	PC8801::WatchMonitor watchmon;
 	PC8801::TraceMonitor tracemon;
 	PC8801::MnemonicMonitor mnemmon;
+	PC8801::LabelMonitor lblmon;		// ラベルの一覧 (M88gn)
+	// ドックモード (M88gn): デバッグの窓を本体の窓の上下左右のペインに入れる
+	PC8801::DockHost dock;
+	RECT dockrect;						// 全画面にする前の窓の位置・大きさ (ドックモードのとき)
+	bool dockactive;					// ペインを 1 つ以上出している (窓の枠で大きさを変えられ、画面は残りに拡大して描く)
+	void DockChanged(int oldbits, int newbits);
+	// 窓の大きさを自由に変えられる形にする (M88gn。起動してペインを作った後。全画面のとき以外ずっと)。
+	// 画面は残りの所に縦横の比を保って拡大して描く
+	void EnterLayoutMode();
+	// Window scale の Free (M88gn): 窓の大きさ・ペインの開閉・仕切りで画面が倍率どおりでなくなったら Free。
+	// ペインの開閉でも窓の大きさは変えない
+	bool scalefree;
+	void UpdateScaleFree();				// 画面が倍率どおりの大きさでなくなっていたら Free にする
+	int layoutguard;					// M88 が自分で窓の大きさ・並びを変えている間 (Free にしない)
+	static void DockChangeCb(void* ctx, int oldbits, int newbits);
+	// タイトルの段 (M88gn。uititle.cpp): メニュー・ペインの開閉・最小化/最大化/閉じるを 1 段に
+	enum { ti_icon, ti_menu, ti_pane, ti_min, ti_max, ti_close };
+	struct TitleItem { int kind; int index; RECT rect; };
+	bool TitleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESULT* ret);
+	bool TitleActive();
+	int TitleHeight();
+	int TitleScale(int v);
+	void AdjustMainRect(RECT* r, UINT dpi = 0);
+	void TitleColors(COLORREF* bg, COLORREF* fg, COLORREF* hot, COLORREF* pushed);
+	void TitleLayout();
+	const TitleItem* TitleItemAt(POINT pt);
+	HFONT TitleMenuFont();
+	void InvalidateTitle();
+	void PaintTitle(HDC hdc);
+	void SetTitleHot(int hot, int pressed);
+	void TrackTitleMenu(int index, bool keyboard);
+	int TitleMenuByMnemonic(char c);
+	static LRESULT CALLBACK TitleHookProc(int code, WPARAM wp, LPARAM lp);
+	static HHOOK titlehook;
+	std::vector<TitleItem> titleitems;
+	int titlehot;					// マウスが載っている項目 (titleitems の番号、-1: 無し)
+	int titlepressed;				// 押している項目
+	bool titlepressedwas;			// ペインのボタンを押していた (離すまで)
+	int titlemenuopen;				// 開いているメニュー (hmenumain の位置、-1: 無し)
+	int titlenext;					// 閉じた後に開くメニュー
+	bool titlenextkey;
+	POINT titleorigin;				// メニューを開いたときの窓の中の左上 (画面の座標)
+	HMENU titlemenusel;				// WM_MENUSELECT で選ばれている項目のメニュー
+	UINT titlemenuselflags;
+	bool titleactive;				// 窓がアクティブ
+	int titlemenuend;				// メニューの名前の右の端
+	int titlebuttonsleft;			// ペインのボタンの左の端
+	HFONT titlefont, titleglyph, titlebold;	// titlebold: 窓の題 (太字)
+	UINT titlefontdpi;
+	void ToggleVideoRecord();			// 録画 (M88gn)
+	static void VideoAudioCb(void* ctx, const int32* s, int samples, int rate);
+	void UpdateDockButtons();			// メニューバーの右のペインの開閉ボタンを出す・消す・描き直す (M88gn)
+	int dockbtnstate;					// ボタンを描いたときの状態 (-1: 出していない)
+	static WinUI* dockui;
+	static void DockViewCb(void* ctx, const RECT* r);
+	static void DockHook(DockClient* mon, int side);
+	static void DockShowHook(DockClient* mon);
+	LRESULT WmParentNotify(HWND, WPARAM, LPARAM);
+	LRESULT WmSetFocus(HWND, WPARAM, LPARAM);
+	LRESULT WmKillFocus(HWND, WPARAM, LPARAM);
+	// ペインを出している間の、PC-8801 の画面の周りの枠 (M88gn)。本体の窓にフォーカスがあれば強調の色、無ければ黒
+	void PaintViewFrame(bool focused);
+	bool viewframe;						// 枠を描く (画面を枠の分だけ内側に置いている)
+	RECT viewframerect;					// 枠の外側 (ペインの間の四角)
+	int viewframewidth;
+	PC8801::LapMonitor lapmon;			// ラップタイムの窓 (M88gn)
+	PC8801::StatusMonitor statmon;		// ステータスの窓 (M88gn)
 	PC8801::SubLogMonitor sublogmon;
 	PC8801::VideoMonitor videomon;
 	uint32 stoptick;		// 前に止まったときのメインの CPU のクロック数 (ストップウォッチ、M88gn)

@@ -21,7 +21,8 @@ WinDrawGDI::WinDrawGDI()
 	bitmapimage(0),
 	image(0),
 	m_nBitmapW(640),
-	m_nBitmapH(400)
+	m_nBitmapH(400),
+	ox(0), oy(0)
 {
 }
 
@@ -153,8 +154,8 @@ void WinDrawGDI::DrawScreen(const RECT& _rect, bool refresh)
 		if (m_nMag > 1) {
 			StretchBlt(
 				hdc,
-				rect.left * m_nMag,
-				rect.top * m_nMag,
+				ox + rect.left * m_nMag,
+				oy + rect.top * m_nMag,
 				(rect.right - rect.left) * m_nMag,
 				(rect.bottom - rect.top) * m_nMag,
 				hmemdc,
@@ -164,7 +165,7 @@ void WinDrawGDI::DrawScreen(const RECT& _rect, bool refresh)
 				rect.bottom - rect.top,
 				SRCCOPY);
 		} else {
-				BitBlt(hdc, rect.left, rect.top, 
+				BitBlt(hdc, ox + rect.left, oy + rect.top, 
 					rect.right - rect.left, rect.bottom - rect.top, 
 					hmemdc, rect.left, rect.top, 
 					SRCCOPY);

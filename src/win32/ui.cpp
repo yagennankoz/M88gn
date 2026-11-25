@@ -11,6 +11,9 @@
 #include <mbstring.h>
 #include "resource.h"
 #include "ui.h"
+#include "dbgbuttons.h"
+#include "uitheme.h"
+#include "videorec.h"
 #include "dpi.h"
 
 #ifndef WM_DPICHANGED
@@ -65,6 +68,16 @@ WinUI::WinUI(HINSTANCE hinstance)
 	capturemouse = true;
 	hmenumain = 0;
 	resetwindowsize = 0;
+	titlehot = titlepressed = -1;
+	titlepressedwas = false;
+	titlemenuopen = titlenext = -1;
+	titlenextkey = false;
+	titlemenusel = 0;
+	titlemenuselflags = 0;
+	titleactive = true;
+	titlemenuend = titlebuttonsleft = 0;
+	titlefont = titleglyph = titlebold = 0;
+	titlefontdpi = 0;
 	hmenuss[0] = 0;
 	hmenuss[1] = 0;
 	currentsnapshot = 0;
@@ -106,6 +119,7 @@ bool WinUI::InitM88(const char* cmdline)
 	// 表示の倍率が決まっていなければ、画面の DPI から決める (表示スケール 150% → 2 倍)
 	if (config.screenscale <= 0)
 		config.screenscale = Limit(int(Dpi::GetForWindow(hwnd) + 48) / 96, 4, 1);
+	scalefree = GetPrivateProfileInt("M88p2 for Windows", "ScreenScaleFree", 0, PC8801::GetM88IniPath()) != 0;
 	SetScaleFlag();
 
 	// ステータスバー初期化
@@ -166,6 +180,13 @@ bool WinUI::InitM88(const char* cmdline)
 	watchmon.Init(&core);
 	tracemon.Init(&core);
 	mnemmon.Init();
+	statmon.Init(&core);
+	lapmon.Init(&core);
+	lblmon.Init(&core);
+	PC8801::SetLabelCore(&core);		// ラベルを窓のあちこちで使う (M88gn)
+	lblmon.SetMonitors(&codemon, &memmon);
+	bpmon.SetMonitors(&codemon, &memmon);	// 右クリックで番地へ (M88gn)
+	watchmon.SetMonitors(&codemon, &memmon);
 	sublogmon.Init(&core);
 	videomon.Init(&core, &memmon);
 	stoptick = 0;
@@ -174,10 +195,12 @@ bool WinUI::InitM88(const char* cmdline)
 	codemon.SetMnemonicMonitor(&mnemmon);
 	codemon.SetMemoryMonitor(&memmon);
 	memmon.SetCodeMonitor(&codemon);
+	regmon.SetMonitors(&codemon, &memmon);	// 右クリックで番地へ (M88gn)
 	debugnodiskwarned = false;
 	debugkey[0] = 0;
 	tapefile[0] = 0;
 	core.GetSound()->SetSoundMonitor(&opnmon);
+	core.GetSound()->SetCapture(VideoAudioCb, 0);		// 録画に音を渡す (M88gn)
 
 	//	実行ファイル改変チェック
 	LOG1("%d\tself test\n", timeGetTime());
@@ -247,6 +270,150 @@ void WinUI::CleanupM88()
 }
 
 // ---------------------------------------------------------------------------
+//	ドックモード (M88gn)
+//
+WinUI* WinUI::dockui = 0;
+
+// 画面を置く四角が変わった (r が 0 なら窓いっぱい)
+void WinUI::DockViewCb(void* ctx, const RECT* r)
+{
+	WinUI* ui = (WinUI*) ctx;
+	if (!ui->dockactive && !ui->fullscreen)
+		return;
+	// ペインを出している間は、画面を枠の分だけ内側に置き、周りに枠を描く (M88gn)
+	bool had = ui->viewframe;
+	ui->viewframe = false;
+	RECT in;
+	if (r && !ui->fullscreen && ui->dock.VisibleBits())
+	{
+		int b = Max(2, int(Dpi::GetForWindow(ui->hwnd)) * 4 / 96);
+		in = *r;
+		InflateRect(&in, -b, -b);
+		if (in.right > in.left && in.bottom > in.top)
+		{
+			ui->viewframe = true;
+			ui->viewframerect = *r;
+			ui->viewframewidth = b;
+			r = &in;
+		}
+	}
+	ui->draw.SetViewRect(r);
+	if (ui->viewframe)
+		ui->PaintViewFrame(GetFocus() == ui->hwnd);
+	else if (had)
+		InvalidateRect(ui->hwnd, 0, FALSE);
+	if (r || ui->fullscreen)
+		ui->draw.Resize(640, 400);
+	ui->UpdateScaleFree();		// 窓の大きさ・ペイン・仕切りを動かした (M88gn)
+}
+
+// 窓のタイトルバーのメニューの「ドック」
+void WinUI::DockHook(DockClient* mon, int side)
+{
+	if (!dockui || dockui->fullscreen)
+		return;
+	if (side >= 4)
+		dockui->dock.Dock(mon, side - 4, DockHost::newgroup);	// 新しい区画に
+	else
+		dockui->dock.Dock(mon, side);
+}
+
+// 窓を開いた: 前にペインにあったなら、そのペインへ
+void WinUI::DockShowHook(DockClient* mon)
+{
+	if (dockui)
+		dockui->dock.OnShown(mon);
+}
+
+// 開いているペインの組が変わった (M88gn)。窓の大きさは変えず、画面が残りの所に合わせて広がる・縮む
+void WinUI::DockChangeCb(void* ctx, int oldbits, int newbits)
+{
+	((WinUI*) ctx)->DockChanged(oldbits, newbits);
+}
+
+void WinUI::DockChanged(int, int)
+{
+	if (fullscreen || !hwnd)
+		return;
+	if (!dockactive)
+		EnterLayoutMode();
+}
+
+// 窓の大きさを自由に変えられる形にする (起動してペインを作った後。M88gn)
+void WinUI::EnterLayoutMode()
+{
+	if (dockactive || fullscreen || !hwnd)
+		return;
+	layoutguard++;
+	dockactive = true;
+	// 今の形を読み直す (wstyle には WS_VISIBLE が無いので、そのまま書くと窓が見えなくなる)
+	wstyle = (DWORD) GetWindowLongPtr(hwnd, GWL_STYLE) | WS_THICKFRAME | WS_MAXIMIZEBOX;
+	SetWindowLongPtr(hwnd, GWL_STYLE, wstyle);
+	draw.ChangeDisplayMode(true, (config.flags & PC8801::Config::force480) != 0, Limit(config.screenscale, 4, 1));
+	SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+	dock.Layout();
+	layoutguard--;
+}
+
+// 画面が表示の倍率どおりの大きさでなくなっていたら (窓の大きさを変えた・ペインを開閉した・仕切りを動かした)、Free にする
+void WinUI::UpdateScaleFree()
+{
+	if (scalefree || layoutguard || !dockactive || fullscreen || !hwnd || IsZoomed(hwnd) || IsIconic(hwnd))
+		return;
+	uint w, h;
+	GetClientSize(w, h);
+	RECT v;
+	dock.GetView(&v);
+	if (v.right - v.left != int(w) || v.bottom - v.top != int(h))
+		scalefree = true;
+}
+
+// ---------------------------------------------------------------------------
+//	メニューバーの右の端のペインの開閉ボタン (M88gn)。ドックモードで、全画面でない間だけ出す。
+//	並びは左・上・下・右。ペインの開閉・窓の有無が変わったら描き直す
+//
+void WinUI::UpdateDockButtons()
+{
+	int state = 0;
+	for (int s = 0; s < 4; s++)
+		state |= ((dock.IsPaneShown(s) ? 1 : 0) | (dock.HasWindows(s) ? 2 : 0)) << (s * 2);
+	if (state == dockbtnstate)
+		return;
+	dockbtnstate = state;
+	InvalidateTitle();
+}
+
+// 子の窓のクリック: ドックモードで PC-8801 の画面の上なら、キー入力を本体の窓に戻す
+LRESULT WinUI::WmParentNotify(HWND hwnd, WPARAM wp, LPARAM lp)
+{
+	UINT ev = LOWORD(wp);
+	if (dockactive && (ev == WM_LBUTTONDOWN || ev == WM_RBUTTONDOWN || ev == WM_MBUTTONDOWN))
+	{
+		POINT pt = { (short) LOWORD(lp), (short) HIWORD(lp) };
+		if (dock.InView(pt))
+			SetFocus(hwnd);
+		else
+		{
+			// ペインに入れた窓の上なら、その窓にキー入力を移す (M88gn)。テープの窓は入力を取らない作りなので除く
+			POINT sp = pt;
+			ClientToScreen(hwnd, &sp);
+			for (HWND w = WindowFromPoint(sp); w && w != hwnd; w = GetParent(w))
+			{
+				DockClient* c = DockClient::FindByWindow(w);
+				if (c)
+				{
+					const char* sec = c->DockSection();
+					if (c->IsDocked() && !(sec && !lstrcmp(sec, "TapeWindow")) && GetFocus() != w && !IsChild(w, GetFocus()))
+						SetFocus(w);
+					break;
+				}
+			}
+		}
+	}
+	return DefWindowProc(hwnd, WM_PARENTNOTIFY, wp, lp);
+}
+
+// ---------------------------------------------------------------------------
 //	WinUI::InitWindow
 //	M88 の窓作成
 //
@@ -292,6 +459,29 @@ bool WinUI::InitWindow(int nwinmode)
 		(LPVOID)this
 		);
 	hmenumain = hwnd ? GetMenu(hwnd) : 0;
+	if (hwnd)
+		SetProp(hwnd, "M88gnMainMenu", (HANDLE) hmenumain);	// デバッグの窓が本体のメニューの字を読むため (M88gn)
+	if (hwnd)
+	{
+		// タイトルの段 (M88gn): メニューバーは使わず、Windows のタイトルバーを無くす
+		SetMenu(hwnd, 0);
+		SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+	}
+	// ドックモード (M88gn)
+	dockui = this;
+	SetRectEmpty(&dockrect);
+	dockbtnstate = -1;
+	Theme::Load();		// テーマ (M88gn)
+	dock.Init(hwnd, hinst);
+	dock.SetViewCallback(DockViewCb, this);
+	dock.SetChangeCallback(DockChangeCb, this);
+	dockactive = false;
+	viewframe = false;
+	viewframewidth = 0;
+	layoutguard = 0;
+	scalefree = false;
+	DockClient::dockhook = DockHook;
+	DockClient::showhook = DockShowHook;
 
 //	SetLayeredWindowAttributes(hwnd, RGB(0, 0, 0), 0xc0, LWA_ALPHA);
 	
@@ -316,6 +506,18 @@ void WinUI::SaveWindowPosition()
 	::GetWindowPlacement( hwnd, &wp );
 	config.winposx = wp.rcNormalPosition.left;
 	config.winposy = wp.rcNormalPosition.top;
+	// Window scale の Free と、そのときの窓の大きさ (M88gn。全画面の間は全画面の前の大きさ)
+	const char* ini = PC8801::GetM88IniPath();
+	WritePrivateProfileString("M88p2 for Windows", "ScreenScaleFree", scalefree ? "1" : "0", ini);
+	RECT nr = wp.rcNormalPosition;
+	if (fullscreen && dockrect.right > dockrect.left)
+		nr = dockrect;
+	if (nr.right > nr.left && nr.bottom > nr.top)
+	{
+		char buf[16];
+		wsprintf(buf, "%d", int(nr.right - nr.left));	WritePrivateProfileString("M88p2 for Windows", "WindowWidth", buf, ini);
+		wsprintf(buf, "%d", int(nr.bottom - nr.top));	WritePrivateProfileString("M88p2 for Windows", "WindowHeight", buf, ini);
+	}
 }
 
 void WinUI::LoadWindowPosition()
@@ -351,6 +553,23 @@ int WinUI::Main(const char* cmdline)
 
 		ShowWindow(hwnd, SW_SHOWDEFAULT);
 		UpdateWindow(hwnd);
+		::SetTimer(hwnd, 13, 200, 0);		// ドックモードのタブ・メニューの帯 (M88gn)
+		layoutguard++;
+		dock.SetEnabled(true);			// ペイン (M88gn)。前にペインにあった窓を開いて入れる
+		EnterLayoutMode();
+		dock.LoadLayout();
+		// 窓の大きさ: Free なら前の大きさ、そうでなければ画面が倍率どおりになる大きさ (ペインの分も足す)
+		{
+			const char* ini = PC8801::GetM88IniPath();
+			int ww = GetPrivateProfileInt("M88p2 for Windows", "WindowWidth", 0, ini);
+			int wh = GetPrivateProfileInt("M88p2 for Windows", "WindowHeight", 0, ini);
+			if (scalefree && ww > 0 && wh > 0)
+				SetWindowPos(hwnd, 0, 0, 0, ww, wh, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+			else
+				ResizeWindow(640, 400);
+		}
+		layoutguard--;
+		UpdateDockButtons();
 //		core.ActivateMouse(true);
 	}
 	else
@@ -398,6 +617,8 @@ int WinUI::Main(const char* cmdline)
 LRESULT WinUI::WinProc(HWND hwnd, UINT umsg, WPARAM wp, LPARAM lp)
 {
 	LRESULT ret;
+	if (TitleMessage(hwnd, umsg, wp, lp, &ret))		// タイトルの段 (M88gn)
+		return ret;
 	keyif.Disable(true);
 
 	switch (umsg)
@@ -454,6 +675,9 @@ LRESULT WinUI::WinProc(HWND hwnd, UINT umsg, WPARAM wp, LPARAM lp)
 		break;
 	PROC_MSG(WM_MOUSEMOVE,			WmMouseMove);
 	PROC_MSG(WM_SETCURSOR,			WmSetCursor);
+	PROC_MSG(WM_PARENTNOTIFY,		WmParentNotify);
+	PROC_MSG(WM_SETFOCUS,			WmSetFocus);
+	PROC_MSG(WM_KILLFOCUS,			WmKillFocus);
 	
 	default:
 		ret = DefWindowProc(hwnd, umsg, wp, lp);
@@ -705,6 +929,12 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 	case IDM_SHOWMENU:
 		// キーボードでメニューを出す (メニューバーを隠していると、ほかにはマウスの右クリックしかない)。
 		// 窓の中の左上 1/3 の所に出す (サブメニューが右下に開けるように)。項目は ↓ や下線の字で選ぶ
+		if (TitleActive() && !HideMenuBar())
+		{
+			int first = TitleMenuByMnemonic('c');
+			PostMessage(hwnd, WM_M88_TITLEMENU, first >= 0 ? first : 0, 1);
+		}
+		else
 		{
 			RECT r;
 			GetClientRect(hwnd, &r);
@@ -731,9 +961,23 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 	case IDM_SCALE_3:
 	case IDM_SCALE_4:
 		config.screenscale = (wid == IDM_SCALE_4) ? 4 : wid - IDM_SCALE_1 + 1;	// x4 は番号が続いていない
+		scalefree = false;
 		SetScaleFlag();
 		if (!fullscreen)
-			ChangeDisplayType(true);	// 全画面のときは、ウィンドウに戻ったときに効く
+		{
+			if (dockactive)
+			{
+				if (IsZoomed(hwnd))
+					ShowWindow(hwnd, SW_RESTORE);
+				ResizeWindow(640, 400);		// 画面が倍率どおりになる大きさに (ペインの分も足す。M88gn)
+			}
+			else
+				ChangeDisplayType(true);	// 全画面のときは、ウィンドウに戻ったときに効く
+		}
+		break;
+
+	case IDM_SCALE_FREE:		// 窓の大きさを自由に (M88gn)。今の大きさのまま
+		scalefree = true;
 		break;
 
 	case IDM_ROTATE_0:
@@ -879,6 +1123,19 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		ShowStatusWindow();
 		break;
 
+	case IDM_THEME_SYSTEM:		// テーマ (M88gn)
+	case IDM_THEME_DARK:
+	case IDM_THEME_BEIGE:
+		Theme::Set(wid == IDM_THEME_DARK ? Theme::dark : wid == IDM_THEME_BEIGE ? Theme::beige : Theme::system);
+		InvalidateTitle();
+		dock.Repaint();
+		if (statusdisplay.GetHWnd())
+			InvalidateRect(statusdisplay.GetHWnd(), 0, FALSE);
+		if (tapewin.DockWindow())		// テープの窓もテーマの色
+			InvalidateRect(tapewin.DockWindow(), 0, FALSE);
+		DockClient::ApplyThemeAll();	// テープ・デバッグの窓のスクロールバー
+		break;
+
 	case IDM_SOFTKBD:
 		softkbd.Show(!softkbd.IsShown());
 		break;
@@ -929,6 +1186,35 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		tracemon.Show(hinst, hwnd, !tracemon.IsOpen());
 		break;
 
+	case IDM_DOCKPANE_LEFT:
+	case IDM_DOCKPANE_RIGHT:
+	case IDM_DOCKPANE_TOP:
+	case IDM_DOCKPANE_BOTTOM:
+	case IDM_DOCKBTN_LEFT:		// メニューバーの右のボタン
+	case IDM_DOCKBTN_RIGHT:
+	case IDM_DOCKBTN_TOP:
+	case IDM_DOCKBTN_BOTTOM:
+		{
+			int side = (wid == IDM_DOCKPANE_LEFT || wid == IDM_DOCKBTN_LEFT) ? 0
+					 : (wid == IDM_DOCKPANE_RIGHT || wid == IDM_DOCKBTN_RIGHT) ? 1
+					 : (wid == IDM_DOCKPANE_TOP || wid == IDM_DOCKBTN_TOP) ? 2 : 3;
+			dock.ShowPane(side, !dock.IsPaneShown(side));
+			UpdateDockButtons();
+		}
+		break;
+
+	case IDM_LABELMON:
+		lblmon.Show(hinst, hwnd, !lblmon.IsOpen());
+		break;
+
+	case IDM_LAPMON:
+		lapmon.Show(hinst, hwnd, !lapmon.IsOpen());
+		break;
+
+	case IDM_STATMON:
+		statmon.Show(hinst, hwnd, !statmon.IsOpen());
+		break;
+
 	case IDM_MNEMMON:
 		mnemmon.Show(hinst, hwnd, !mnemmon.IsOpen());
 		break;
@@ -952,6 +1238,32 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		core.GetDebugger()->ClearTrace();
 		core.Unlock();
 		tracemon.Refresh();
+		break;
+
+	// ラベルの書き出し・読み込み (M88gn)
+	case IDM_LABEL_EXPORT:
+		{
+			int n = PC8801::ExportLabels(hwnd, core.GetDebugger());
+			if (n >= 0)
+				statusdisplay.Show(80, 3000, "ラベルを %d 個書き出しました.", n);
+		}
+		break;
+
+	case IDM_LABEL_IMPORT:
+		{
+			int skipped;
+			int n = PC8801::ImportLabels(hwnd, core.GetDebugger(), &skipped);
+			if (n >= 0)
+			{
+				if (skipped)
+					statusdisplay.Show(80, 4000, "ラベルを %d 個読み込みました (読めない行 %d).", n, skipped);
+				else
+					statusdisplay.Show(80, 3000, "ラベルを %d 個読み込みました.", n);
+				codemon.Update();
+				memmon.Update();
+				lblmon.Update();
+			}
+		}
 		break;
 
 	case IDM_DBG_SAVESETTINGS:
@@ -1004,7 +1316,13 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 			// メニューから選んだときは、続けて選べるように Tape メニューを開き直す
 			// (Windows のメニューは選ぶと閉じる。マウスは同じ所にあるので、もう一度クリックすれば続けて動く)
 			if (HIWORD(wparam) == 0 && lparam == 0)
-				PostMessage(hwnd, WM_SYSCOMMAND, SC_KEYMENU, 'p');
+			{
+				int tm = TitleActive() ? TitleMenuByMnemonic('p') : -1;
+				if (tm >= 0)
+					PostMessage(hwnd, WM_M88_TITLEMENU, tm, 1);
+				else
+					PostMessage(hwnd, WM_SYSCOMMAND, SC_KEYMENU, 'p');
+			}
 		}
 		break;
 
@@ -1071,6 +1389,23 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		{
 			core.GetSound()->DumpEnd();
 		}
+		break;
+
+	case IDM_VIDEO_RECORD:		// 録画 (M88gn)
+		ToggleVideoRecord();
+		break;
+
+	case IDM_VIDEO_FPS60:		// 録画のフレームレート (M88gn)
+	case IDM_VIDEO_FPS30:
+	case IDM_VIDEO_FPS20:
+	case IDM_VIDEO_FPS15:
+		WritePrivateProfileString("M88p2 for Windows", "VideoFps",
+			wid == IDM_VIDEO_FPS30 ? "30" : wid == IDM_VIDEO_FPS20 ? "20" : wid == IDM_VIDEO_FPS15 ? "15" : "60", PC8801::GetM88IniPath());
+		break;
+
+	case IDM_VIDEO_FILTERED:
+	case IDM_VIDEO_RAW:
+		WritePrivateProfileString("M88p2 for Windows", "VideoMode", wid == IDM_VIDEO_RAW ? "1" : "0", PC8801::GetM88IniPath());
 		break;
 
 	case IDM_SNAPSHOT_SAVE:
@@ -1163,7 +1498,56 @@ LRESULT WinUI::WmCommand(HWND hwnd, WPARAM wparam, LPARAM lparam)
 LRESULT WinUI::WmPaint(HWND hwnd, WPARAM wp, LPARAM lp)
 {
 	draw.RequestPaint();
+	PaintViewFrame(GetFocus() == hwnd);		// ペインの間の画面の枠 (M88gn)
 	return DefWindowProc(hwnd, WM_PAINT, wp, lp);
+}
+
+// ---------------------------------------------------------------------------
+//	ペインを出している間の、PC-8801 の画面の周りの枠 (M88gn)
+//	キー入力が PC-8801 に行く (本体の窓にフォーカスがある) ときだけ強調の色で描く
+//
+void WinUI::PaintViewFrame(bool focused)
+{
+	if (!viewframe || fullscreen || !hwnd)
+		return;
+	// フォーカスがあれば青 (テーマによらず同じ色)、無ければペインの仕切りと同じ色 (目立たない)
+	HDC dc = GetDC(hwnd);
+	int b = viewframewidth;
+	int edge = 0;
+	HBRUSH outer = 0;
+	HBRUSH inner = CreateSolidBrush(focused ? RGB(0x00, 0x78, 0xd4) : Theme::C().splitter);
+	for (int k = 0; k < 2; k++)
+	{
+		RECT o = viewframerect;
+		int w = k == 0 ? b : b - edge;
+		if (k == 0 && !edge)
+			continue;
+		if (k == 1)
+			InflateRect(&o, -edge, -edge);
+		RECT s4[4] =
+		{
+			{ o.left, o.top, o.right, o.top + w },
+			{ o.left, o.bottom - w, o.right, o.bottom },
+			{ o.left, o.top + w, o.left + w, o.bottom - w },
+			{ o.right - w, o.top + w, o.right, o.bottom - w },
+		};
+		for (int i = 0; i < 4; i++)
+			FillRect(dc, &s4[i], k == 0 ? outer : inner);
+	}
+	DeleteObject(inner);
+	ReleaseDC(hwnd, dc);
+}
+
+LRESULT WinUI::WmSetFocus(HWND hwnd, WPARAM wp, LPARAM lp)
+{
+	PaintViewFrame(true);
+	return DefWindowProc(hwnd, WM_SETFOCUS, wp, lp);
+}
+
+LRESULT WinUI::WmKillFocus(HWND hwnd, WPARAM wp, LPARAM lp)
+{
+	PaintViewFrame(false);
+	return DefWindowProc(hwnd, WM_KILLFOCUS, wp, lp);
 }
 
 // ---------------------------------------------------------------------------
@@ -1226,6 +1610,14 @@ LRESULT WinUI::WmClose(HWND hwnd, WPARAM wparam, LPARAM lparam)
 	
 	if (core.IsStopped())
 		core.Pause(false);			// デバッガで止めていたら動かしてから終わる
+	// ペインの並びを保存する (M88gn。窓が壊れる前に)
+	dock.SaveLayout();
+	if (videorecorder.IsActive())		// 録画を書き終える (M88gn)
+	{
+		core.Lock();
+		videorecorder.Stop();
+		core.Unlock();
+	}
 
 	// タイマー破棄
 	KillTimer(hwnd, timerid);
@@ -1269,6 +1661,12 @@ LRESULT WinUI::WmClose(HWND hwnd, WPARAM wparam, LPARAM lparam)
 LRESULT WinUI::WmTimer(HWND hwnd, WPARAM wparam, LPARAM lparam)
 {
 	LOG2("WmTimer:%d(%d)\n", wparam, timerid);
+	if (wparam == 13)
+	{
+		dock.Tick();
+		UpdateDockButtons();	// ドックモード (M88gn)
+		return 0;
+	}
 	if (wparam == timerid)
 	{
 		// 実効周波数,表示フレーム数を取得
@@ -1283,16 +1681,11 @@ LRESULT WinUI::WmTimer(HWND hwnd, WPARAM wparam, LPARAM lparam)
 		// レポートする場合はタイトルバーを更新
 		if (report)
 		{
-			if (active)
-			{
-				char buf[64];
-				uint freq = icount / 10000;
-				wsprintf(buf, "M88 - %d fps.  %d.%.2d MHz", 
-					fcount, freq / 100, freq % 100);
-				SetWindowText(hwnd, buf);
-			}
-			else
-				SetWindowText(hwnd, "M88");
+			// fps と動作周波数はステータスバー (とステータスの窓) に出す (M88gn)
+			char buf[64];
+			uint freq = icount / 10000;
+			wsprintf(buf, "%d fps  %d.%.2d MHz", fcount, freq / 100, freq % 100);
+			statusdisplay.SetPerf(buf);
 		}
 
 		if (resetwindowsize > 0)
@@ -1370,7 +1763,9 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 	CheckMenuItem(hmenu, IDM_WINHIDEMENU, config.winhidemenu ? MF_CHECKED : MF_UNCHECKED);
 	static const UINT scaleid[4] = { IDM_SCALE_1, IDM_SCALE_2, IDM_SCALE_3, IDM_SCALE_4 };
 	for (int s = 0; s < 4; s++)
-		CheckMenuItem(hmenu, scaleid[s], (config.screenscale == s + 1) ? MF_CHECKED : MF_UNCHECKED);
+		CheckMenuItem(hmenu, scaleid[s], (!scalefree && config.screenscale == s + 1) ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_SCALE_FREE, scalefree ? MF_CHECKED : MF_UNCHECKED);
+	EnableMenuItem(hmenu, IDM_SCALE_FREE, dockactive ? MF_ENABLED : MF_GRAYED);
 	// 画面の回転は Direct3D 11 で描くときだけ
 	for (int r = 0; r < 4; r++)
 	{
@@ -1493,6 +1888,7 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 	EnableMenuItem(hmenu, IDM_DBG_STEPOUT, core.IsStopped() ? MF_ENABLED : MF_GRAYED);
 	CheckMenuItem(hmenu, IDM_DBG_SKIPINT, (config.flag2 & PC8801::Config::disableintskip) ? MF_UNCHECKED : MF_CHECKED);
 	CheckMenuItem(hmenu, IDM_SOFTKBD, softkbd.IsShown() ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuRadioItem(hmenu, IDM_THEME_SYSTEM, IDM_THEME_BEIGE, IDM_THEME_SYSTEM + Theme::Get(), MF_BYCOMMAND);
 	CheckMenuItem(hmenu, IDM_TAPEWIN, tapewin.IsShown() ? MF_CHECKED : MF_UNCHECKED);
 	EnableMenuItem(hmenu, IDM_STATUSBAR, MF_ENABLED);		// 全画面でも切り替えられる (メニューバーの右の端か、画面の右下に出す。M88gn)
 	CheckMenuItem(hmenu, IDM_FDC_STATUS, (config.flags & Config::showfdcstatus) ? MF_CHECKED : MF_UNCHECKED);
@@ -1504,6 +1900,17 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 	CheckMenuItem(hmenu, IDM_WATCHMON, watchmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_TRACEMON, tracemon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_MNEMMON, mnemmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_STATMON, statmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_LAPMON, lapmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
+	CheckMenuItem(hmenu, IDM_LABELMON, lblmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
+	{
+		static const UINT ids[4] = { IDM_DOCKPANE_LEFT, IDM_DOCKPANE_RIGHT, IDM_DOCKPANE_TOP, IDM_DOCKPANE_BOTTOM };
+		for (int i = 0; i < 4; i++)
+		{
+			CheckMenuItem(hmenu, ids[i], dock.IsPaneShown(i) ? MF_CHECKED : MF_UNCHECKED);
+			EnableMenuItem(hmenu, ids[i], fullscreen ? MF_GRAYED : MF_ENABLED);
+		}
+	}
 	CheckMenuItem(hmenu, IDM_SUBLOGMON, sublogmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_VIDEOMON, videomon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_DBG_TRACE, core.GetDebugger()->IsTraceEnabled() ? MF_CHECKED : MF_UNCHECKED);
@@ -1512,6 +1919,20 @@ LRESULT WinUI::WmInitMenu(HWND hwnd, WPARAM wp, LPARAM lp)
 	CheckMenuItem(hmenu, IDM_LOADMON, loadmon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_IOMON, iomon.IsOpen() ? MF_CHECKED : MF_UNCHECKED);
 	CheckMenuItem(hmenu, IDM_RECORDPCM, core.GetSound()->IsDumping() ? MF_CHECKED : MF_UNCHECKED);
+	// 録画 (M88gn): Direct3D 11 で描いているときだけ。録っている間はチェック、形式は変えられない
+	CheckMenuItem(hmenu, IDM_VIDEO_RECORD, videorecorder.IsActive() ? MF_CHECKED : MF_UNCHECKED);
+	EnableMenuItem(hmenu, IDM_VIDEO_RECORD, (draw.CanCrtFilter() || videorecorder.IsActive()) ? MF_ENABLED : MF_GRAYED);
+	{
+		int vm = GetPrivateProfileInt("M88p2 for Windows", "VideoMode", 0, PC8801::GetM88IniPath());
+		CheckMenuRadioItem(hmenu, IDM_VIDEO_FILTERED, IDM_VIDEO_RAW, vm ? IDM_VIDEO_RAW : IDM_VIDEO_FILTERED, MF_BYCOMMAND);
+		EnableMenuItem(hmenu, IDM_VIDEO_FILTERED, videorecorder.IsActive() ? MF_GRAYED : MF_ENABLED);
+		EnableMenuItem(hmenu, IDM_VIDEO_RAW, videorecorder.IsActive() ? MF_GRAYED : MF_ENABLED);
+		int fps = GetPrivateProfileInt("M88p2 for Windows", "VideoFps", 60, PC8801::GetM88IniPath());
+		CheckMenuRadioItem(hmenu, IDM_VIDEO_FPS60, IDM_VIDEO_FPS15,
+			fps == 30 ? IDM_VIDEO_FPS30 : fps == 20 ? IDM_VIDEO_FPS20 : fps == 15 ? IDM_VIDEO_FPS15 : IDM_VIDEO_FPS60, MF_BYCOMMAND);
+		for (UINT id = IDM_VIDEO_FPS60; id <= IDM_VIDEO_FPS15; id++)
+			EnableMenuItem(hmenu, id, videorecorder.IsActive() ? MF_GRAYED : MF_ENABLED);
+	}
 	
 	EnableMenuItem(hmenu, IDM_DUMPCPU1, core.GetCPU1()->GetDumpState() == -1 ? MF_GRAYED : MF_ENABLED);
 	CheckMenuItem(hmenu, IDM_DUMPCPU1, core.GetCPU1()->GetDumpState() == 1 ? MF_CHECKED : MF_UNCHECKED);
@@ -1540,10 +1961,14 @@ LRESULT WinUI::WmSize(HWND hwnd, WPARAM wp, LPARAM lp)
 {
 	if (wp != SIZE_MINIMIZED)
 		statusdisplay.Layout();
+	dock.SetTopInset(TitleHeight());		// タイトルの段 (M88gn)
+	InvalidateTitle();
 	active = wp != SIZE_MINIMIZED;
 	draw.Activate(active);
 	if (fullscreen && active)
 		draw.Resize(640, 400);		// 全画面: 描く範囲をウィンドウいっぱいに合わせ直す
+	else if (dockactive && active)
+		dock.Layout();				// ドックモード: ペインと画面を並べ直す (M88gn)
 	return DefWindowProc(hwnd, WM_SIZE, wp, lp);
 }
 
@@ -1900,15 +2325,21 @@ void WinUI::SyncDebugSettings(const char* oldkey, const char* newkey)
 		if (!PC8801::SaveDebugSettings(dbg, oldkey))
 			statusdisplay.Show(90, 3000, "デバッグ設定を保存できません: %s", oldkey);
 	}
-	else if (!debugnodiskwarned && (dbg->GetBreakPointCount() || dbg->GetWatchCount()))
+	else if (!debugnodiskwarned && (dbg->GetBreakPointCount() || dbg->GetWatchCount() || dbg->GetLabelCount()))
 	{
 		statusdisplay.Show(90, 4000, "ディスク・テープが無いため保存されません.");
 		debugnodiskwarned = true;
 	}
 	dbg->DeleteAllBreakPoints();
 	dbg->DeleteAllWatches();
+	dbg->DeleteAllLabels();
 	if (newkey[0])
-		PC8801::LoadDebugSettings(dbg, newkey);
+	{
+		int renamed = 0;
+		PC8801::LoadDebugSettings(dbg, newkey, &renamed);
+		if (renamed)
+			statusdisplay.Show(90, 6000, "デバッグ設定のラベル %d 個の名前を変えました (名前の重複・使えない字).", renamed);
+	}
 	core.Unlock();
 }
 
@@ -2006,7 +2437,7 @@ bool WinUI::CreateDiskMenu(uint drive)
 		wsprintf(buf, "Drive &%d - %s", drive+1, title);
 		mii.hSubMenu = dinfo.hmenu;
 	}
-	SetMenuItemInfo(GetMenu(hwnd), drive ? IDM_DRIVE_2 : IDM_DRIVE_1, false, &mii);
+	SetMenuItemInfo(hmenumain, drive ? IDM_DRIVE_2 : IDM_DRIVE_1, false, &mii);	// メニューバーは使っていない (タイトルの段。M88gn)
 	if (hmenuprev)
 		DestroyMenu(hmenuprev);
 	
@@ -2223,7 +2654,7 @@ void WinUI::OpenTapeImage(const char* filename, bool readonly)
 	if (r)
 	{
 		GetFileNameTitle(tapetitle, sizeof(tapetitle), filename);
-		wsprintf(buf, wp ? "&Open - %s (read only)..." : "&Open - %s...", tapetitle);
+		wsprintf(buf, wp ? "&Tape - %s (read only)..." : "&Tape - %s...", tapetitle);	// ディスクの Drive 1 - 名前 と同じ形 (M88gn)
 		mii.dwTypeData = buf;
 	}
 	else
@@ -2259,6 +2690,9 @@ LRESULT WinUI::M88DebugBreak(HWND, WPARAM, LPARAM)
 	ShowPauseStatus();
 	codemon.ShowCpu(core.GetDebugger()->GetBreakCpu());
 	codemon.FollowPC();
+	// パターンのブレーク (M88gn): メモリの窓で揃った所を見せる
+	if (core.GetDebugger()->GetBreakReason() == Debugger::brk_pattern)
+		memmon.ShowMatch(core.GetDebugger()->GetBreakAddr(), core.GetDebugger()->GetBreakLength());
 	tracemon.Refresh();
 	videomon.Refresh();
 	return 0;
@@ -2266,26 +2700,12 @@ LRESULT WinUI::M88DebugBreak(HWND, WPARAM, LPARAM)
 
 void WinUI::ShowPauseStatus()
 {
-	// M88gn: 止まった理由 (ブレークポイント) と、前に止まってからのメインの CPU のクロック数・時間 (ストップウォッチ)
-	char why[32] = "";
-	Debugger* dbg = core.GetDebugger();
-	if (dbg->IsBroken())
-	{
-		const char* c = dbg->GetBreakCpu() == Debugger::cpu_sub ? "SUB " : "";
-		uint a = dbg->GetBreakAddr();
-		switch (dbg->GetBreakReason())
-		{
-		case Debugger::brk_exec:		wsprintf(why, "%sBP  ", c); break;
-		case Debugger::brk_memread:		wsprintf(why, "%sRead %.4X  ", c, a); break;
-		case Debugger::brk_memwrite:	wsprintf(why, "%sWrite %.4X  ", c, a); break;
-		case Debugger::brk_ioread:		wsprintf(why, "%sIN %.2X  ", c, a); break;
-		case Debugger::brk_iowrite:		wsprintf(why, "%sOUT %.2X  ", c, a); break;
-		default: break;
-		}
-	}
+	// M88gn: 止まった理由 (どのブレークポイントか・読み書きした番地と値・その命令の番地) と、
+	// 前に止まってからのメインの CPU のクロック数・時間 (ストップウォッチ)。同じものをステータスの窓にも出す
 	// 止めたときは知らせが 2 回来ることがあるので、クロック数が変わっていなければ前の差をそのまま出す
 	uint32 tick = core.GetCPUTick();
-	if (!stoptickvalid || tick != stoptick)
+	bool newstop = !stoptickvalid || tick != stoptick;
+	if (newstop)
 	{
 		laptext[0] = 0;
 		if (stoptickvalid)
@@ -2298,7 +2718,16 @@ void WinUI::ShowPauseStatus()
 		stoptick = tick;
 		stoptickvalid = true;
 	}
-	statusdisplay.Show(20, 0, "PAUSED  PC:%.4x/%.4x  %s%s", core.GetCPU1()->GetPC(), core.GetCPU2()->GetPC(), why, laptext);
+	char why[160];
+	statmon.CaptureStop(why, sizeof(why), laptext);
+	// ラップタイムの窓: 止まった CPU とその PC (ブレークでなければメイン)
+	if (newstop)
+	{
+		Debugger* dbg = core.GetDebugger();
+		int cpu = dbg->IsBroken() ? int(dbg->GetBreakCpu()) : 0;
+		lapmon.Record(tick, cpu, cpu ? core.GetCPU2()->GetPC() : core.GetCPU1()->GetPC(), why);
+	}
+	statusdisplay.Show(20, 0, "PAUSED  %s  PC:%.4x/%.4x  %s", why, core.GetCPU1()->GetPC(), core.GetCPU2()->GetPC(), laptext);
 	statusdisplay.Update();
 }
 
@@ -2516,6 +2945,7 @@ LRESULT WinUI::WmDpiChanged(HWND hwnd, WPARAM, LPARAM lp)
 {
 	if (!fullscreen)
 	{
+		layoutguard++;		// 移る途中の大きさで Free にしない (M88gn)
 		// 勧めの大きさは WM_GETDPISCALEDSIZE で返した大きさ
 		const RECT* r = (const RECT*) lp;
 		SetWindowPos(hwnd, 0, r->left, r->top, r->right - r->left, r->bottom - r->top,
@@ -2525,6 +2955,7 @@ LRESULT WinUI::WmDpiChanged(HWND hwnd, WPARAM, LPARAM lp)
 		ShowStatusWindow();			// ステータスバーを作り直し、窓の大きさも直す
 		statusdisplay.Update();		// 作り直したステータスバーに知らせを出し直す
 		dpimoved = true;
+		layoutguard--;
 	}
 	else
 	{
@@ -2545,7 +2976,7 @@ LRESULT WinUI::WmGetDpiScaledSize(HWND hwnd, WPARAM wp, LPARAM lp)
 {
 	UINT newdpi = (UINT) wp;
 	UINT olddpi = Dpi::GetForWindow(hwnd);
-	if (fullscreen || !newdpi || !olddpi)
+	if (fullscreen || !newdpi || !olddpi || scalefree || IsZoomed(hwnd))	// Free なら Windows の勧めの大きさ (M88gn)
 		return FALSE;
 
 	uint width, height;
@@ -2553,7 +2984,16 @@ LRESULT WinUI::WmGetDpiScaledSize(HWND hwnd, WPARAM wp, LPARAM lp)
 	RECT rect;
 	rect.left = 0;	rect.right = width;
 	rect.top  = 0;	rect.bottom = height + MulDiv(statusdisplay.GetHeight(), newdpi, olddpi);
-	Dpi::AdjustWindowRectForDpi(&rect, wstyle, GetMenu(hwnd) != 0, 0, newdpi);
+	if (TitleActive())
+		rect.bottom += MulDiv(32, newdpi, 96);		// タイトルの段 (uititle.cpp の title_h)
+	if (dockactive)		// 開いているペインの分 (M88gn)
+	{
+		int bits = dock.VisibleBits();
+		for (int s = 0; s < DockHost::nsides; s++)
+			if (bits & (1 << s))
+				(s < DockHost::top ? rect.right : rect.bottom) += MulDiv(dock.DesiredExtent(s), newdpi, olddpi);
+	}
+	AdjustMainRect(&rect, newdpi);
 
 	SIZE* size = (SIZE*) lp;
 	size->cx = rect.right - rect.left;
@@ -2587,6 +3027,27 @@ void WinUI::ResizeWindow(uint width, uint height)
 		uint t = width;
 		width = height, height = t;
 	}
+	// ペインを出している間 (M88gn): 画面が表示の倍率の大きさになるように、ペインの分を足した窓にする
+	if (dockactive && !fullscreen)
+	{
+		layoutguard++;
+		if (!IsZoomed(hwnd) && !scalefree)		// Free なら窓の大きさは変えない (M88gn)
+		{
+			int sc = Limit(config.screenscale, 4, 1);
+			int bits = dock.VisibleBits();
+			RECT rect = { 0, 0, int(width) * sc, int(height) * sc + statusdisplay.GetHeight() };
+			for (int s = 0; s < DockHost::nsides; s++)
+				if (bits & (1 << s))
+					(s < DockHost::top ? rect.right : rect.bottom) += dock.DesiredExtent(s);
+			rect.bottom += TitleHeight();
+			AdjustMainRect(&rect);
+			SetWindowPos(hwnd, 0, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
+						 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+		}
+		dock.Layout();
+		layoutguard--;
+		return;
+	}
 	int scale = Limit(config.screenscale, 4, 1);
 	width *= scale;
 	height *= scale;
@@ -2595,10 +3056,14 @@ void WinUI::ResizeWindow(uint width, uint height)
 	rect.left = 0;	rect.right = width;
 	rect.top  = 0;  rect.bottom = height + statusdisplay.GetHeight();
 
-	Dpi::AdjustWindowRect(&rect, wstyle, GetMenu(hwnd) != 0, 0, hwnd);		// メニューバーは隠していることがある
+	int th = TitleHeight();		// タイトルの段 (M88gn)
+	rect.bottom += th;
+	AdjustMainRect(&rect);		// メニューバーは隠していることがある
 	SetWindowPos(hwnd, 0, 0, 0, rect.right-rect.left, rect.bottom-rect.top,
 				 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 	PostMessage(hwnd, WM_SIZE, SIZE_RESTORED, MAKELONG(width, height));
+	RECT v = { 0, th, int(width), th + int(height) };
+	draw.SetViewRect(th ? &v : 0);	// 画面はタイトルの段の下
 	draw.Resize( width, height );
 }
 
@@ -2609,12 +3074,14 @@ void WinUI::ShowStatusWindow()
 {
 	if (!fullscreen)
 	{
+		layoutguard++;		// M88gn
 		if (config.flags & PC8801::Config::showstatusbar)
 			statusdisplay.Enable((config.flags & PC8801::Config::showfdcstatus) != 0);
 		else
 			statusdisplay.Disable();
 		SetMenuBar(!HideMenuBar());
 		ResizeWindow(640, 400);
+		layoutguard--;
 	}
 	else
 		ApplyFullScreenMenu();		// PC-8801 のマウスの設定が変わったときなど
@@ -2667,6 +3134,8 @@ void WinUI::ToggleDisplayMode()
 		return;
 
 	displaychangedtime = GetTickCount();
+	if (!fullscreen && dockactive)
+		GetWindowRect(hwnd, &dockrect);		// ドックモード: 戻すときの位置・大きさ (M88gn)
 	fullscreen = !fullscreen;
 
 	if (fullscreen)
@@ -2702,8 +3171,15 @@ LRESULT WinUI::M88ChangeDisplay(HWND hwnd, WPARAM, LPARAM)
 {
 	// 画面ドライバの切替え
 	// ドライバが false を返した場合 GDI ドライバが使用されることになる
+	// ドックモードは窓でも縦横比を保って拡大する描き方 (M88gn)。全画面の間はペインを隠す
+	layoutguard++;		// 全画面の行き来で Free にしない (M88gn)
+	dock.SetSuspended(fullscreen);
+	dock.SetTopInset(TitleHeight());
+	if (fullscreen)
+		draw.SetViewRect(0);		// 全画面は窓いっぱい (窓の表示はタイトルの段の下。M88gn)
+	UpdateDockButtons();
 	if (!draw.ChangeDisplayMode
-				(fullscreen,
+				(fullscreen || dockactive,
 				(config.flags & PC8801::Config::force480) != 0,
 				Limit(config.screenscale, 4, 1)))
 		fullscreen = false;
@@ -2721,6 +3197,8 @@ LRESULT WinUI::M88ChangeDisplay(HWND hwnd, WPARAM, LPARAM)
 	if (!fullscreen)
 	{
 		wstyle = (wstyle & ~WS_POPUP) | (WS_CAPTION | WS_OVERLAPPED | WS_SYSMENU);
+		if (dockactive)
+			wstyle |= WS_THICKFRAME | WS_MAXIMIZEBOX;	// ドックモード (M88gn)
 		exstyle &= ~WS_EX_TOPMOST;
 		
 //		SetCapture(hwnd);
@@ -2730,7 +3208,11 @@ LRESULT WinUI::M88ChangeDisplay(HWND hwnd, WPARAM, LPARAM)
 		statusdisplay.DisableMenu();
 		SetMenuBar(!HideMenuBar());		// ウィンドウ表示の設定に合わせる
 		ResizeWindow(640, 400);
-		SetWindowPos(hwnd, HWND_NOTOPMOST, point.x, point.y, 0, 0, SWP_NOSIZE | SWP_FRAMECHANGED);
+		if (dockactive && dockrect.right > dockrect.left)	// ドックモード: 全画面の前の位置・大きさに (M88gn)
+			SetWindowPos(hwnd, HWND_NOTOPMOST, dockrect.left, dockrect.top, dockrect.right - dockrect.left,
+						 dockrect.bottom - dockrect.top, SWP_FRAMECHANGED);
+		else
+			SetWindowPos(hwnd, HWND_NOTOPMOST, point.x, point.y, 0, 0, SWP_NOSIZE | SWP_FRAMECHANGED);
 		ShowStatusWindow();
 		report = true;
 		guimodebymouse = false;
@@ -2741,7 +3223,7 @@ LRESULT WinUI::M88ChangeDisplay(HWND hwnd, WPARAM, LPARAM)
 			SetGUIFlag(false);
 			
 //	ReleaseCapture();
-		wstyle = (wstyle & ~(WS_CAPTION | WS_OVERLAPPED | WS_SYSMENU)) | WS_POPUP;
+		wstyle = (wstyle & ~(WS_CAPTION | WS_OVERLAPPED | WS_SYSMENU | WS_THICKFRAME | WS_MAXIMIZEBOX)) | WS_POPUP;	// ペインの間の枠も外す (M88gn)
 		exstyle |= WS_EX_TOPMOST;
 		SetWindowLongPtr(hwnd, GWL_STYLE, wstyle);
 		SetWindowLongPtr(hwnd, GWL_EXSTYLE, exstyle);
@@ -2766,6 +3248,7 @@ LRESULT WinUI::M88ChangeDisplay(HWND hwnd, WPARAM, LPARAM)
 	SetGUIFlag(false);
 	SetGUIFlag(true);
 	SetGUIFlag(false);
+	layoutguard--;
 	return 0;
 }
 
@@ -2972,7 +3455,7 @@ LRESULT WinUI::WmRButtonUp(HWND hwnd, WPARAM wparam, LPARAM lparam)
 
 	// 右クリックで本体のメニューを出す (PC-8801 のマウスを使う設定なら、右ボタンは PC-8801 のもの)。
 	// 描画の子の窓の上で離したときは、子の窓の WM_CONTEXTMENU が届く (WmContextMenu)
-	if (!(config.flags & Config::enablemouse))
+	if (!(config.flags & Config::enablemouse) && (short) HIWORD(lparam) >= TitleHeight())
 	{
 		POINT pt;
 		GetCursorPos(&pt);
@@ -2993,9 +3476,12 @@ LRESULT WinUI::WmContextMenu(HWND hwnd, WPARAM wparam, LPARAM lparam)
 	// キーボード (Shift+F10・アプリケーションキー) からのものは使わない (アプリケーションキーはショートカットに使うため)。
 	// タイトルバー・メニューバーの上 (窓の中でない所) は Windows に任せる (タイトルバーならシステムメニュー)
 	if (!(config.flags & Config::enablemouse) && lparam != (LPARAM) -1
-		&& DefWindowProc(hwnd, WM_NCHITTEST, 0, lparam) == HTCLIENT)
+		&& SendMessage(hwnd, WM_NCHITTEST, 0, lparam) == HTCLIENT)
 	{
-		ShowFullScreenMenu((short) LOWORD(lparam), (short) HIWORD(lparam));
+		POINT pt = { (short) LOWORD(lparam), (short) HIWORD(lparam) };
+		ScreenToClient(hwnd, &pt);
+		if (pt.y >= TitleHeight())		// タイトルの段の上では出さない
+			ShowFullScreenMenu((short) LOWORD(lparam), (short) HIWORD(lparam));
 		return 0;
 	}
 	return DefWindowProc(hwnd, WM_CONTEXTMENU, wparam, lparam);
@@ -3096,7 +3582,8 @@ bool WinUI::SetMenuBar(bool show)
 {
 	if (!hmenumain)
 		return false;
-	HMENU want = show ? hmenumain : 0;
+	HMENU want = (show && !TitleActive()) ? hmenumain : 0;	// 窓の表示はタイトルの段 (M88gn)
+	InvalidateTitle();
 	if (GetMenu(hwnd) == want)
 		return false;
 	SetMenu(hwnd, want);
@@ -3534,3 +4021,52 @@ void WinUI::ApplyCommandLine(const char* cmdline)
 	}
 }
 
+// ---------------------------------------------------------------------------
+//	録画 (M88gn): 始める・止める。保存先は始めるときに選ぶ
+//
+void WinUI::VideoAudioCb(void*, const int32* s, int samples, int rate)
+{
+	videorecorder.AddAudio((const int*) s, samples, rate);
+}
+
+void WinUI::ToggleVideoRecord()
+{
+	if (videorecorder.IsActive())
+	{
+		core.Lock();			// エミュレーションを止めてから (絵と音を渡している最中に終えないように)
+		videorecorder.Stop();
+		core.Unlock();
+		return;
+	}
+	if (!draw.CanCrtFilter())
+	{
+		statusdisplay.Show(100, 4000, "録画は Direct3D 11 で描いているときだけ使えます");
+		return;
+	}
+	char filename[MAX_PATH];
+	SYSTEMTIME t;
+	GetLocalTime(&t);
+	wsprintf(filename, "M88_%.4d%.2d%.2d_%.2d%.2d%.2d.mp4", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+	OPENFILENAME ofn;
+	memset(&ofn, 0, sizeof(ofn));
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = hwnd;
+	ofn.lpstrFilter = "MP4 video (*.mp4)\0*.mp4\0";
+	ofn.lpstrFile = filename;
+	ofn.nMaxFile = sizeof(filename);
+	ofn.lpstrDefExt = "mp4";
+	ofn.lpstrTitle = "Record Video";
+	ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+	SetGUIFlag(true);
+	bool ok = GetSaveFileName(&ofn) != 0;
+	SetGUIFlag(false);
+	if (!ok)
+		return;
+	int mode = GetPrivateProfileInt("M88p2 for Windows", "VideoMode", 0, PC8801::GetM88IniPath()) ? VideoRecorder::raw : VideoRecorder::filtered;
+	core.Lock();
+	int fps = GetPrivateProfileInt("M88p2 for Windows", "VideoFps", 60, PC8801::GetM88IniPath());
+	bool r = videorecorder.Prepare(filename, mode, fps);
+	core.Unlock();
+	if (!r)
+		statusdisplay.Show(100, 5000, "録画を始められません: %s", videorecorder.GetError());
+}

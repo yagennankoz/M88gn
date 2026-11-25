@@ -8,6 +8,9 @@
 #include "resource.h"
 #include "pc88/pc88.h"
 #include "codemon.h"
+#include "labeledit.h"
+
+static int JumpTarget(uint addr, const uint8* b);
 #include "misc.h"
 #include "device_i.h"
 #include "winvars.h"
@@ -23,7 +26,8 @@ using namespace PC8801;
 //	構築/消滅
 //
 CodeMonitor::CodeMonitor()
-: core(0), pcfollow(true), mnemmon(0), memmon(0), showcycles(true), lasta0(MemoryViewer::mainram)
+: core(0), pcfollow(true), mnemmon(0), memmon(0), showcycles(true), lasta0(MemoryViewer::mainram),
+  dumpfrom(0), dumpto(0xffff)
 {
 }
 
@@ -180,6 +184,16 @@ void CodeMonitor::ShowCpu(Debugger::CpuTarget cpu)
 	SetBank();						// 中で Update() まで済む
 }
 
+void CodeMonitor::ShowAt(uint addr, bool sub, int bank, HINSTANCE hinst, HWND parent)
+{
+	ShowAddress(addr, hinst, parent);		// 閉じていれば開く (ShowCpu は開いている窓だけ)
+	ShowCpu(sub ? Debugger::cpu_sub : Debugger::cpu_main);
+	if (sub)
+		ShowAddress(addr, hinst, parent);
+	else
+		ShowAddressIn(addr, false, bank, 1, hinst, parent);
+}
+
 // ---------------------------------------------------------------------------
 //	表示中の CPU / バンクをタイトルバーに出す
 //	(ブレークに連動して自動で切り替わるので、いま何を見ているのかが
@@ -224,6 +238,7 @@ void CodeMonitor::Start()
 {
 	UpdateCaption();
 	buttons.Attach(GetHWnd(), GetHInst());
+	addritem.Setup(GetHWnd(), IDM_CODE_CURADDR);
 }
 
 // ---------------------------------------------------------------------------
@@ -239,14 +254,62 @@ BOOL CodeMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		SetWindowLongPtr(hdlg, DWLP_MSGRESULT, TRUE);
 		return TRUE;
 	}
+	// メニューバーの Addr の欄 (M88gn)
+	if (addritem.Message(hdlg, msg, wp, lp))
+	{
+		SetWindowLongPtr(hdlg, DWLP_MSGRESULT, TRUE);
+		return TRUE;
+	}
 
 	switch (msg)
 	{
+	case WM_MOUSEMOVE:
+		// マウスの下の行に下線 (M88gn)
+		p.x = (short) LOWORD(lp);
+		p.y = (short) HIWORD(lp);
+		TrackGuideLeave(hdlg);
+		{
+			int row = GetTextPos(&p) && p.y >= 0 && p.y < GetHeight() ? p.y : -1;
+			SetGuide(row);
+			// メニューバーの Addr の欄に、その行の番地とラベル (M88gn)
+			char t[64] = "Addr: ----";
+			if (row >= 0 && size_t(row) < lineaddr.size() && lineaddr[row] < 0x10000)
+			{
+				uint a = lineaddr[row];
+				const char* l = core->GetDebugger()->GetLabel(GetShownCpu(), a, ShownBankAt(a));
+				if (l)
+					wsprintf(t, "Addr: %.4X  %s", a, l);
+				else
+					wsprintf(t, "Addr: %.4X", a);
+			}
+			addritem.SetText(t);
+		}
+		break;
+
+	case WM_MOUSELEAVE:
+		guidetracking = false;
+		SetGuide(-1);
+		addritem.SetText("Addr: ----");
+		break;
+
+	case WM_MOUSEWHEEL:
+	case WM_VSCROLL:
+		addritem.SetText("Addr: ----");		// 行がずれるので消す (次にマウスを動かせば出し直す)
+		break;
+
 	case WM_COMMAND:
 		switch (LOWORD(wp))
 		{
 		case IDM_MEM_SAVEIMAGE:
 			DumpImage();
+			break;
+
+		case IDM_CODE_SAVELABELS:		// ラベル付きで保存 (M88gn)
+			DumpImage(dump_labeled);
+			break;
+
+		case IDM_CODE_SAVESOURCE:		// アセンブラに通せる形で保存 (M88gn)
+			DumpImage(dump_source);
 			break;
 
 		case IDM_CODE_PCFOLLOW:
@@ -352,27 +415,70 @@ void CodeMonitor::ShowLineMenu(HWND hdlg, POINT p)
 		b[i] = GetBus()->Read8((addr + i) & 0xffff);
 	int target = JumpTarget(addr, b);
 
-	enum { cmd_mnemonic = 1, cmd_goto, cmd_break, cmd_memline, cmd_memoperand };
+	enum { cmd_mnemonic = 1, cmd_goto, cmd_break, cmd_memline, cmd_memoperand, cmd_label, cmd_unlabel,
+		   cmd_labeltarget, cmd_labeloperand };
 	int operand = OperandAddress(b);
 	HMENU hmenu = CreatePopupMenu();
 	AppendMenu(hmenu, MF_STRING | (mnemmon ? 0 : MF_GRAYED), cmd_mnemonic, "Show in &Mnemonic Table");
-	char buf[32];
+	// メニューに出す番地 (M88gn): ラベルがあれば「名前(1234H)」、無ければ「1234H」。
+	// ラベルは画面と同じ決め方 (表示中のバンクのものを先に、無ければ Any)
+	int lcpu = GetShownCpu();
+	auto addrtext = [&](char* out, uint a)
+	{
+		const char* l = core->GetDebugger()->GetLabel(lcpu, a, ShownBankAt(a));
+		if (l)
+			wsprintf(out, "%s(%.4XH)", l, a);
+		else
+			wsprintf(out, "%.4XH", a);
+	};
+	char at[64];
+	char buf[96];
 	if (target >= 0)
-		wsprintf(buf, "&Go to %.4XH", target);
+		addrtext(at, target), wsprintf(buf, "&Go to %s", at);
 	else
 		lstrcpy(buf, "&Go to Jump Target");
 	AppendMenu(hmenu, MF_STRING | (target >= 0 ? 0 : MF_GRAYED), cmd_goto, buf);
 	AppendMenu(hmenu, MF_SEPARATOR, 0, 0);
 	// メモリの窓へ (M88gn): この行の番地、命令に書かれた番地
-	wsprintf(buf, "Show %.4XH in M&emory", addr);
+	addrtext(at, addr);
+	wsprintf(buf, "Show %s in M&emory", at);
 	AppendMenu(hmenu, MF_STRING | (memmon ? 0 : MF_GRAYED), cmd_memline, buf);
 	if (operand >= 0)
-		wsprintf(buf, "Show &Operand %.4XH in Memory", operand);
+		addrtext(at, operand), wsprintf(buf, "Show &Operand %s in Memory", at);
 	else
 		lstrcpy(buf, "Show &Operand in Memory");
 	AppendMenu(hmenu, MF_STRING | (memmon && operand >= 0 ? 0 : MF_GRAYED), cmd_memoperand, buf);
 	AppendMenu(hmenu, MF_SEPARATOR, 0, 0);
 	AppendMenu(hmenu, MF_STRING, cmd_break, "Toggle &Breakpoint");
+	// ラベル (M88gn)
+	AppendMenu(hmenu, MF_SEPARATOR, 0, 0);
+	int lbank = ShownBankAt(addr);		// 今出しているバンク (ラベルが無ければ、付けるときに最初に選んでおく)
+	bool haslabel = core->GetDebugger()->GetLabel(lcpu, addr, lbank, &lbank) != 0;
+	if (lbank < 0)
+		lbank = Debugger::label_anybank;
+	addrtext(at, addr);
+	wsprintf(buf, haslabel ? "Edit &Label %s..." : "Set &Label (%s)...", at);
+	AppendMenu(hmenu, MF_STRING, cmd_label, buf);
+	AppendMenu(hmenu, MF_STRING | (haslabel ? 0 : MF_GRAYED), cmd_unlabel, "&Remove Label");
+	// 飛び先・参照先のラベル (M88gn)。付いていれば直す
+	int tbank = -1, obank = -1;
+	char lb[96];
+	if (target >= 0)
+	{
+		tbank = ShownBankAt(target);
+		bool has = core->GetDebugger()->GetLabel(lcpu, target, tbank, &tbank) != 0;
+		addrtext(at, target);
+		wsprintf(lb, has ? "Edit Label for &Target %s..." : "Set Label for &Target %s...", at);
+		AppendMenu(hmenu, MF_STRING, cmd_labeltarget, lb);
+	}
+	if (operand >= 0 && operand != target)
+	{
+		obank = ShownBankAt(operand);
+		bool has = core->GetDebugger()->GetLabel(lcpu, operand, obank, &obank) != 0;
+		addrtext(at, operand);
+		wsprintf(lb, has ? "Edit Label for O&perand %s..." : "Set Label for O&perand %s...", at);
+		AppendMenu(hmenu, MF_STRING, cmd_labeloperand, lb);
+	}
 
 	POINT sp;
 	GetCursorPos(&sp);
@@ -386,6 +492,7 @@ void CodeMonitor::ShowLineMenu(HWND hdlg, POINT p)
 		break;
 
 	case cmd_goto:
+		SetJumpMark(target);
 		JumpTo(target);
 		Update();
 		break;
@@ -400,6 +507,30 @@ void CodeMonitor::ShowLineMenu(HWND hdlg, POINT p)
 
 	case cmd_memoperand:
 		memmon->ShowAddress(operand, GetHInst(), GetWindow(hdlg, GW_OWNER));
+		break;
+
+	case cmd_label:
+		if (EditLabel(hdlg, GetHInst(), core->GetDebugger(), lcpu, addr, lbank))
+			Update();
+		break;
+
+	case cmd_labeltarget:
+	case cmd_labeloperand:
+		{
+			uint t = cmd == cmd_labeltarget ? uint(target) : uint(operand);
+			int bk = cmd == cmd_labeltarget ? tbank : obank;
+			if (EditLabel(hdlg, GetHInst(), core->GetDebugger(), lcpu, t, bk < 0 ? int(Debugger::label_anybank) : bk))
+			{
+				Update();
+				if (memmon)
+					memmon->Update();
+			}
+		}
+		break;
+
+	case cmd_unlabel:
+		core->GetDebugger()->SetLabel(lcpu, addr, lbank, 0);
+		Update();
 		break;
 	}
 }
@@ -594,6 +725,62 @@ uint CodeMonitor::GetCycles(uint a)
 	return cyc_main[op];
 }
 
+// 逆アセンブルの字の中の飛び先 (最後の「16 進 + H」) を、ラベルがあればその名前に置き換える (M88gn)。
+// text は 120 バイトの置き場 (buf + 8)。置き換えたら名前の位置 (text の中の何文字目か) を返し、len に長さ。
+// 置き換えなければ -1。paren なら「(1234H)」の括弧の中の番地 (メモリの参照先) だけを置き換える
+static int ReplaceTargetLabel(char* text, int target, const char* label, int* len, bool paren = false)
+{
+	if (target < 0 || !label)
+		return -1;
+	int n = lstrlen(text);
+	for (int e = n - 1; e > 0; e--)
+	{
+		if (text[e] != 'H')
+			continue;
+		int s = e;
+		while (s > 0 && isxdigit((unsigned char) text[s - 1]))
+			s--;
+		if (s == e)
+			continue;
+		// 数の前が区切り (空白・カンマ・括弧) でなければ名前の一部
+		if (s > 0 && text[s - 1] != ' ' && text[s - 1] != ',' && text[s - 1] != '\t' && text[s - 1] != '(')
+			continue;
+		if (paren && (s == 0 || text[s - 1] != '(' || text[e + 1] != ')'))
+			continue;
+		char num[16];
+		lstrcpyn(num, text + s, Min(e - s + 1, int(sizeof(num))));
+		if (int(strtoul(num, 0, 16)) != target)
+			return -1;
+		char tail[128];
+		lstrcpyn(tail, text + e + 1, sizeof(tail));
+		text[s] = 0;
+		char out[128];
+		_snprintf(out, sizeof(out) - 1, "%s%s%s", text, label, tail);
+		out[sizeof(out) - 1] = 0;
+		lstrcpyn(text, out, 120);	// buf + 8 なので 120 バイト
+		if (s >= lstrlen(text))
+			return -1;
+		*len = Min(lstrlen(label), lstrlen(text) - s);
+		return s;
+	}
+	return -1;
+}
+
+// この命令で名前に置き換える番地 (M88gn)。飛び先 (JumpTarget) か、無ければ命令に書かれた番地 (OperandAddress。
+// 置き換えるのは「(1234H)」の形のメモリの参照先だけ)。paren に参照先か。無ければ -1。
+// norst なら RST の番号は置き換えない (アセンブラに通す形)
+static int LabelRef(uint a, const uint8* b, bool* paren, bool norst = false)
+{
+	int t = JumpTarget(a, b);
+	if (t >= 0)
+	{
+		*paren = false;
+		return (norst && (b[0] & 0xc7) == 0xc7) ? -1 : t;
+	}
+	*paren = true;
+	return OperandAddress(b);
+}
+
 void CodeMonitor::UpdateText()
 {
 	if (AutoBank())
@@ -624,11 +811,20 @@ void CodeMonitor::UpdateText()
 			bool hasbp = core->GetDebugger()->IsExecBreak(Debugger::cpu_main, a) ||
 						 core->GetDebugger()->IsExecBreak(Debugger::cpu_sub, a);
 
+			int next = diag.Disassemble(a, buf+8);
+			// ジャンプした先 (M88gn) を含む命令の行は、次のジャンプまで色を変える
+			bool isjump = jumpaddr >= a && jumpaddr < next;
+
 			char mark;
 			if (pc == a)
 			{
 				mark = subshown ? 'S' : 'M';
 				SetBkCol(RGB(0, 0x60, 0));
+			}
+			else if (isjump)
+			{
+				mark = hasbp ? '*' : ' ';
+				SetBkCol(RGB(0, 0x48, 0x80));
 			}
 			else if (hasbp)
 			{
@@ -642,27 +838,76 @@ void CodeMonitor::UpdateText()
 				SetBkCol(RGB(StatExec(a), 0, 0x20));
 			}
 
-			int next = diag.Disassemble(a, buf+8);
+			// 飛び先にラベルがあれば、番地の代わりに名前を出す (M88gn)。名前の所は字の色を変える
+			int lpos = -1, llen = 0;
+			{
+				uint8 b[4];
+				for (int i = 0; i < 4; i++)
+					b[i] = GetBus()->Read8((a + i) & 0xffff);
+				bool paren;
+				int t = LabelRef(a, b, &paren);
+				if (t >= 0)
+					lpos = ReplaceTargetLabel(buf + 8, t, core->GetDebugger()->GetLabel(GetShownCpu(), t, ShownBankAt(t)), &llen, paren);
+			}
 			char* ptr = buf;
 			int c, d = next-a;
 			for (c=0; c<d; c++)
 				ToHex(&ptr, GetBus()->Read8((a+c) & 0xffff));
 			for (; c<4; c++)
 				*ptr++ = ' ', *ptr++ = ' ';
+			// ニーモニック (20 桁にそろえる)。置き換えたラベルの名前の所だけ色を変える
+			const char* mn = buf + 8;
+			auto putmnemonic = [&]()
+			{
+				int n = lstrlen(mn);
+				if (lpos >= 0)
+				{
+					// Putf (wvsprintf) は %.*s を使えないので、区切って写してから書く
+					char part[128];
+					lstrcpyn(part, mn, lpos + 1);
+					Puts(part);
+					SetTxCol(RGB(0xff, 0xe0, 0x60));
+					lstrcpyn(part, mn + lpos, llen + 1);
+					Puts(part);
+					SetTxCol(0xffffff);
+					Puts(mn + lpos + llen);
+				}
+				else
+					Puts(mn);
+				for (; n < 20; n++)
+					Puts(" ");
+			};
+			// ラベル (M88gn): 行の右端 (サイクル数の後) に出す
+			const char* label = core->GetDebugger()->GetLabel(GetShownCpu(), a, ShownBankAt(a));
 			if (showcycles)
 			{
 				// 行の右に「; 12/7」のように出す (ニーモニックの幅をそろえる)
 				uint c = GetCycles(a);
-				Putf("%c %.4x: %.8s   %-20s", mark, a, buf, buf+8);
+				Putf("%c %.4x: %.8s   ", mark, a, buf);
+				putmnemonic();
 				SetTxCol(0xa0c0a0);
+				char cyc[16];
 				if (c >> 8)
-					Putf("; %d/%d\n", c & 0xff, c >> 8);
+					wsprintf(cyc, "%d/%d", c & 0xff, c >> 8);
 				else
-					Putf("; %d\n", c & 0xff);
-				SetTxCol(0xffffff);
+					wsprintf(cyc, "%d", c & 0xff);
+				if (label)
+					Putf("; %-6s ", cyc);
+				else
+					Putf("; %s", cyc);
 			}
 			else
-				Putf("%c %.4x: %.8s   %s\n", mark, a, buf, buf+8);
+			{
+				Putf("%c %.4x: %.8s   ", mark, a, buf);
+				putmnemonic();
+			}
+			if (label)
+			{
+				SetTxCol(RGB(0xff, 0xe0, 0x60));
+				Puts(label);
+			}
+			Puts("\n");
+			SetTxCol(0xffffff);
 			a = next;
 		}
 		else
@@ -692,6 +937,228 @@ bool CodeMonitor::DumpTo(TextBuffer& tb, int from, int to)
 		a = next;
 	}
 	return !tb.Failed();
+}
+
+// ラベル付きの逆アセンブル (M88gn)。今表示しているバンクの 0000-FFFF。
+// ラベルの選び方は画面と同じ (表示中のバンクのものを先に、無ければ Any)
+// 1 バイトの値をアセンブラの 16 進で (A～F で始まれば 0 を付ける)
+static void HexByte(char* buf, uint v)
+{
+	wsprintf(buf, "%s%.2XH", v >= 0xa0 ? "0" : "", v & 0xff);
+}
+
+bool CodeMonitor::DumpToLabeled(TextBuffer& tb, bool source, uint from, uint to)
+{
+	Debugger* dbg = core->GetDebugger();
+	int cpu = GetShownCpu();
+	from &= 0xffff;
+	to &= 0xffff;
+	if (to < from)
+		to = from;
+
+	// この命令の飛び先を、ラベルの名前で書くか (書くなら飛び先、書かないなら -1)
+	// RST の番号はアセンブラによっては名前を書けないので、ソースの形では数のまま
+	char buf[128];
+	// 飛び先・括弧付きの参照先 (LabelRef)。text の字を実際に置き換えられたときだけ
+	auto labeltarget = [&](uint a, const uint8* b, int size, bool asdb, char* text) -> int
+	{
+		if (asdb)
+			return -1;
+		bool paren;
+		int t = LabelRef(a, b, &paren, source);
+		if (t < 0)
+			return -1;
+		const char* l = dbg->GetLabel(cpu, t, ShownBankAt(t));
+		int len;
+		if (!l || ReplaceTargetLabel(text, t, l, &len, paren) < 0)
+			return -1;
+		return t;
+	};
+	// アセンブラに通せる形: 公式の命令でない (同じバイトに戻らないかもしれない) もの、FFFF を越えるものは DB で
+	auto writeasdb = [&](uint a, const uint8* b, int size) -> bool
+	{
+		return source && (a + size > 0x10000 || !IsOfficialInstruction(b, size));
+	};
+
+	// 1 回目: 命令の頭の番地と、名前で書く飛び先を調べる
+	std::vector<bool> start(0x10000, false);
+	std::vector<bool> target(0x10000, false);
+	uint end = from;			// 書き出す最後の命令の次の番地 (to を越えることがある)
+	for (uint a = from; a <= to && a < 0x10000; )
+	{
+		start[a] = true;
+		int next = diag.Disassemble(a, buf + 8);
+		int size = int(next) > int(a) ? next - a : 1;
+		uint8 b[4];
+		for (int i = 0; i < 4; i++)
+			b[i] = GetBus()->Read8((a + i) & 0xffff);
+		int t = labeltarget(a, b, size, writeasdb(a, b, size), buf + 8);
+		if (t >= 0)
+			target[t] = true;
+		a += size;
+		end = a;
+	}
+
+	char caption[96];
+	GetWindowText(GetHWnd(), caption, sizeof(caption));
+	if (source)
+	{
+		tb.Addf("; M88gn disassembly (assembler source)  %s\n", caption);
+		tb.Add("; Instructions not in the official Zilog set are written as DB.\n");
+		tb.Add("; The comment on each line is the address and the bytes.\n");
+	}
+	else
+		tb.Addf("; M88gn disassembly with labels  %s\n", caption);
+	tb.Addf("; Range %.4X-%.4X\n", from, Min(end, 0x10000u) - 1);
+
+	// 行の頭に置けないラベルは先頭に EQU で:
+	// 範囲の中で命令の途中に当たるもの、範囲の外で飛び先に名前で書いたもの
+	bool anyequ = false;
+	for (uint a = 0; a < 0x10000; a++)
+	{
+		bool inside = a >= from && a < end;
+		if (inside ? start[a] : !target[a])
+			continue;
+		const char* l = dbg->GetLabel(cpu, a, ShownBankAt(a));
+		if (!l)
+			continue;
+		if (!anyequ)
+			tb.Add("\n; labels not at the start of an instruction in this range\n");
+		anyequ = true;
+		tb.Addf("%-15s\tEQU\t%s%.4XH\n", l, a >= 0xa000 ? "0" : "", a);
+	}
+	tb.Add("\n");
+	if (source)
+		tb.Addf("\tORG\t%s%.4XH\n\n", from >= 0xa000 ? "0" : "", from);
+
+	// 2 回目: 書き出す
+	for (uint a = from; a < end; )
+	{
+		const char* l = dbg->GetLabel(cpu, a, ShownBankAt(a));
+		if (l)
+			tb.Addf("%s:\n", l);
+
+		int next = diag.Disassemble(a, buf + 8);
+		uint8 b[4];
+		for (int i = 0; i < 4; i++)
+			b[i] = GetBus()->Read8((a + i) & 0xffff);
+		int size = int(next) > int(a) ? next - a : 1;
+		bool asdb = writeasdb(a, b, size);
+		labeltarget(a, b, size, asdb, buf + 8);		// 置き換える
+
+		char* ptr = buf;
+		int c;
+		for (c = 0; c < size && c < 4; c++)
+			ToHex(&ptr, b[c]);
+		for (; c < 4; c++)
+			*ptr++ = ' ', *ptr++ = ' ';
+
+		if (!source)
+			tb.Addf("%.4x %.8s\t\t%s\n", a, buf, buf + 8);
+		else
+		{
+			char bytes[16];
+			lstrcpyn(bytes, buf, 9);
+			for (int k = lstrlen(bytes); k > 0 && bytes[k - 1] == ' '; k--)
+				bytes[k - 1] = 0;
+			if (asdb)
+			{
+				char db[64] = "DB   ";
+				int n = Min(size, int(0x10000 - a));
+				for (int k = 0; k < n; k++)
+				{
+					char h[8];
+					HexByte(h, b[k]);
+					if (k)
+						lstrcat(db, ",");
+					lstrcat(db, h);
+				}
+				tb.Addf("\t%-28s; %.4X  %s  (%s)\n", db, a, bytes, buf + 8);
+				size = n;
+			}
+			else
+				tb.Addf("\t%-28s; %.4X  %s\n", buf + 8, a, bytes);
+		}
+		a += size;
+	}
+	return !tb.Failed();
+}
+
+// ---------------------------------------------------------------------------
+//	ラベル付きの保存の範囲を聞く (M88gn。メモリの窓の Save Range と同じ窓)
+//
+namespace
+{
+struct DumpRangeCtx
+{
+	uint from, to;
+	const char* title;
+};
+
+BOOL CALLBACK DumpRangeDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
+{
+	char buf[64];
+	switch (msg)
+	{
+	case WM_INITDIALOG:
+		{
+			SetWindowLongPtr(hdlg, DWLP_USER, lp);
+			DumpRangeCtx* ctx = (DumpRangeCtx*) lp;
+			SetWindowText(hdlg, ctx->title);
+			wsprintf(buf, "%.4x", ctx->from);
+			SetDlgItemText(hdlg, IDC_RANGE_START, buf);
+			wsprintf(buf, "%.4x", ctx->to);
+			SetDlgItemText(hdlg, IDC_RANGE_END, buf);
+			SetFocus(GetDlgItem(hdlg, IDC_RANGE_START));
+			SendDlgItemMessage(hdlg, IDC_RANGE_START, EM_SETSEL, 0, -1);
+		}
+		return FALSE;
+
+	case WM_COMMAND:
+		if (LOWORD(wp) == IDOK)
+		{
+			DumpRangeCtx* ctx = (DumpRangeCtx*) GetWindowLongPtr(hdlg, DWLP_USER);
+			// 16 進かラベルの名前 (M88gn)
+			uint s, e;
+			GetDlgItemText(hdlg, IDC_RANGE_START, buf, sizeof(buf));
+			if (!ParseAddrInput(buf, &s))
+				return TRUE;
+			GetDlgItemText(hdlg, IDC_RANGE_END, buf, sizeof(buf));
+			if (!ParseAddrInput(buf, &e))
+				return TRUE;
+			s &= 0xffff, e &= 0xffff;
+			if (e < s)
+			{
+				MessageBox(hdlg, "終わりの番地が始まりより前です。", ctx->title, MB_OK | MB_ICONWARNING);
+				return TRUE;
+			}
+			ctx->from = s, ctx->to = e;
+			EndDialog(hdlg, IDOK);
+			return TRUE;
+		}
+		if (LOWORD(wp) == IDCANCEL)
+		{
+			EndDialog(hdlg, IDCANCEL);
+			return TRUE;
+		}
+		break;
+
+	case WM_CLOSE:
+		EndDialog(hdlg, IDCANCEL);
+		return TRUE;
+	}
+	return FALSE;
+}
+}
+
+bool CodeMonitor::AskDumpRange(const char* title)
+{
+	DumpRangeCtx ctx = { dumpfrom, dumpto, title };
+	if (DialogBoxParam(GetHInst(), MAKEINTRESOURCE(IDD_MEM_RANGE), GetHWnd(),
+					   DLGPROC((void*) DumpRangeDlgProc), (LPARAM) &ctx) != IDOK)
+		return false;
+	dumpfrom = ctx.from, dumpto = ctx.to;
+	return true;
 }
 
 bool CodeMonitor::Dump(FILE* fp, int from, int to)
@@ -730,7 +1197,7 @@ bool CodeMonitor::CopyToClipboard()
 // ----------------------------------------------------------------------------
 //	総ダンプを書き込む
 //	
-bool CodeMonitor::DumpImage()
+bool CodeMonitor::DumpImage(int mode)
 {
 	// ダイアログ
 	OFNV5 ofn;
@@ -748,7 +1215,10 @@ bool CodeMonitor::DumpImage()
 	ofn.nMaxFile = MAX_PATH;
 	ofn.Flags = OFN_CREATEPROMPT;
 	ofn.lpstrDefExt = "asm";
-	ofn.lpstrTitle = 0;
+	ofn.lpstrTitle = mode == dump_labeled ? "Save with Labels" : mode == dump_source ? "Save as Source" : "Save Disassembly";
+	// 番地の範囲を聞く (M88gn)
+	if (!AskDumpRange(ofn.lpstrTitle))
+		return false;
 	
 	if (!GetSaveFileName(&ofn))
 		return false;
@@ -757,7 +1227,14 @@ bool CodeMonitor::DumpImage()
 	FILE* fp = fopen(filename, "w");
 	if (fp)
 	{
-		Dump(fp, 0, 0x10000);
+		if (mode != dump_plain)
+		{
+			TextBuffer tb;
+			DumpToLabeled(tb, mode == dump_source, dumpfrom, dumpto);
+			fwrite(tb.Get(), 1, tb.Length(), fp);
+		}
+		else
+			Dump(fp, dumpfrom, dumpto + 1);	// to は含まない (dumpto で始まる命令までを書く)
 		fclose(fp);
 		return true;
 	}

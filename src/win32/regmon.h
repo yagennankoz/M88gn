@@ -13,6 +13,7 @@
 
 class PC88;
 class WinCore;
+namespace PC8801 { class CodeMonitor; class MemoryMonitor; }
 
 // ---------------------------------------------------------------------------
 
@@ -23,6 +24,8 @@ public:
 	~Z80RegMonitor();
 
 	bool Init(WinCore* core);
+	// 右クリックで番地を見せる先 (ui が渡す、M88gn)
+	void SetMonitors(PC8801::CodeMonitor* c, PC8801::MemoryMonitor* m) { codemon = c; memmon = m; }
 
 private:
 	// レジスタ表示上の1フィールド (行/列とレジスタの対応)
@@ -49,11 +52,14 @@ private:
 	uint GetRegValue(int cpu, int id);
 	void SetRegValue(int cpu, int id, uint value);
 	bool FindField(POINT p, int* cpu, int* id);
+	void ShowFieldMenu(HWND hdlg, POINT p);	// 右クリックのメニュー (M88gn)
 
 	BOOL EDlgProc(HWND, UINT, WPARAM, LPARAM);
 	static BOOL CALLBACK EDlgProcGate(HWND, UINT, WPARAM, LPARAM);
 
 	WinCore* core;
+	PC8801::CodeMonitor* codemon;
+	PC8801::MemoryMonitor* memmon;
 	int editcpu;
 	int editid;
 

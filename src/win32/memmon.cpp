@@ -11,6 +11,19 @@
 #include "88config.h"
 #include "watchbank.h"
 #include "codemon.h"
+#include "patbp.h"
+#include "labeledit.h"
+#include "dpi.h"
+
+#ifndef WM_DPICHANGED
+#define WM_DPICHANGED	0x02e0
+#endif
+#ifndef SPI_GETFLATMENU
+#define SPI_GETFLATMENU	0x1022
+#endif
+#ifndef COLOR_MENUBAR
+#define COLOR_MENUBAR	30
+#endif
 #include "misc.h"
 #include "device_i.h"
 #include "file.h"
@@ -34,11 +47,15 @@ MemoryMonitor::MemoryMonitor()
 	sumtype = sum_none;
 	hwndtip = 0;
 	tipaddr = -1;
+	curaddr = -2;
 	tiptracking = false;
 	codemon = 0;
 	rangestart = 0;
 	rangeend = 0xffff;
 	rangeload = false;
+	foundaddr = -1;
+	foundlen = 0;
+	searchforward = true;
 
 	if (!col[0xff])
 	{
@@ -101,6 +118,8 @@ void MemoryMonitor::SetWatch(uint addr, uint range)
 void MemoryMonitor::Start()
 {
 	buttons.Attach(GetHWnd(), GetHInst());
+	addritem.Setup(GetHWnd(), IDM_MEM_CURADDR);
+	curaddr = -2;
 	core->Lock();
 	if (GetA0() == MemoryViewer::sub)
 	{
@@ -187,6 +206,8 @@ void MemoryMonitor::UpdateText()
 		SetWatch(a, rows * 0x10);
 	}
 
+	labelboxes.clear();
+
 	// ウォッチの番地 (表示中の CPU の分)。背景色を付ける (M88gn)
 	watchshown.clear();
 	{
@@ -228,12 +249,27 @@ void MemoryMonitor::UpdateText()
 			// ウォッチしている番地は、値の前後の空白まで橙にする (M88gn)。
 			// そのため 1 バイトを「前の空白 + 値」の順に書く (並びは「番地: xx xx ... xx 」のまま)
 			// 色: ウォッチは橙、読み・書きのブレークポイントは赤、両方なら紫 (地は明るく、字は黒)
+			// 検索で見つけた所は緑 (ほかの印より優先)
 			int mark[16];
 			for (x=0; x<16; x++)
-				mark[x] = MarkAt((a + x) & 0xffff);
-			static const COLORREF markbk[4] =
+				mark[x] = InFound(a + x) ? 4 : ((a + x) < 0x10000 && InJump(a + x)) ? 7 : MarkAt((a + x) & 0xffff);
+			// ラベルのある番地 (M88gn): 16 進の欄の値と文字の欄の字を角丸の箱で囲む
+			for (x=0; x<16; x++)
+			{
+				if ((a + x) < 0x10000 && core->GetDebugger()->GetLabel(ShownCpu(), (a + x) & 0xffff, ShownBankAt((a + x) & 0xffff)))
+				{
+					LabelBox hb = { 6 + 3 * x, y + 1, 2 };	// 値は「番地:」の 5 字と前の空白の後
+					LabelBox cb = { 6 + 48 + (sumtype != sum_none ? 5 : 0) + x, y + 1, 1 };
+					labelboxes.push_back(hb);
+					labelboxes.push_back(cb);
+				}
+			}
+			// 5 = 無効なブレークポイント (灰色)、6 = ウォッチと無効なブレークポイント (くすんだ橙)
+			// 7 = ジャンプした先 (水色、次のジャンプまで)
+			static const COLORREF markbk[8] =
 			{
 				RGB(0, 0, 0x20), RGB(0xf0, 0xa8, 0x30), RGB(0xf0, 0x70, 0x70), RGB(0xc8, 0x90, 0xf8),
+				RGB(0x70, 0xe0, 0x70), RGB(0xa8, 0xa8, 0xa8), RGB(0xc8, 0xb0, 0x88), RGB(0x60, 0xd0, 0xf0),
 			};
 
 			SetTxCol(0xffffff);
@@ -283,8 +319,17 @@ void MemoryMonitor::UpdateText()
 				SetTxCol(0x60ffff);
 				Putf(":%.2x  ", RowSum(sumtype, a0, row));
 			}
+			// 文字の欄も、見つけた所は緑の地に黒い字
+			for (x=0; x<16; x++)
+			{
+				bool f = mark[x] == 4 || mark[x] == 7;
+				SetBkCol(f ? markbk[mark[x]] : RGB(0, 0, 0x20));
+				SetTxCol(f ? RGB(0, 0, 0) : 0xffffff);
+				Putf("%c", mem[x]);
+			}
+			SetBkCol(RGB(0, 0, 0x20));
 			SetTxCol(0xffffff);
-			Putf("%.16s\n", mem);
+			Puts("\n");
 		}
 		else
 		{
@@ -301,6 +346,12 @@ BOOL MemoryMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 {
 	// メニューバーの Pause/Play/Step のボタン (M88gn)
 	if (buttons.Message(hdlg, msg, wp, lp))
+	{
+		SetWindowLongPtr(hdlg, DWLP_MSGRESULT, TRUE);
+		return TRUE;
+	}
+	// メニューバーの Addr の欄 (M88gn)
+	if (addritem.Message(hdlg, msg, wp, lp))
 	{
 		SetWindowLongPtr(hdlg, DWLP_MSGRESULT, TRUE);
 		return TRUE;
@@ -332,6 +383,18 @@ BOOL MemoryMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 
 		case IDM_MEM_LOADRANGE:
 			LoadRange();
+			break;
+
+		case IDM_MEM_FIND:
+			Find();
+			break;
+
+		case IDM_MEM_FINDNEXT:
+		case IDM_MEM_FINDPREV:
+			if (search.len > 0)
+				FindPattern(LOWORD(wp) == IDM_MEM_FINDNEXT);
+			else
+				Find();
 			break;
 
 		case IDM_MEM_STATCLEAR:
@@ -376,18 +439,36 @@ BOOL MemoryMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 			tiptracking = !!TrackMouseEvent(&tme);
 		}
 		UpdateLabelTip(p, true);
+		{
+			POINT tp = p;
+			int a = GetTextPos(&tp) ? AddrAtPos(tp) : -1;
+			ShowCursorAddr(a);
+			// 行に下線、桁の右に縦線 (16 進の欄と文字の欄の両方)
+			int row = (tp.y >= 1 && tp.y < GetHeight()) ? tp.y : -1;
+			if (a >= 0)
+			{
+				int c = a & 15;
+				int asc = 6 + 48 + (sumtype != sum_none ? 5 : 0);
+				SetGuide(row, 6 + 3 * c + 2, asc + c + 1);	// 16 進の欄は値のすぐ右 (値は 6 + 3 * c から 2 字)
+			}
+			else
+				SetGuide(row);
+		}
 		break;
 
 	case WM_MOUSELEAVE:
 		tiptracking = false;
 		p.x = p.y = 0;
 		UpdateLabelTip(p, false);
+		ShowCursorAddr(-1);
+		SetGuide(-1);
 		break;
 
 	case WM_MOUSEWHEEL:
 	case WM_VSCROLL:
 		p.x = p.y = 0;
 		UpdateLabelTip(p, false);		// 表示がずれるので消す (次にマウスを動かせば出し直す)
+		ShowCursorAddr(-1);
 		break;
 
 	case WM_DESTROY:
@@ -427,6 +508,17 @@ BOOL MemoryMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		if (wp == 'G' && (GetKeyState(VK_CONTROL) & 0x8000))
 		{
 			GotoAddress();
+			return 0;
+		}
+		// 検索 (M88gn): Ctrl+F、F3 / Shift+F3
+		if (wp == 'F' && (GetKeyState(VK_CONTROL) & 0x8000))
+		{
+			SendMessage(hdlg, WM_COMMAND, IDM_MEM_FIND, 0);
+			return 0;
+		}
+		if (wp == VK_F3)
+		{
+			SendMessage(hdlg, WM_COMMAND, (GetKeyState(VK_SHIFT) & 0x8000) ? IDM_MEM_FINDPREV : IDM_MEM_FINDNEXT, 0);
 			return 0;
 		}
 		// Ctrl+英字は16進入力として食わない(Ctrl+C を基底へ通すため)
@@ -526,6 +618,203 @@ void MemoryMonitor::Search(uint key, int bytes)
 		PutStatus("not found");
 		memset(stat, 1, 0x10000);
 	}
+}
+
+// ----------------------------------------------------------------------------
+//	検索 (M88gn)。今表示しているバンク (Save Range と同じ) の中を、文字列か 1～16 バイトの並びで探す
+//
+bool MemoryMonitor::Find()
+{
+	INT_PTR r = DialogBoxParam(GetHInst(), MAKEINTRESOURCE(IDD_MEM_SEARCH), GetHWnd(),
+							   DLGPROC((void*)SDlgProcGate), (LPARAM)this);
+	if (r == IDOK)
+	{
+		FindPattern(searchforward);
+		return true;
+	}
+	if (r == IDC_SEARCH_BREAK)
+		SetPatternBreak();
+	return false;
+}
+
+// 検索のダイアログの Set Breakpoint: 入れたパターンで、パターンのブレークの窓を開く。
+// バンクは見つけた所 (無ければ窓の先頭) に出しているもの (ROM なら RAM)
+void MemoryMonitor::SetPatternBreak()
+{
+	Debugger::BreakPoint bp;
+	bp.pattern = true;
+	bp.enabled = true;
+	bp.cpu = uint8(ShownCpu());
+	int bank = ShownBank(foundaddr >= 0 ? uint(foundaddr) : uint(GetLine() * 16) & 0xffff);
+	if (!IsPatternBank(bank))
+		bank = MemoryViewer::mainram;
+	bp.patbank = uint8(bank);
+	if (bp.cpu == Debugger::cpu_sub)
+		bp.addr = 0x4000, bp.length = 0x4000;
+	else
+	{
+		const WatchBank* b = FindWatchBank(bank);
+		bp.addr = b->lo;
+		bp.length = b->hi - b->lo + 1;
+	}
+	bp.patlen = uint8(search.len);
+	memcpy(bp.pat, search.pat, search.len);
+	bp.patflags = uint8((search.hex ? Debugger::pat_hex : 0) | (search.CaseSensitive() ? 0 : Debugger::pat_nocase));
+	if (EditPatternBreak(GetHWnd(), GetHInst(), core, -1, &bp) >= 0)
+	{
+		EnableStatus(true);
+		PutStatus("Pattern breakpoint set");
+	}
+}
+
+void MemoryMonitor::ShowMatch(uint addr, uint len)
+{
+	if (!IsOpen())
+		return;
+	foundaddr = int(addr & 0xffff);
+	foundlen = int(len);
+	int top = GetLine() * 16;
+	int rows = Max(GetHeight() - 1, 1);
+	if (foundaddr < top || foundaddr + foundlen > top + rows * 16)
+		JumpTo(foundaddr);
+	Update();
+}
+
+BOOL MemoryMonitor::SDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM)
+{
+	switch (msg)
+	{
+	case WM_INITDIALOG:
+		search.InitDialog(hdlg);
+		return FALSE;
+
+	case WM_COMMAND:
+		{
+			int id = LOWORD(wp);
+			int code = HIWORD(wp);
+			if (search.Command(hdlg, id, code))
+				break;
+			if ((id == IDOK || id == IDC_SEARCH_PREV) && code == BN_CLICKED)
+			{
+				if (search.Read(hdlg, "Search"))
+				{
+					searchforward = id == IDOK;
+					EndDialog(hdlg, IDOK);
+				}
+				return TRUE;
+			}
+			if (id == IDC_SEARCH_BREAK && code == BN_CLICKED)
+			{
+				if (search.Read(hdlg, "Search"))
+					EndDialog(hdlg, IDC_SEARCH_BREAK);
+				return TRUE;
+			}
+			if (id == IDCANCEL)
+			{
+				EndDialog(hdlg, IDCANCEL);
+				return TRUE;
+			}
+		}
+		break;
+
+	case WM_CLOSE:
+		EndDialog(hdlg, IDCANCEL);
+		return TRUE;
+	}
+	return FALSE;
+}
+
+BOOL CALLBACK MemoryMonitor::SDlgProcGate(HWND hwnd, UINT m, WPARAM w, LPARAM l)
+{
+	MemoryMonitor* mon = 0;
+	if (m == WM_INITDIALOG)
+	{
+		mon = reinterpret_cast<MemoryMonitor*>(l);
+		if (mon)
+			::SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR) mon);
+	}
+	else
+		mon = (MemoryMonitor*) ::GetWindowLongPtr(hwnd, GWLP_USERDATA);
+	return mon ? mon->SDlgProc(hwnd, m, w, l) : FALSE;
+}
+
+bool MemoryMonitor::PatternAt(const uint8* p)
+{
+	for (int i = 0; i < search.len; i++)
+	{
+		uint8 a = p[i], b = search.pat[i];
+		if (a != b)
+		{
+			if (search.CaseSensitive())
+				return false;
+			if (a >= 'a' && a <= 'z')
+				a -= 0x20;
+			if (b >= 'a' && b <= 'z')
+				b -= 0x20;
+			if (a != b)
+				return false;
+		}
+	}
+	return true;
+}
+
+// 見つけた所 (窓に見えていなければ窓の先頭) の次 (前) から探す。末尾 (先頭) まで行ったら反対の端から続ける
+void MemoryMonitor::FindPattern(bool forward)
+{
+	int patternlen = search.len;
+	if (patternlen <= 0)
+		return;
+
+	uint8* img = new uint8[0x10000];
+	core->Lock();
+	core->GetDebugger()->SetSuppressBreak(true);
+	for (int a = 0; a < 0x10000; a++)
+		img[a] = GetBus()->Read8(a);
+	core->GetDebugger()->SetSuppressBreak(false);
+	core->Unlock();
+
+	int top = GetLine() * 16;
+	int rows = Max(GetHeight() - 1, 1);
+	bool visible = foundaddr >= top && foundaddr < top + rows * 16;
+	int start = visible ? foundaddr + (forward ? 1 : -1) : (forward ? top : top - 1);
+
+	int n = 0x10000 - patternlen + 1;		// 探し始められる番地の数 (FFFF を越えて 0000 にはつながない)
+	int s0 = ((start % n) + n) % n;
+	int hit = -1;
+	bool wrapped = false;
+	for (int i = 0; i < n; i++)
+	{
+		int a = forward ? s0 + i : s0 - i;
+		a = ((a % n) + n) % n;
+		if (PatternAt(img + a))
+		{
+			hit = a;
+			wrapped = forward ? a < s0 : a > s0;
+			break;
+		}
+	}
+	delete[] img;
+
+	// 探しているものを status に出す字 (16 進は 2 桁ずつ、文字列は "...")
+	char what[PatternInput::textmax * 3 + 8];
+	search.Describe(what);
+
+	EnableStatus(true);
+	if (hit >= 0)
+	{
+		foundaddr = hit;
+		foundlen = patternlen;
+		// 見えていなければ移る
+		if (hit < top || hit + patternlen > top + rows * 16)
+			JumpTo(hit);
+		PutStatus("%s: %.4X%s", what, hit, wrapped ? (forward ? " (wrapped to top)" : " (wrapped to end)") : "");
+	}
+	else
+	{
+		foundaddr = -1;
+		PutStatus("%s: not found", what);
+	}
+	Update();
 }
 
 // ----------------------------------------------------------------------------
@@ -636,6 +925,8 @@ Debugger::CpuTarget MemoryMonitor::ShownCpu()
 // その番地に今出しているバンク。メモリの窓の 0000/6000/c000/f000 のメニューの割り当てと同じ
 int MemoryMonitor::ShownBank(uint addr)
 {
+	if (GetA0() != MemoryViewer::sub)
+		return ShownBankAt(addr);
 	if (addr < 0x6000)
 		return GetA0();
 	if (addr < 0x8000)
@@ -715,16 +1006,67 @@ int MemoryMonitor::AddrAtPos(POINT p)
 	return addr < 0x10000 ? addr : -1;
 }
 
+// ラベルの付いたデータを角丸の箱で囲む (M88gn)。画面に写した後に WinMonitor::Draw から呼ばれる
+void MemoryMonitor::DrawOverlay(HDC hdc)
+{
+	if (labelboxes.empty())
+		return;
+	int fw = GetFontWidth(), fh = GetFontHeightPx();
+	int th = Max(1, fh / 16);
+	HPEN hpen = CreatePen(PS_SOLID, th, RGB(0xff, 0xe0, 0x60));
+	HPEN holdpen = (HPEN) SelectObject(hdc, hpen);
+	HBRUSH holdbr = (HBRUSH) SelectObject(hdc, GetStockObject(NULL_BRUSH));
+	int mx = fw / 4, r = fw * 2 / 3;
+	for (size_t i = 0; i < labelboxes.size(); i++)
+	{
+		const LabelBox& b = labelboxes[i];
+		// 字に掛からないよう少し上に広げ (ユーザーの要望)、描いた後に字を書き直して字を上にする
+		int l = b.x * fw - mx, t = b.y * fh - fh / 8;
+		int rr = (b.x + b.n) * fw + mx, bb = (b.y + 1) * fh - th / 2;
+		RoundRect(hdc, l, t, rr, bb, r, r);
+		RedrawCellText(hdc, b.x, b.y, b.n);
+	}
+	SelectObject(hdc, holdbr);
+	SelectObject(hdc, holdpen);
+	DeleteObject(hpen);
+}
+
+// メニューバーの Addr の項目に、マウスの下のデータの番地を出す (M88gn)。変わったときだけ書き直す
+void MemoryMonitor::ShowCursorAddr(int addr)
+{
+	if (addr == curaddr)
+		return;
+	HWND hwnd = GetHWnd();
+	HMENU hmenu = hwnd ? GetMenu(hwnd) : 0;
+	if (!hmenu)
+		return;
+	curaddr = addr;
+	char text[64];
+	const char* label = addr >= 0 ? core->GetDebugger()->GetLabel(ShownCpu(), addr, ShownBankAt(addr)) : 0;
+	if (label)
+		wsprintf(text, "Addr: %.4X  %s", addr, label);
+	else if (addr >= 0)
+		wsprintf(text, "Addr: %.4X", addr);
+	else
+		lstrcpy(text, "Addr: ----");
+	addritem.SetText(text);
+}
+
+
+
+
 // ラベルを付けたウォッチの番地の上なら、ラベルのツールチップを出す。p はクライアント座標
 void MemoryMonitor::UpdateLabelTip(POINT p, bool inside)
 {
 	int addr = -1;
 	Debugger::WatchEntry w;
+	const char* label = 0;		// 番地のラベル (M88gn。ウォッチのラベルより先に出す)
 	if (inside && GetTextPos(&p))
 	{
 		addr = AddrAtPos(p);
-		int i = addr >= 0 ? WatchAt(addr) : -1;
-		if (i < 0 || !core->GetDebugger()->GetWatch(i, &w) || !w.label[0])
+		label = addr >= 0 ? core->GetDebugger()->GetLabel(ShownCpu(), addr, ShownBankAt(addr)) : 0;
+		int i = addr >= 0 && !label ? WatchAt(addr) : -1;
+		if (!label && (i < 0 || !core->GetDebugger()->GetWatch(i, &w) || !w.label[0]))
 			addr = -1;
 	}
 
@@ -757,7 +1099,9 @@ void MemoryMonitor::UpdateLabelTip(POINT p, bool inside)
 	}
 
 	char text[96];
-	if (w.cpu == Debugger::cpu_sub)
+	if (label)
+		wsprintf(text, "%s  (%.4X%s)", label, addr, ShownCpu() == Debugger::cpu_sub ? " Sub CPU" : "");
+	else if (w.cpu == Debugger::cpu_sub)
 		wsprintf(text, "%s  (%.4X Sub CPU)", w.label, w.addr);
 	else
 		wsprintf(text, "%s  (%.4X %s)", w.label, w.addr, WatchBankName(w.bank));
@@ -785,22 +1129,47 @@ void MemoryMonitor::ShowDataMenu(HWND hdlg, POINT p)
 		return;
 	uint addr = uint(a);
 
-	bool watched = WatchAt(addr) >= 0;
-	char buf[48];
-	wsprintf(buf, watched ? "Remove &Watch (%.4XH)" : "Add &Watch (%.4XH)", addr);
+	// メニューに出す番地 (M88gn): ラベルがあれば「名前(1234H)」、無ければ「1234H」(括弧で囲む項目は「(1234H)」)。
+	// ラベルは画面と同じ決め方 (表示中のバンクのものを先に、無ければ Any)
+	int lcpu = ShownCpu();
+	const char* mlabel = core->GetDebugger()->GetLabel(lcpu, addr, ShownBankAt(addr));
+	char at[64], pat[64];
+	if (mlabel)
+	{
+		wsprintf(at, "%s(%.4XH)", mlabel, addr);
+		lstrcpy(pat, at);
+	}
+	else
+	{
+		wsprintf(at, "%.4XH", addr);
+		wsprintf(pat, "(%.4XH)", addr);
+	}
 
-	enum { cmd_watch = 1, cmd_bread, cmd_bwrite, cmd_code };
+	bool watched = WatchAt(addr) >= 0;
+	char buf[96];
+	wsprintf(buf, watched ? "Remove &Watch %s" : "Add &Watch %s", pat);
+
+	enum { cmd_watch = 1, cmd_bread, cmd_bwrite, cmd_code, cmd_label, cmd_unlabel };
 	HMENU hmenu = CreatePopupMenu();
 	AppendMenu(hmenu, MF_STRING, cmd_watch, buf);
 	AppendMenu(hmenu, MF_SEPARATOR, 0, 0);
 	// 読み・書きのブレークポイント (M88gn)。チェックが付いていれば、選ぶと外す
-	wsprintf(buf, "Break on &Read (%.4XH)", addr);
+	wsprintf(buf, "Break on &Read %s", pat);
 	AppendMenu(hmenu, MF_STRING | (FindMemBreak(addr, false) >= 0 ? MF_CHECKED : 0), cmd_bread, buf);
-	wsprintf(buf, "Break on Wri&te (%.4XH)", addr);
+	wsprintf(buf, "Break on Wri&te %s", pat);
 	AppendMenu(hmenu, MF_STRING | (FindMemBreak(addr, true) >= 0 ? MF_CHECKED : 0), cmd_bwrite, buf);
 	AppendMenu(hmenu, MF_SEPARATOR, 0, 0);
-	wsprintf(buf, "Show %.4XH in &Code", addr);
+	wsprintf(buf, "Show %s in &Code", at);
 	AppendMenu(hmenu, MF_STRING | (codemon ? 0 : MF_GRAYED), cmd_code, buf);
+	// ラベル (M88gn)
+	AppendMenu(hmenu, MF_SEPARATOR, 0, 0);
+	int lbank = lcpu ? -1 : ShownBank(addr);
+	bool haslabel = core->GetDebugger()->GetLabel(lcpu, addr, lbank, &lbank) != 0;
+	if (lbank < 0)
+		lbank = Debugger::label_anybank;
+	wsprintf(buf, haslabel ? "Edit &Label %s..." : "Set &Label %s...", pat);
+	AppendMenu(hmenu, MF_STRING, cmd_label, buf);
+	AppendMenu(hmenu, MF_STRING | (haslabel ? 0 : MF_GRAYED), cmd_unlabel, "&Remove Label");
 
 	POINT sp;
 	GetCursorPos(&sp);
@@ -813,6 +1182,19 @@ void MemoryMonitor::ShowDataMenu(HWND hdlg, POINT p)
 		ToggleMemBreak(addr, cmd == cmd_bwrite);
 	else if (cmd == cmd_code && codemon)
 		codemon->ShowAddress(addr, GetHInst(), GetWindow(hdlg, GW_OWNER));
+	else if (cmd == cmd_label || cmd == cmd_unlabel)
+	{
+		if (cmd == cmd_unlabel)
+			core->GetDebugger()->SetLabel(lcpu, addr, lbank, 0);
+		else
+			EditLabel(hdlg, GetHInst(), core->GetDebugger(), lcpu, addr, lbank);
+		curaddr = -2;			// メニューバーの Addr の欄を書き直す
+		tipaddr = -1;
+		Update();
+	}
+	// ラベルを変えたら、コードの窓も書き直す
+	if ((cmd == cmd_label || cmd == cmd_unlabel) && codemon)
+		codemon->Update();
 }
 
 // ---------------------------------------------------------------------------
@@ -820,7 +1202,10 @@ void MemoryMonitor::ShowDataMenu(HWND hdlg, POINT p)
 //
 int MemoryMonitor::MarkAt(uint addr)
 {
+	// 1 = ウォッチ、2 = 有効なブレークポイント (両方なら 3)、5 = 無効なブレークポイントだけ、
+	// 6 = ウォッチと無効なブレークポイント (M88gn。読み・書きのどちらかが有効なら有効の色)
 	int m = 0;
+	bool disabled = false;
 	for (size_t w = 0; w < watchshown.size() && !(m & 1); w++)
 		if (WatchMatches(watchshown[w], addr))
 			m |= 1;
@@ -828,8 +1213,15 @@ int MemoryMonitor::MarkAt(uint addr)
 	{
 		const Debugger::BreakPoint& bp = bpshown[b];
 		if (addr >= bp.addr && addr < bp.addr + bp.length)
-			m |= 2;
+		{
+			if (bp.enabled)
+				m |= 2;
+			else
+				disabled = true;
+		}
 	}
+	if (!(m & 2) && disabled)
+		m = (m & 1) ? 6 : 5;
 	return m;
 }
 
@@ -895,7 +1287,7 @@ bool MemoryMonitor::AskRange(bool load)
 
 BOOL MemoryMonitor::RDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM)
 {
-	char buf[16];
+	char buf[64];
 	switch (msg)
 	{
 	case WM_INITDIALOG:
@@ -913,18 +1305,18 @@ BOOL MemoryMonitor::RDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM)
 	case WM_COMMAND:
 		if (LOWORD(wp) == IDOK)
 		{
-			char* dum;
-			GetDlgItemText(hdlg, IDC_RANGE_START, buf, 5);
-			if (!isxdigit((uint8) buf[0]))
+			// 16 進かラベルの名前 (M88gn)
+			uint s, e = rangeend;
+			GetDlgItemText(hdlg, IDC_RANGE_START, buf, sizeof(buf));
+			if (!ParseAddrInput(buf, &s))
 				return TRUE;
-			uint s = strtoul(buf, &dum, 16) & 0xffff;
-			uint e = rangeend;
+			s &= 0xffff;
 			if (!rangeload)
 			{
-				GetDlgItemText(hdlg, IDC_RANGE_END, buf, 5);
-				if (!isxdigit((uint8) buf[0]))
+				GetDlgItemText(hdlg, IDC_RANGE_END, buf, sizeof(buf));
+				if (!ParseAddrInput(buf, &e))
 					return TRUE;
-				e = strtoul(buf, &dum, 16) & 0xffff;
+				e &= 0xffff;
 				if (e < s)
 				{
 					MessageBox(hdlg, "終わりの番地が始まりより前です。", "Save Range", MB_OK | MB_ICONWARNING);

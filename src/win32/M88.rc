@@ -137,6 +137,7 @@ BEGIN
             MENUITEM "x&2",                         IDM_SCALE_2
             MENUITEM "x&3",                         IDM_SCALE_3
             MENUITEM "x&4",                         IDM_SCALE_4
+            MENUITEM "&Free (resize window)",       IDM_SCALE_FREE
         END
         POPUP "&Rotation"
         BEGIN
@@ -238,6 +239,24 @@ BEGIN
         MENUITEM "Software &keyboard",          IDM_SOFTKBD
         MENUITEM "&Capture...\tAlt+F2",         IDM_CAPTURE
         MENUITEM "&Record Sound",               IDM_RECORDPCM
+        POPUP "Record &Video"
+        BEGIN
+            MENUITEM "&Record...",              IDM_VIDEO_RECORD
+            MENUITEM SEPARATOR
+            MENUITEM "With screen &filter",     IDM_VIDEO_FILTERED
+            MENUITEM "&Without filter (x2)",    IDM_VIDEO_RAW
+            MENUITEM SEPARATOR
+            MENUITEM "&60 fps",                 IDM_VIDEO_FPS60
+            MENUITEM "&30 fps",                 IDM_VIDEO_FPS30
+            MENUITEM "&20 fps",                 IDM_VIDEO_FPS20
+            MENUITEM "1&5 fps",                 IDM_VIDEO_FPS15
+        END
+        POPUP "&Theme"
+        BEGIN
+            MENUITEM "&Windows default",        IDM_THEME_SYSTEM
+            MENUITEM "&Dark",                   IDM_THEME_DARK
+            MENUITEM "&Beige",                  IDM_THEME_BEIGE
+        END
         MENUITEM SEPARATOR
         MENUITEM "&Save Snapshot\tAlt+F10",     IDM_SNAPSHOT_SAVE
         MENUITEM "&Load Snapshot\tAlt+F1",      IDM_SNAPSHOT_LOAD
@@ -260,6 +279,17 @@ BEGIN
         MENUITEM "Show &Trace",                 IDM_TRACEMON
         MENUITEM SEPARATOR
         MENUITEM "Save Settings per &Disk/Tape", IDM_DBG_SAVESETTINGS
+        MENUITEM "&Export Labels...",           IDM_LABEL_EXPORT
+        MENUITEM "Im&port Labels...",           IDM_LABEL_IMPORT
+        MENUITEM "Show La&bels",                IDM_LABELMON
+        MENUITEM SEPARATOR
+        POPUP "Dock &Panes"
+        BEGIN
+            MENUITEM "&Left",                   IDM_DOCKPANE_LEFT
+            MENUITEM "&Right",                  IDM_DOCKPANE_RIGHT
+            MENUITEM "&Top",                    IDM_DOCKPANE_TOP
+            MENUITEM "&Bottom",                 IDM_DOCKPANE_BOTTOM
+        END
         MENUITEM SEPARATOR
         MENUITEM "Monitor &Font...",            IDM_MON_FONT
         MENUITEM SEPARATOR
@@ -269,6 +299,8 @@ BEGIN
         MENUITEM "Show &Memory",                IDM_MEMMON
         MENUITEM "Show &Code",                  IDM_CODEMON
         MENUITEM "Show M&nemonic Table",        IDM_MNEMMON
+        MENUITEM "Show &Status",                IDM_STATMON
+        MENUITEM "Show L&ap Times",             IDM_LAPMON
         MENUITEM "Show Sub System &Log",        IDM_SUBLOGMON
         MENUITEM "Show &Video",                 IDM_VIDEOMON
         MENUITEM "Show &Basic code",            IDM_BASMON
@@ -338,6 +370,12 @@ BEGIN
         MENUITEM "&RAM",                        IDM_MEM_F_RAM
         MENUITEM "&TVRAM",                      IDM_MEM_F_TVRAM
     END
+    POPUP "Searc&h"
+    BEGIN
+        MENUITEM "&Find...\tCtrl+F",            IDM_MEM_FIND
+        MENUITEM "Find &Next\tF3",              IDM_MEM_FINDNEXT
+        MENUITEM "Find &Previous\tShift+F3",    IDM_MEM_FINDPREV
+    END
     POPUP "Check&sum"
     BEGIN
         MENUITEM "&None",                                IDM_MEM_SUM_NONE
@@ -345,6 +383,7 @@ BEGIN
         MENUITEM "&2 ÉAÉXÉLÅ[ (ASCIIÅELOGiN)",           IDM_MEM_SUM_ASCII
         MENUITEM "&3 ìdîgêVï∑é– (É}ÉCÉRÉìBASICÉ}ÉKÉWÉì)", IDM_MEM_SUM_DEMPA
     END
+    MENUITEM "Addr: ----",                  IDM_MEM_CURADDR, INACTIVE
     MENUITEM "Pause",                       IDM_DBG_PAUSE, HELP
     MENUITEM "Play",                        IDM_DBG_PLAY
     MENUITEM "Step In",                     IDM_DBG_STEPIN
@@ -357,6 +396,8 @@ BEGIN
     POPUP "&Image"
     BEGIN
         MENUITEM "&Save...",                    IDM_MEM_SAVEIMAGE
+        MENUITEM "Save with &Labels...",        IDM_CODE_SAVELABELS
+        MENUITEM "Save as Sou&rce (for Assembler)...", IDM_CODE_SAVESOURCE
         MENUITEM SEPARATOR
         MENUITEM "Go to &Address...\tCtrl+G",   IDM_MEM_GOTO
         MENUITEM "PC &Follow",                  IDM_CODE_PCFOLLOW
@@ -402,6 +443,7 @@ BEGIN
         MENUITEM "&RAM",                        IDM_MEM_F_RAM
         MENUITEM "&TVRAM",                      IDM_MEM_F_TVRAM
     END
+    MENUITEM "Addr: ----",                  IDM_CODE_CURADDR, INACTIVE
     MENUITEM "Pause",                       IDM_DBG_PAUSE, HELP
     MENUITEM "Play",                        IDM_DBG_PLAY
     MENUITEM "Step In",                     IDM_DBG_STEPIN
@@ -414,6 +456,7 @@ BEGIN
     POPUP "&Breakpoint"
     BEGIN
         MENUITEM "&Add...",                     IDM_BP_ADD
+        MENUITEM "Add &Pattern...",             IDM_BP_ADDPATTERN
         MENUITEM "&Edit...",                    IDM_BP_EDIT
         MENUITEM "&Delete",                     IDM_BP_DELETE
         MENUITEM "Delete &All",                 IDM_BP_DELETEALL
@@ -453,6 +496,37 @@ BEGIN
             MENUITEM "&500",                    IDM_TRACE_CAP_500
             MENUITEM "1&000",                   IDM_TRACE_CAP_1000
         END
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit",                       IDM_CLOSE
+    END
+END
+
+IDR_MENU_LABEL MENU
+BEGIN
+    POPUP "&Label"
+    BEGIN
+        MENUITEM "&Add...\tInsert",              IDM_LBL_ADD
+        MENUITEM "&Edit...\tEnter",              IDM_LBL_EDIT
+        MENUITEM "&Remove\tDelete",              IDM_LBL_REMOVE
+        MENUITEM "Delete &All",                 IDM_LBL_DELETEALL
+        MENUITEM SEPARATOR
+        MENUITEM "Sort by A&ddress",            IDM_LBL_SORTADDR
+        MENUITEM "Sort by &Name",               IDM_LBL_SORTNAME
+        MENUITEM SEPARATOR
+        MENUITEM "E&xport...",                  IDM_LABEL_EXPORT
+        MENUITEM "&Import...",                  IDM_LABEL_IMPORT
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit",                       IDM_CLOSE
+    END
+END
+
+IDR_MENU_LAP MENU
+BEGIN
+    POPUP "&Lap"
+    BEGIN
+        MENUITEM "&Clear",                      IDM_LAP_CLEAR
+        MENUITEM "C&opy All\tCtrl+C",           IDM_LAP_COPY
+        MENUITEM "&Save to File...",            IDM_LAP_SAVE
         MENUITEM SEPARATOR
         MENUITEM "E&xit",                       IDM_CLOSE
     END
@@ -928,8 +1002,8 @@ STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Go to Address"
 FONT 10, "ÇlÇr ÇoÉSÉVÉbÉN", 0, 0, 0x0
 BEGIN
-    LTEXT           "Address (hex):",IDC_STATIC,8,14,65,10
-    EDITTEXT        IDC_ADDR_GOTO_EDIT,76,12,35,14,ES_RIGHT | ES_AUTOHSCROLL
+    LTEXT           "Address / label:",IDC_STATIC,8,14,65,10
+    EDITTEXT        IDC_ADDR_GOTO_EDIT,76,12,66,14,ES_AUTOHSCROLL
     DEFPUSHBUTTON   "Ok",IDOK,8,34,60,16
     PUSHBUTTON      "Cancel",IDCANCEL,80,34,60,16
 END
@@ -982,8 +1056,8 @@ STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Set Breakpoint"
 FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN", 0, 0, 0x0
 BEGIN
-    LTEXT           "Address (hex):",IDC_STATIC,5,10,55,8
-    EDITTEXT        IDC_BP_ADDR,62,8,33,12,ES_RIGHT | ES_AUTOHSCROLL
+    LTEXT           "Addr / label:",IDC_STATIC,5,10,55,8
+    EDITTEXT        IDC_BP_ADDR,62,8,33,12,ES_AUTOHSCROLL
     CONTROL         "Sub CPU",IDC_BP_SUBCPU,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,5,26,60,10
     DEFPUSHBUTTON   "Ok",IDOK,98,6,35,12
     PUSHBUTTON      "Cancel",IDCANCEL,98,20,35,12
@@ -1003,6 +1077,23 @@ BEGIN
     LTEXT           "(0 = every time)",IDC_STATIC,76,158,60,8
 END
 
+IDD_LABEL_EDIT DIALOGEX 100, 100, 190, 84
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Label"
+FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN", 0, 0, 0x0
+BEGIN
+    LTEXT           "Address:",IDC_STATIC,7,8,30,8
+    EDITTEXT        IDC_LABEL_ADDR,40,6,60,12,ES_AUTOHSCROLL
+    CONTROL         "Sub CPU",IDC_LABEL_SUBCPU,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,110,7,60,10
+    LTEXT           "",IDC_LABEL_TITLE,7,24,176,8
+    EDITTEXT        IDC_LABEL_NAME,7,35,176,12,ES_AUTOHSCROLL
+    LTEXT           "Bank:",IDC_STATIC,7,53,22,8
+    COMBOBOX        IDC_LABEL_BANK,32,51,90,120,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Empty to remove.",IDC_STATIC,7,70,80,8
+    DEFPUSHBUTTON   "OK",IDOK,94,67,42,13
+    PUSHBUTTON      "Cancel",IDCANCEL,141,67,42,13
+END
+
 IDD_REG_EDIT DIALOGEX 100, 100, 117, 39
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Set Register"
@@ -1019,18 +1110,156 @@ STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Memory Range"
 FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN", 0, 0, 0x0
 BEGIN
-    LTEXT           "Start (hex):",IDC_STATIC,5,10,45,8
-    EDITTEXT        IDC_RANGE_START,52,8,33,12,ES_RIGHT | ES_AUTOHSCROLL
-    LTEXT           "End (hex):",IDC_STATIC,5,28,45,8
-    EDITTEXT        IDC_RANGE_END,52,26,33,12,ES_RIGHT | ES_AUTOHSCROLL
+    LTEXT           "Start:",IDC_STATIC,5,10,45,8
+    EDITTEXT        IDC_RANGE_START,52,8,50,12,ES_AUTOHSCROLL
+    LTEXT           "End:",IDC_STATIC,5,28,45,8
+    EDITTEXT        IDC_RANGE_END,52,26,50,12,ES_AUTOHSCROLL
     DEFPUSHBUTTON   "Ok",IDOK,108,6,35,12
     PUSHBUTTON      "Cancel",IDCANCEL,108,20,35,12
+END
+
+IDD_MEM_SEARCH DIALOGEX 100, 100, 250, 120
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Search"
+FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN", 0, 0, 0x0
+BEGIN
+    CONTROL         "&Text",IDC_SEARCH_TEXT,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,5,7,38,10
+    EDITTEXT        IDC_SEARCH_STR,45,6,140,12,ES_AUTOHSCROLL | WS_GROUP
+    CONTROL         "Match &case",IDC_SEARCH_CASE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,45,21,80,10
+    CONTROL         "He&x",IDC_SEARCH_HEX,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,5,39,38,10
+    LTEXT           "&Bytes:",IDC_STATIC,45,40,24,8
+    COMBOBOX        IDC_SEARCH_BYTES,71,38,30,200,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    CTEXT           "1",IDC_STATIC,5,55,13,8
+    CTEXT           "2",IDC_STATIC,20,55,13,8
+    CTEXT           "3",IDC_STATIC,35,55,13,8
+    CTEXT           "4",IDC_STATIC,50,55,13,8
+    CTEXT           "5",IDC_STATIC,65,55,13,8
+    CTEXT           "6",IDC_STATIC,80,55,13,8
+    CTEXT           "7",IDC_STATIC,95,55,13,8
+    CTEXT           "8",IDC_STATIC,110,55,13,8
+    CTEXT           "9",IDC_STATIC,125,55,13,8
+    CTEXT           "10",IDC_STATIC,140,55,13,8
+    CTEXT           "11",IDC_STATIC,155,55,13,8
+    CTEXT           "12",IDC_STATIC,170,55,13,8
+    CTEXT           "13",IDC_STATIC,185,55,13,8
+    CTEXT           "14",IDC_STATIC,200,55,13,8
+    CTEXT           "15",IDC_STATIC,215,55,13,8
+    CTEXT           "16",IDC_STATIC,230,55,13,8
+    EDITTEXT        IDC_SEARCH_B0,5,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B1,20,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B2,35,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B3,50,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B4,65,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B5,80,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B6,95,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B7,110,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B8,125,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B9,140,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B10,155,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B11,170,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B12,185,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B13,200,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B14,215,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B15,230,64,13,12,ES_CENTER | ES_UPPERCASE
+    LTEXT           "ÉEÉBÉìÉhÉEÇ…ï\é¶ÇµÇƒÇ¢ÇÈÉoÉìÉNÇÃíÜÇíTÇµÇ‹Ç∑ÅD",IDC_STATIC,5,86,240,8
+    DEFPUSHBUTTON   "Find &Next",IDOK,195,5,50,14
+    PUSHBUTTON      "Find &Prev",IDC_SEARCH_PREV,195,21,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,195,37,50,14
+    PUSHBUTTON      "Set &Breakpoint...",IDC_SEARCH_BREAK,5,100,80,14
+    LTEXT           "èëÇ´çûÇ›Ç≈ëµÇ¡ÇΩÇÁé~ÇﬂÇ‹Ç∑ÅD",IDC_STATIC,90,103,150,8
+END
+
+IDD_PATBP_EDIT DIALOGEX 100, 100, 250, 226
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Set Pattern Breakpoint"
+FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN", 0, 0, 0x0
+BEGIN
+    CONTROL         "&Text",IDC_SEARCH_TEXT,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,5,7,38,10
+    EDITTEXT        IDC_SEARCH_STR,45,6,140,12,ES_AUTOHSCROLL | WS_GROUP
+    CONTROL         "Match &case",IDC_SEARCH_CASE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,45,21,80,10
+    CONTROL         "He&x",IDC_SEARCH_HEX,"Button",BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP,5,39,38,10
+    LTEXT           "&Bytes:",IDC_STATIC,45,40,24,8
+    COMBOBOX        IDC_SEARCH_BYTES,71,38,30,200,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    CTEXT           "1",IDC_STATIC,5,55,13,8
+    CTEXT           "2",IDC_STATIC,20,55,13,8
+    CTEXT           "3",IDC_STATIC,35,55,13,8
+    CTEXT           "4",IDC_STATIC,50,55,13,8
+    CTEXT           "5",IDC_STATIC,65,55,13,8
+    CTEXT           "6",IDC_STATIC,80,55,13,8
+    CTEXT           "7",IDC_STATIC,95,55,13,8
+    CTEXT           "8",IDC_STATIC,110,55,13,8
+    CTEXT           "9",IDC_STATIC,125,55,13,8
+    CTEXT           "10",IDC_STATIC,140,55,13,8
+    CTEXT           "11",IDC_STATIC,155,55,13,8
+    CTEXT           "12",IDC_STATIC,170,55,13,8
+    CTEXT           "13",IDC_STATIC,185,55,13,8
+    CTEXT           "14",IDC_STATIC,200,55,13,8
+    CTEXT           "15",IDC_STATIC,215,55,13,8
+    CTEXT           "16",IDC_STATIC,230,55,13,8
+    EDITTEXT        IDC_SEARCH_B0,5,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B1,20,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B2,35,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B3,50,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B4,65,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B5,80,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B6,95,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B7,110,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B8,125,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B9,140,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B10,155,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B11,170,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B12,185,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B13,200,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B14,215,64,13,12,ES_CENTER | ES_UPPERCASE
+    EDITTEXT        IDC_SEARCH_B15,230,64,13,12,ES_CENTER | ES_UPPERCASE
+    DEFPUSHBUTTON   "Ok",IDOK,195,5,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,195,21,50,14
+    LTEXT           "B&ank:",IDC_STATIC,5,88,28,8
+    COMBOBOX        IDC_PATBP_BANK,35,86,55,200,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "&Sub CPU (disk side)",IDC_BP_SUBCPU,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,100,87,90,10
+    LTEXT           "&Range (hex):",IDC_STATIC,5,104,50,8
+    EDITTEXT        IDC_BP_ADDR,57,102,28,12,ES_AUTOHSCROLL
+    CTEXT           "-",IDC_STATIC,85,104,10,8
+    EDITTEXT        IDC_PATBP_END,95,102,28,12,ES_AUTOHSCROLL
+    CONTROL         "&Enabled",IDC_BP_ENABLED,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,5,120,60,10
+    LTEXT           "Comment:",IDC_STATIC,5,134,55,8
+    EDITTEXT        IDC_BP_COMMENT,5,144,240,12,ES_AUTOHSCROLL
+    LTEXT           "Condition:",IDC_STATIC,5,162,40,8
+    PUSHBUTTON      "?",IDC_BP_CONDHELP,230,159,15,12
+    EDITTEXT        IDC_BP_COND,5,172,240,12,ES_AUTOHSCROLL
+    LTEXT           "Hit count:",IDC_STATIC,5,190,40,8
+    EDITTEXT        IDC_BP_HITCOUNT,47,188,25,12,ES_RIGHT | ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           "(0 = every time)",IDC_STATIC,76,190,60,8
+    LTEXT           "CPU ÇÃèëÇ´çûÇ›Ç≈ÅAîÕàÕÇÃíÜÇ…ÉpÉ^Å[ÉìÇ™ëµÇ¡ÇΩÇ∆Ç´Ç…é~Ç‹ÇËÇ‹Ç∑ÅDëOÇ©ÇÁëµÇ¡ÇƒÇ¢ÇΩèäÇ≈ÇÕé~Ç‹ÇËÇ‹ÇπÇÒÅD",IDC_STATIC,5,206,240,16
 END
 
 IDD_SUBLOGMON DIALOG  0, 0, 300, 200
 STYLE DS_SETFONT | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_VSCROLL | WS_SYSMENU | WS_THICKFRAME
 CAPTION "Sub System Log"
 MENU IDR_MENU_SUBLOG
+FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN"
+BEGIN
+END
+
+IDD_LABELMON DIALOG  0, 0, 220, 240
+STYLE DS_SETFONT | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_VSCROLL | WS_SYSMENU | WS_THICKFRAME
+CAPTION "Labels"
+MENU IDR_MENU_LABEL
+FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN"
+BEGIN
+END
+
+IDD_LAPMON DIALOG  0, 0, 400, 200
+STYLE DS_SETFONT | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_VSCROLL | WS_SYSMENU | WS_THICKFRAME
+CAPTION "Lap Times"
+MENU IDR_MENU_LAP
+FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN"
+BEGIN
+END
+
+IDD_STATMON DIALOG  0, 0, 300, 120
+STYLE DS_SETFONT | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_VSCROLL | WS_SYSMENU | WS_THICKFRAME
+CAPTION "Status"
 FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN"
 BEGIN
 END
@@ -1064,8 +1293,8 @@ STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Set Watch"
 FONT 9, "ÇlÇr ÇoÉSÉVÉbÉN", 0, 0, 0x0
 BEGIN
-    LTEXT           "Address (hex):",IDC_STATIC,5,10,55,8
-    EDITTEXT        IDC_WATCH_ADDR,62,8,33,12,ES_RIGHT | ES_AUTOHSCROLL
+    LTEXT           "Addr / label:",IDC_STATIC,5,10,55,8
+    EDITTEXT        IDC_WATCH_ADDR,62,8,33,12,ES_AUTOHSCROLL
     CONTROL         "Sub CPU",IDC_WATCH_SUBCPU,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,5,26,60,10
     CONTROL         "Word (2 bytes)",IDC_WATCH_WORD,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,5,40,90,10
     LTEXT           "Bank:",IDC_STATIC,5,56,55,8

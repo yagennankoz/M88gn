@@ -9,6 +9,9 @@
 #include "resource.h"
 #include "pc88/pc88.h"
 #include "watchmon.h"
+#include "labeledit.h"
+#include "codemon.h"
+#include "memmon.h"
 #include "misc.h"
 #include "winexapi.h"
 #include "watchbank.h"
@@ -43,13 +46,24 @@ namespace
 //	構築/消滅
 //
 WatchMonitor::WatchMonitor()
-: core(0), cursor(-1), editindex(-1), editbank(MemoryViewer::mainram)
+: core(0), codemon(0), memmon(0), cursor(-1), editindex(-1), editbank(MemoryViewer::mainram)
 {
 }
 
 // ---------------------------------------------------------------------------
 //	ウォッチが読み書きするバス (M88gn: メインの CPU はウォッチのバンクに切り替える)
 //
+// ウォッチの名前が無いときに出す、番地のラベル (M88gn。そのバンクのもの、無ければ Any)
+const char* WatchMonitor::WatchAddrLabel(const Debugger::WatchEntry& w)
+{
+	const char* l = core->GetDebugger()->GetLabel(w.cpu, w.addr, w.cpu ? -1 : int(w.bank));
+	if (!l)
+		return "";
+	static char buf[Debugger::labelmax + 4];
+	wsprintf(buf, "[%s]", l);
+	return buf;
+}
+
 MemoryBus* WatchMonitor::GetWatchBus(const Debugger::WatchEntry& w)
 {
 	if (w.cpu == Debugger::cpu_sub)
@@ -140,14 +154,23 @@ void WatchMonitor::UpdateText()
 
 			SetBkCol(index == cursor ? RGB(0, 0, 0x70) : RGB(0, 0, 0x20));
 			SetTxCol(0xffffff);
-			Putf("%3d  %-4s  %.4x  %-6s  %-2s  %-6s  %-7s  %-18s  %-7s  %-4s  %s\n",
+			Putf("%3d  %-4s  %.4x  %-6s  %-2s  %-6s  %-7s  %-18s  %-7s  %-4s  ",
 				 index,
 				 w.cpu == Debugger::cpu_sub ? "SUB" : "MAIN",
 				 w.addr,
 				 w.cpu == Debugger::cpu_sub ? "-" : WatchBankName(w.bank),
 				 w.size == 2 ? "W" : "B",
-				 hexbuf, decbuf, binbuf, rawbuf, chbuf,
-				 w.label);
+				 hexbuf, decbuf, binbuf, rawbuf, chbuf);
+			// ウォッチの名前。無ければ番地のラベルを「[名前]」で黄色に (M88gn)
+			if (w.label[0])
+				Puts(w.label);
+			else if (const char* al = core->GetDebugger()->GetLabel(w.cpu, w.addr, w.cpu ? -1 : int(w.bank)))
+			{
+				Puts("[");
+				PutLabel(al);
+				Puts("]");
+			}
+			Puts("\n");
 		}
 		else
 		{
@@ -190,6 +213,65 @@ void WatchMonitor::OnClick(POINT p, bool dblclick)
 	{
 		cursor = index;
 		ShowEditDialog(index);
+	}
+	Update();
+}
+
+// ---------------------------------------------------------------------------
+//	右クリックのメニュー (M88gn)。その行を選んでから出す
+//
+void WatchMonitor::ShowRowMenu(HWND hdlg, POINT p)
+{
+	if (p.y < 1)
+		return;
+	core->Lock();
+	int index = GetLine() + p.y - 1;
+	Debugger::WatchEntry w;
+	bool ok = index >= 0 && core->GetDebugger()->GetWatch(index, &w);
+	core->Unlock();
+	if (!ok)
+		return;
+	cursor = index;
+	Update();
+
+	enum { cmd_code = 1, cmd_mem, cmd_edit, cmd_value, cmd_delete };
+	HMENU hmenu = CreatePopupMenu();
+	char at[64], buf[96];
+	AddrLabelText(at, w.cpu, w.addr, true);
+	wsprintf(buf, "Show %s in &Code", at);
+	AppendMenu(hmenu, MF_STRING | (codemon ? 0 : MF_GRAYED), cmd_code, buf);
+	wsprintf(buf, "Show %s in &Memory", at);
+	AppendMenu(hmenu, MF_STRING | (memmon ? 0 : MF_GRAYED), cmd_mem, buf);
+	AppendMenu(hmenu, MF_SEPARATOR, 0, 0);
+	AppendMenu(hmenu, MF_STRING, cmd_edit, "&Edit...");
+	AppendMenu(hmenu, MF_STRING, cmd_value, "Edit &Value...");
+	AppendMenu(hmenu, MF_STRING, cmd_delete, "&Delete");
+	POINT sp;
+	GetCursorPos(&sp);
+	int cmd = TrackPopupMenu(hmenu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, sp.x, sp.y, 0, hdlg, 0);
+	DestroyMenu(hmenu);
+
+	HWND owner = GetWindow(hdlg, GW_OWNER) ? GetWindow(hdlg, GW_OWNER) : GetAncestor(hdlg, GA_ROOT);
+	bool sub = w.cpu == Debugger::cpu_sub;
+	switch (cmd)
+	{
+	case cmd_code:
+		if (codemon)
+			codemon->ShowAt(w.addr, sub, w.bank, GetHInst(), owner);
+		break;
+	case cmd_mem:
+		if (memmon)
+			memmon->ShowAddressIn(w.addr, sub, w.bank, Min(int(w.size ? w.size : 1), 0x10000 - int(w.addr & 0xffff)), GetHInst(), owner);
+		break;
+	case cmd_edit:
+		ShowEditDialog(index);
+		break;
+	case cmd_value:
+		ShowValueDialog(index);
+		break;
+	case cmd_delete:
+		DeleteSelected();
+		break;
 	}
 	Update();
 }
@@ -264,6 +346,14 @@ BOOL WatchMonitor::DlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 			OnClick(p, true);
 		break;
 
+	case WM_RBUTTONUP:
+		// 右クリックのメニュー (M88gn): Show in Code / Memory、Edit、Delete
+		p.x = (short) LOWORD(lp);
+		p.y = (short) HIWORD(lp);
+		if (GetTextPos(&p))
+			ShowRowMenu(hdlg, p);
+		return TRUE;
+
 	case WM_KEYDOWN:
 		if (wp == VK_DELETE)
 		{
@@ -295,7 +385,7 @@ void WatchMonitor::ShowEditDialog(int index)
 
 BOOL WatchMonitor::EDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 {
-	char buf[16];
+	char buf[64];
 
 	switch (msg)
 	{
@@ -349,13 +439,13 @@ BOOL WatchMonitor::EDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		{
 			switch (LOWORD(wp))
 			{
-				char* dum;
 			case IDOK:
-				GetDlgItemText(hdlg, IDC_WATCH_ADDR, buf, 5);
-				if (isxdigit((uint8) buf[0]))
+				GetDlgItemText(hdlg, IDC_WATCH_ADDR, buf, sizeof(buf));
+				uint inaddr;
+				if (ParseAddrInput(buf, &inaddr))		// 16 進かラベルの名前 (M88gn)
 				{
 					Debugger::WatchEntry w;
-					w.addr = strtoul(buf, &dum, 16) & 0xffff;
+					w.addr = inaddr & 0xffff;
 					w.cpu = uint8(IsDlgButtonChecked(hdlg, IDC_WATCH_SUBCPU) == BST_CHECKED
 								  ? Debugger::cpu_sub : Debugger::cpu_main);
 					w.size = uint8(IsDlgButtonChecked(hdlg, IDC_WATCH_WORD) == BST_CHECKED ? 2 : 1);
@@ -437,11 +527,11 @@ void WatchMonitor::FillBankCombo(HWND hdlg)
 	if (!hcb)
 		return;
 
-	char buf[16];
-	char* dum;
-	GetDlgItemText(hdlg, IDC_WATCH_ADDR, buf, 5);
-	bool hasaddr = isxdigit((uint8) buf[0]) != 0;
-	uint addr = hasaddr ? (strtoul(buf, &dum, 16) & 0xffff) : 0;
+	char buf[64];
+	GetDlgItemText(hdlg, IDC_WATCH_ADDR, buf, sizeof(buf));
+	uint addr = 0;
+	bool hasaddr = ParseAddrInput(buf, &addr);		// 16 進かラベルの名前 (M88gn)
+	addr &= 0xffff;
 	uint size = IsDlgButtonChecked(hdlg, IDC_WATCH_WORD) == BST_CHECKED ? 2 : 1;
 	bool subcpu = IsDlgButtonChecked(hdlg, IDC_WATCH_SUBCPU) == BST_CHECKED;
 

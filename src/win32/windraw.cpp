@@ -30,6 +30,8 @@
 //
 WinDraw::WinDraw()
 {
+	hasview = false;
+	SetRectEmpty(&viewrect);
 	draw = 0;
 	idthread = 0;
 	hthread = 0;
@@ -303,6 +305,20 @@ bool WinDraw::Unlock()
 // ---------------------------------------------------------------------------
 //	画面サイズを変える
 //
+// ドックモード: 画面を置く四角 (M88gn)。今のドライバにも、これから作るドライバにも渡す
+void WinDraw::SetViewRect(const RECT* r)
+{
+	hasview = r != 0;
+	if (r)
+		viewrect = *r;
+	if (draw)
+	{
+		csdraw.lock();
+		draw->SetViewRect(hasview ? &viewrect : 0);
+		csdraw.unlock();
+	}
+}
+
 void WinDraw::Resize(uint w, uint h)
 {
 //	statusdisplay.Show(50, 2500, "Resize (%d, %d)", width, height);
@@ -448,6 +464,7 @@ bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480, int scale)
 			newdraw->SetLines(lines);
 			newdraw->SetCrtFilter(crtscan, crtmask, crtsharp, crtbright, crtglow, crtpitch, crtbreath);
 			newdraw->SetRotation(rotation);
+			newdraw->SetViewRect(hasview ? &viewrect : 0);
 		}
 		
 		// 新しいドライバを使用可能にする
@@ -473,7 +490,7 @@ bool WinDraw::ChangeDisplayMode(bool fullscreen, bool force480, int scale)
 		
 		return result;
 	}
-	return false;
+	return draw != 0;		// 作り直さなくてよい (ペインを出していて既に全画面と同じ形のときなど。M88gn)
 }
 
 // ---------------------------------------------------------------------------

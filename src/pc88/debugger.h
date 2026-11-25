@@ -8,6 +8,9 @@
 #pragma once
 
 #include <vector>
+#include <map>
+#include <string>
+#include <string.h>
 #include "types.h"
 #include "z80debughook.h"
 #include "if/ifcommon.h"
@@ -39,6 +42,7 @@ public:
 		brk_user,			// 手動ポーズ
 		brk_ioread,			// I/O ポートの IN (M88gn)
 		brk_iowrite,		// I/O ポートの OUT (M88gn)
+		brk_pattern,		// 書き込みでパターンが揃った (M88gn)。addr は揃った所の先頭
 	};
 
 	enum CpuTarget { cpu_main = 0, cpu_sub = 1 };
@@ -60,7 +64,18 @@ public:
 		char  cond[64];		// 条件の式 (M88gn)。空なら条件無し。書き方は Debugger::CondHelp
 		uint  hitcount;		// この回数目から止める (M88gn。0・1 なら毎回)
 		uint  hits;			// 条件が成り立った回数 (M88gn。変更・追加で 0 に戻る)
+		// パターンのブレーク (M88gn)。addr・length は探す範囲 (パターンが丸ごと入る所だけ)。
+		// CPU の書き込みで、範囲の中に pat が揃った瞬間に止まる (前から揃っていた所では止まらない)。
+		// exec・read・write は使わない
+		bool  pattern;
+		uint8 patlen;		// 1～patmax
+		uint8 patbank;		// 見るメモリ (MemoryViewer::Type。メインの CPU のとき)
+		uint8 patflags;		// pat_hex・pat_nocase
+		uint8 pat[64];
+
+		BreakPoint() { memset(this, 0, sizeof(*this)); }
 	};
+	enum { patmax = 64, pat_hex = 1, pat_nocase = 2 };
 
 	// サブシステムとの通信のログ 1 件 (M88gn)。メイン・サブの CPU が 8255 のポート (FC-FF) に OUT した値
 	struct SubLogEntry
@@ -129,6 +144,23 @@ public:
 	bool DeleteWatch(int index);
 	void DeleteAllWatches();
 
+	// --- ラベル (M88gn)。番地に付ける名前。CPU とバンク (MemoryViewer::Type) ごと。label_anybank はどのバンクでも出す。
+	//     サブ CPU はバンクを持たない (いつも label_anybank)。
+	//     UI のスレッド (コード・メモリの窓、設定の保存) だけで使い、VM のスレッドからは見ないのでロックは要らない ---
+	enum { labelmax = 32, label_anybank = 0xff };	// 名前の置き場 (終わりの 0 を含む)・どのバンクでも
+	// 表示用: そのバンクのラベルを先に、無ければ Any のラベル。bank が負なら Any だけ。
+	// foundbank に見つけたラベルのバンク。無ければ 0
+	const char* GetLabel(int cpu, uint addr, int bank, int* foundbank = 0) const;
+	const char* GetLabelExact(int cpu, uint addr, int bank) const;	// そのバンクのものだけ
+	void SetLabel(int cpu, uint addr, int bank, const char* name);	// 空 (0 か "") なら消す
+	int  GetLabelCount() const { return int(labels.size()); }
+	bool GetLabelAt(int index, int* cpu, uint* addr, int* bank, const char** name) const;
+	void DeleteAllLabels() { labels.clear(); }
+	// 名前からラベルを探す (大文字・小文字を区別しない。名前は重ならない)。あれば true
+	bool FindLabelAddr(const char* name, uint* addr, int* cpu = 0) const;
+	// 条件式の書き方を確かめるとき (Debugger を渡さない) にもラベルを引けるように、今の実体を覚える
+	static Debugger* current;
+
 	// --- バックトレース(すべて WinCore::Lock() の中で呼ぶこと) ---
 	void SetTraceEnabled(bool enable);
 	bool IsTraceEnabled() const { return tracemode; }
@@ -159,11 +191,17 @@ public:
 	static const char* CondHelp();			// 書き方の説明 (メッセージの窓用)
 
 	// --- ブレーク状態 ---
-	void RequestBreak(BreakReason reason, CpuTarget cpu, uint addr);
+	// index: 止めたブレークポイントの番号 (無ければ -1)、data: 読み書きした値 (無ければ -1) (M88gn)
+	void RequestBreak(BreakReason reason, CpuTarget cpu, uint addr, int index = -1, int data = -1);
 	bool IsBroken() const { return broken; }
 	BreakReason GetBreakReason() const { return reason; }
 	CpuTarget GetBreakCpu() const { return breakcpu; }
 	uint GetBreakAddr() const { return breakaddr; }
+	uint GetBreakLength() const { return breaklen; }
+	// 止めたときの詳しい情報 (M88gn。ステータスバー・ステータスの窓に出す)
+	int  GetBreakIndex() const { return breakindex; }	// 止めたブレークポイントの番号 (-1: ステップなど)
+	int  GetBreakData() const { return breakdata; }		// 読み書きした値 (-1: 無い・分からない)
+	uint GetBreakPC() const { return breakpc; }			// 読み書きした命令の番地 (実行・ステップなら止まった番地)	// パターンのブレークで揃ったバイト数 (M88gn)
 	void ClearBreak();
 
 	// ブレークポイント判定を一時的に止める(Sequencer::ExecOne 専用)。
@@ -226,6 +264,9 @@ private:
 	static void MEMCALL MemWriteSub(void* inst, uint addr, uint data);
 	uint DoMemRead(CpuTarget cpu, uint addr);
 	void DoMemWrite(CpuTarget cpu, uint addr, uint data);
+	// パターンのブレーク (M88gn)。バンクの 1 バイトを読む (読めない所は -1)
+	int  PatRead(CpuTarget cpu, uint bank, uint addr);
+	bool PatHit(const BreakPoint& bp, CpuTarget cpu, uint addr, int oldv, int newv, uint* start);
 
 	// I/O ポートのブレーク・通信のログ (M88gn)。IOBus のポートに、本物の装置と並べてつなぐ
 	class DebugIO : public Device
@@ -239,7 +280,7 @@ private:
 	};
 	// 条件と回数を見て、止めるなら true (M88gn)。data は読み書きした値 (無ければ -1)
 	bool CondHit(BreakPoint& bp, CpuTarget cpu, uint pc, uint addr, int data);
-	bool ExecCondHit(int cpuid, uint pc);
+	int  ExecCondHit(int cpuid, uint pc);		// 止めるブレークポイントの番号 (最初の 1 つ)。無ければ -1
 	friend struct CondEval;
 	void DoIOIn(CpuTarget cpu, uint port);
 	void DoIOOut(CpuTarget cpu, uint port, uint data);
@@ -284,6 +325,13 @@ private:
 	// のみ書き換え、実アクセスは WatchMonitor が Lock() の中で行う)。
 	// 判定に使われる派生データが無いので RebuildBreakTables() の対象外
 	std::vector<WatchEntry> watchlist;
+	std::map<uint, std::string> labels;	// キーは cpu << 24 | bank << 16 | addr (M88gn)
+	static uint LabelKey(int cpu, uint addr, int bank)
+	{
+		if (cpu & 1)
+			bank = label_anybank;
+		return uint(cpu & 1) << 24 | uint(bank & 0xff) << 16 | (addr & 0xffff);
+	}
 
 	// 実行ブレークポイントは 64KB のビットマップで持つ(bplist から
 	// RebuildBreakTables() が再構築する派生データ。命令ごとに引くので、
@@ -298,11 +346,17 @@ private:
 	IMemoryManager* mm[2];
 	int             memmid[2];
 	bool            hasmembreak;	// bplist に有効な read/write エントリがあるか
+	bool            haspatbreak[2];	// 有効なパターンのブレークがあるか (M88gn)
+	std::vector<int> patold;		// DoMemWrite で、書く前のバンクの値 (パターンのブレークごと)
 
 	volatile bool broken;
 	BreakReason   reason;
 	CpuTarget     breakcpu;
 	uint          breakaddr;
+	uint          breaklen;
+	int           breakindex;
+	int           breakdata;
+	uint          breakpc;
 
 	volatile bool suppressbreak;
 

@@ -27,6 +27,7 @@ bool SaveDebugSettings(Debugger* dbg, const char* diskimage);
 // ファイルから dbg へ読み込む。dbg の既存のブレークポイント/ウォッチは
 // 読み込み前に全て削除される。ファイルが無い、または Version が
 // 想定と異なる(将来の新しい形式)ときは何もせず false を返す
-bool LoadDebugSettings(Debugger* dbg, const char* diskimage);
+// renamed に、名前を直したラベルの数 (重複・使えない字。M88gn)
+bool LoadDebugSettings(Debugger* dbg, const char* diskimage, int* renamed = 0);
 
 }

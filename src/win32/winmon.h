@@ -12,10 +12,11 @@
 //	テキストバッファ，差分更新，スクロールバーサポート
 
 #include "types.h"
+#include "dockclient.h"
 
 // ---------------------------------------------------------------------------
 
-class WinMonitor
+class WinMonitor : public DockClient
 {
 public:
 	WinMonitor();
@@ -30,6 +31,17 @@ public:
 	void Show(HINSTANCE, HWND, bool show);
 
 	bool IsOpen() { return !!hwnd; }
+
+	// ドックモード (M88gn)
+	HWND GetWindowHandle() { return hwnd; }
+	const char* GetIniSection() { return inisection; }
+	void GetFloatRect(RECT* r) { *r = wndrect; }	// 浮かせたときの位置・大きさ
+	// DockClient (ペインに入れる)
+	HWND DockWindow() { return hwnd; }
+	const char* DockSection() { return inisection; }
+	void DockFloatRect(RECT* r) { *r = wndrect; }
+	bool DockIsOpen() { return !!hwnd; }
+	void DockOpen(HINSTANCE hi, HWND owner) { Show(hi, owner, true); }
 
 	void Update();
 
@@ -46,6 +58,25 @@ protected:
 	void Locate(int x, int y);
 	void Puts(const char*);
 	void Putf(const char*, ...);
+
+	// マウスの下の行の下線と、桁の右の縦線 (M88gn)。row は文字の行 (-1 で無し)、col1・col2 は縦線を引く
+	// 文字の桁 (その桁の左の端に引く。-1 で無し)。変わったら描き直す
+	void SetGuide(int row, int col1 = -1, int col2 = -1);
+	// マウスが窓の上を動いたら呼ぶ (窓を出たときに WM_MOUSELEAVE が来るようにする)
+	void TrackGuideLeave(HWND hdlg);
+	// 画面に写した後に重ねて描く (M88gn。派生クラスで箱などを描く。裏の絵は汚さない)
+	virtual void DrawOverlay(HDC) {}
+	// 重ねて描いた後に、そのマスの字だけを地を塗らずに書き直す (M88gn。印を字の下に見せるため)
+	void RedrawCellText(HDC dc, int x, int y, int n);
+	int GetFontWidth() { return fontwidth; }
+	int GetFontHeightPx() { return fontheightpx; }
+	bool guidetracking;
+
+	// ラベルを色付きで書く (M88gn。コードの窓と同じ黄色)。字の色は元に戻す
+	void PutLabel(const char* label);
+	// 番地を書く: ラベルがあれば「名前(1234)」(名前は黄色)、無ければ「1234」。width があれば空白で埋める
+	void PutAddrLabel(int cpu, uint addr, int width = 0);
+	static const COLORREF labelcolor = RGB(0xff, 0xe0, 0x60);
 
 	void SetTxCol(COLORREF col) { txcol = col; }
 	void SetBkCol(COLORREF col) { bkcol = col; }
@@ -97,6 +128,8 @@ private:
 	static BOOL CALLBACK DlgProcGate(HWND, UINT, WPARAM, LPARAM);
 
 	void Draw(HWND, HDC);
+	void DrawGuide(HDC);	// SetGuide の線 (M88gn)
+	int guiderow, guidecol1, guidecol2;
 	void ResizeWindow(HWND);
 	void ApplyDefaultSize();
 

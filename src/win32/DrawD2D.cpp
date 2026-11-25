@@ -33,6 +33,7 @@ WinDrawD2D::WinDrawD2D() :
 	m_hBitmap(0),
 	m_nMag(1),
 	m_bFit(false),
+	m_hasview(false),
 	m_nBitmapW(640),
 	m_nBitmapH(400)
 {
@@ -124,6 +125,13 @@ bool WinDrawD2D::CreateD2D(uint w, uint h)
 
 //! 画面有効範囲を変更
 //
+void WinDrawD2D::SetViewRect(const RECT* r)
+{
+	m_hasview = r != 0;
+	if (r)
+		m_view = *r;
+}
+
 bool WinDrawD2D::Resize( uint _width, uint _height )
 {
 	m_width  = _width;
@@ -135,13 +143,21 @@ bool WinDrawD2D::Resize( uint _width, uint _height )
 
 	// 描く窓の大きさ (全画面なら親のウィンドウのクライアント領域いっぱい)
 	uint cw = m_width, ch = m_height;
+	int cx = 0, cy = 0;
 	if ( m_bFit ) {
 		RECT pr;
-		::GetClientRect( m_hWnd, &pr );
+		if ( m_hasview )
+			pr = m_view;		// ドックモード (M88gn)
+		else
+			::GetClientRect( m_hWnd, &pr );
+		cx = pr.left, cy = pr.top;
 		cw = Max(1, int(pr.right - pr.left));
 		ch = Max(1, int(pr.bottom - pr.top));
 	}
-	::SetWindowPos( m_hCWnd, HWND_BOTTOM, 0, 0, cw, ch, SWP_SHOWWINDOW);
+	else if ( m_hasview ) {
+		cx = m_view.left, cy = m_view.top;	// 窓の表示: 左上だけ (タイトルの段の下。M88gn)
+	}
+	::SetWindowPos( m_hCWnd, HWND_BOTTOM, cx, cy, cw, ch, SWP_SHOWWINDOW);
 
 	if ( !m_RenderTarget ) {
 
@@ -315,7 +331,15 @@ void WinDrawD2D::DrawScreen(const RECT& _rect, bool refresh)
 			} else {
 				dh = ch, dw = ch * m_nBitmapW / m_nBitmapH;
 			}
-			::PatBlt( hDC, 0, 0, cw, ch, BLACKNESS );
+			if ( m_hasview ) {
+				// 窓の中なら、画面の外は濃い灰色 (M88gn。どこまでが画面か分かるように)
+				HBRUSH br = ::CreateSolidBrush( RGB(0x30, 0x30, 0x30) );
+				RECT all = { 0, 0, cw, ch };
+				::FillRect( hDC, &all, br );
+				::DeleteObject( br );
+			} else {
+				::PatBlt( hDC, 0, 0, cw, ch, BLACKNESS );
+			}
 			::SetStretchBltMode( hDC, COLORONCOLOR );
 			::StretchBlt( hDC, (cw - dw) / 2, (ch - dh) / 2, dw, dh,
 						  hmemdc, 0, 0, m_nBitmapW, m_nBitmapH, SRCCOPY );

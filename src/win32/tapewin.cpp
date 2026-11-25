@@ -9,6 +9,7 @@
 #include "dpi.h"
 #include "status.h"
 #include "resource.h"
+#include "uitheme.h"
 #include <math.h>
 
 #ifndef WM_DPICHANGED
@@ -22,6 +23,26 @@
 #endif
 
 static const char classname[] = "M88gn TapeWindow";
+
+// 色 (M88gn): テーマが Windows default なら Windows の色、Dark・Beige ならテーマの色 (ペインのメニューの帯と同じ地)
+static COLORREF TC(int index)
+{
+	if (Theme::Get() == Theme::system)
+		return GetSysColor(index);
+	const Theme::Colors& c = Theme::C();
+	switch (index)
+	{
+	case COLOR_WINDOW:			return c.tabselbg;
+	case COLOR_WINDOWTEXT:
+	case COLOR_BTNTEXT:			return c.stripfg;
+	case COLOR_GRAYTEXT:		return c.stripgray;
+	case COLOR_3DSHADOW:		return Theme::Mix(c.tabselbg, c.stripfg, 70);
+	case COLOR_BTNFACE:			return Theme::Mix(c.tabselbg, c.stripfg, 20);
+	case COLOR_HIGHLIGHT:		return c.tabaccent;
+	case COLOR_HIGHLIGHTTEXT:	return RGB(0xff, 0xff, 0xff);
+	}
+	return GetSysColor(index);
+}
 
 static const char* const buttonlabel[] =
 {
@@ -84,7 +105,7 @@ void TapeWindow::SetPlacement(int x, int y, int w, int h)
 
 void TapeWindow::GetPlacement(int* x, int* y, int* w, int* h)
 {
-	if (hwnd)
+	if (hwnd && !docked)		// ペインに入っている間は浮かせたときの位置・大きさのまま
 	{
 		RECT r;
 		GetWindowRect(hwnd, &r);
@@ -131,28 +152,39 @@ void TapeWindow::Create()
 		if (y + h > mi.rcWork.bottom)
 			y = mi.rcWork.bottom - h;
 	}
-	hwnd = CreateWindowEx(exstyle, classname, "M88gn - Tape", style,
+	hwnd = CreateWindowEx(exstyle, classname, "Tape", style,
 						  x, y, w, h, owner, 0, hinst, this);
 }
 
+// 浮かせたときの位置・大きさ (ペインから出すとき。M88gn)
+void TapeWindow::DockFloatRect(RECT* r)
+{
+	if (placed)
+		SetRect(r, posx, posy, posx + width, posy + height);
+	else
+		SetRectEmpty(r);
+}
+
+// 閉じるときは窓を壊す (ペインに入っていても、DockHost が閉じたと分かるように。M88gn)
 void TapeWindow::Show(bool show)
 {
 	visible = show;
-	if (show && !hwnd)
-		Create();
+	if (!show)
+	{
+		if (hwnd)
+			DestroyWindow(hwnd);
+		return;
+	}
+	bool created = false;
+	if (!hwnd)
+		Create(), created = true;
 	if (!hwnd)
 		return;
-	if (show)
-	{
-		Refresh(true);
-		SetTimer(hwnd, timerid, interval, 0);
-	}
-	else
-	{
-		KillTimer(hwnd, timerid);
-		SetAnimate(false);
-	}
-	ShowWindow(hwnd, show ? SW_SHOWNOACTIVATE : SW_HIDE);
+	Refresh(true);
+	SetTimer(hwnd, timerid, interval, 0);
+	ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+	if (created)
+		DockShown();		// 前にペインにあったなら、そのペインへ
 }
 
 // ---------------------------------------------------------------------------
@@ -364,7 +396,7 @@ void TapeWindow::DrawCassette(HDC hdc, const RECT& r)
 	HGDIOBJ oldpen = SelectObject(dc, GetStockObject(NULL_PEN));
 
 	RECT all = { 0, 0, W, H };
-	HBRUSH bgb = CreateSolidBrush(GetSysColor(COLOR_WINDOW));
+	HBRUSH bgb = CreateSolidBrush(TC(COLOR_WINDOW));
 	FillRect(dc, &all, bgb);
 	DeleteObject(bgb);
 
@@ -388,7 +420,7 @@ void TapeWindow::DrawCassette(HDC hdc, const RECT& r)
 	if (!st.open)
 	{
 		// テープが無い: 差し込み口の枠だけ
-		HPEN pen = CreatePen(PS_SOLID, ss * Max(1, S(1)), GetSysColor(COLOR_3DSHADOW));
+		HPEN pen = CreatePen(PS_SOLID, ss * Max(1, S(1)), TC(COLOR_3DSHADOW));
 		SelectObject(dc, pen);
 		SelectObject(dc, GetStockObject(NULL_BRUSH));
 		RoundRect(dc, CX(1), CX(1), CX(caswidth - 1), CX(casheight - 1), CX(5), CX(5));
@@ -920,9 +952,9 @@ void TapeWindow::Paint(HDC hdcw)
 	HGDIOBJ oldfont = SelectObject(hdc, fnormal);
 	SetBkMode(hdc, TRANSPARENT);
 
-	COLORREF bg = GetSysColor(COLOR_WINDOW);
-	COLORREF fg = GetSysColor(COLOR_WINDOWTEXT);
-	COLORREF gray = GetSysColor(COLOR_GRAYTEXT);
+	COLORREF bg = TC(COLOR_WINDOW);
+	COLORREF fg = TC(COLOR_WINDOWTEXT);
+	COLORREF gray = TC(COLOR_GRAYTEXT);
 	HBRUSH bgbrush = CreateSolidBrush(bg);
 	FillRect(hdc, &cr, bgbrush);
 	DeleteObject(bgbrush);
@@ -997,9 +1029,9 @@ void TapeWindow::Paint(HDC hdcw)
 	// 進み具合のバー (区切りに印)
 	{
 		RECT r = rcbar;
-		HBRUSH frame = CreateSolidBrush(GetSysColor(COLOR_3DSHADOW));
-		HBRUSH back = CreateSolidBrush(Blend(bg, GetSysColor(COLOR_3DSHADOW), 48));
-		HBRUSH fill = CreateSolidBrush(st.recording || st.recarm ? RGB(220, 60, 60) : GetSysColor(COLOR_HIGHLIGHT));
+		HBRUSH frame = CreateSolidBrush(TC(COLOR_3DSHADOW));
+		HBRUSH back = CreateSolidBrush(Blend(bg, TC(COLOR_3DSHADOW), 48));
+		HBRUSH fill = CreateSolidBrush(st.recording || st.recarm ? RGB(220, 60, 60) : TC(COLOR_HIGHLIGHT));
 		FillRect(hdc, &r, back);
 		int w = r.right - r.left;
 		if (st.open && st.length)
@@ -1033,7 +1065,7 @@ void TapeWindow::Paint(HDC hdcw)
 	// 区切りの一覧
 	{
 		RECT lr = rclist;
-		HBRUSH frame = CreateSolidBrush(GetSysColor(COLOR_3DSHADOW));
+		HBRUSH frame = CreateSolidBrush(TC(COLOR_3DSHADOW));
 		FrameRect(hdc, &lr, frame);
 		DeleteObject(frame);
 		InflateRect(&lr, -1, -1);
@@ -1058,14 +1090,14 @@ void TapeWindow::Paint(HDC hdcw)
 			COLORREF tc = fg, dc = gray;
 			if (i == cur)
 			{
-				HBRUSH b = CreateSolidBrush(GetSysColor(COLOR_HIGHLIGHT));
+				HBRUSH b = CreateSolidBrush(TC(COLOR_HIGHLIGHT));
 				FillRect(hdc, &rr, b);
 				DeleteObject(b);
-				tc = dc = GetSysColor(COLOR_HIGHLIGHTTEXT);
+				tc = dc = TC(COLOR_HIGHLIGHTTEXT);
 			}
 			else if (i == hoverrow && clickable)
 			{
-				HBRUSH b = CreateSolidBrush(Blend(bg, GetSysColor(COLOR_HIGHLIGHT), 48));
+				HBRUSH b = CreateSolidBrush(Blend(bg, TC(COLOR_HIGHLIGHT), 48));
 				FillRect(hdc, &rr, b);
 				DeleteObject(b);
 			}
@@ -1122,11 +1154,11 @@ void TapeWindow::PaintDropdown(HDC hdc, int i)
 	if (!en)
 		lstrcpy(text, "x1");			// RAW はいつも等速
 	RECT r = rcbtn[i];
-	COLORREF face = GetSysColor(COLOR_BTNFACE);
-	COLORREF hl = GetSysColor(COLOR_HIGHLIGHT);
+	COLORREF face = TC(COLOR_BTNFACE);
+	COLORREF hl = TC(COLOR_HIGHLIGHT);
 	bool hot = en && (hoverbtn == i || pressbtn == i);
 	HBRUSH b = CreateSolidBrush(pressbtn == i ? Blend(face, hl, 96) : hot ? Blend(face, hl, 40) : face);
-	HPEN pen = CreatePen(PS_SOLID, 1, hot ? hl : GetSysColor(COLOR_3DSHADOW));
+	HPEN pen = CreatePen(PS_SOLID, 1, hot ? hl : TC(COLOR_3DSHADOW));
 	HGDIOBJ ob = SelectObject(hdc, b);
 	HGDIOBJ op = SelectObject(hdc, pen);
 	RoundRect(hdc, r.left, r.top, r.right, r.bottom, S(4), S(4));
@@ -1138,7 +1170,7 @@ void TapeWindow::PaintDropdown(HDC hdc, int i)
 	// 下向きの三角 (右の端)
 	int cy = (r.top + r.bottom) / 2;
 	POINT tri[3] = { { r.right - S(17), cy - S(2) }, { r.right - S(8), cy - S(2) }, { r.right - S(12) - 1, cy + S(3) } };
-	COLORREF tc = en ? GetSysColor(COLOR_BTNTEXT) : GetSysColor(COLOR_GRAYTEXT);
+	COLORREF tc = en ? TC(COLOR_BTNTEXT) : TC(COLOR_GRAYTEXT);
 	HBRUSH tb = CreateSolidBrush(tc);
 	HPEN tp = CreatePen(PS_SOLID, 1, tc);
 	ob = SelectObject(hdc, tb);
@@ -1206,15 +1238,15 @@ void TapeWindow::PaintButton(HDC hdc, int i)
 	bool en = ButtonEnabled(i);
 	bool checked = i == btn_rec && st.recarm;
 	bool down = (pressbtn == i && hoverbtn == i) || checked;
-	COLORREF face = GetSysColor(COLOR_BTNFACE);
-	COLORREF hl = GetSysColor(COLOR_HIGHLIGHT);
+	COLORREF face = TC(COLOR_BTNFACE);
+	COLORREF hl = TC(COLOR_HIGHLIGHT);
 	COLORREF c = face;
 	if (en && down)
 		c = Blend(face, hl, 96);
 	else if (en && hoverbtn == i)
 		c = Blend(face, hl, 40);
 	HBRUSH b = CreateSolidBrush(c);
-	HPEN pen = CreatePen(PS_SOLID, 1, en && (hoverbtn == i || down) ? hl : GetSysColor(COLOR_3DSHADOW));
+	HPEN pen = CreatePen(PS_SOLID, 1, en && (hoverbtn == i || down) ? hl : TC(COLOR_3DSHADOW));
 	HGDIOBJ ob = SelectObject(hdc, b);
 	HGDIOBJ op = SelectObject(hdc, pen);
 	RoundRect(hdc, r.left, r.top, r.right, r.bottom, S(6), S(6));
@@ -1240,7 +1272,7 @@ void TapeWindow::PaintButton(HDC hdc, int i)
 	if (text)
 	{
 		RECT tr = { x + is + gap, r.top, r.right, r.bottom };
-		SetTextColor(hdc, en ? GetSysColor(COLOR_BTNTEXT) : GetSysColor(COLOR_GRAYTEXT));
+		SetTextColor(hdc, en ? TC(COLOR_BTNTEXT) : TC(COLOR_GRAYTEXT));
 		DrawText(hdc, label, -1, &tr, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX);
 	}
 }
@@ -1248,7 +1280,7 @@ void TapeWindow::PaintButton(HDC hdc, int i)
 //	ボタンの絵 (r: 正方形)。Open = 取り出し (三角と棒)、Rewind = 棒と左の三角、Prev / Next = 2 つの三角、Rec = 赤い丸
 void TapeWindow::DrawIcon(HDC hdc, int i, const RECT& r, bool en)
 {
-	COLORREF c = en ? GetSysColor(COLOR_BTNTEXT) : GetSysColor(COLOR_GRAYTEXT);
+	COLORREF c = en ? TC(COLOR_BTNTEXT) : TC(COLOR_GRAYTEXT);
 	if (i == btn_rec && en)
 		c = RGB(220, 0, 0);
 	HBRUSH b = CreateSolidBrush(c);
@@ -1334,6 +1366,20 @@ LRESULT TapeWindow::WndProc(HWND hw, UINT msg, WPARAM wp, LPARAM lp)
 		dpi = Dpi::GetForWindow(hw);
 		MakeFonts();
 		Layout();
+		AddDockMenu(GetSystemMenu(hw, FALSE));	// タイトルバーのメニューに「ペインにドック」(M88gn)
+		Theme::ApplyScrollBars(hw);				// スクロールバーをテーマに合わせる
+		return 0;
+
+	case WM_SYSCOMMAND:
+		if (DockSysCommand(wp))
+			return 0;
+		break;
+
+	case WM_DPICHANGED_AFTERPARENT:		// ペインに入っていて、本体の窓が DPI の違う画面へ移った (M88gn)
+		dpi = Dpi::GetForWindow(hw);
+		MakeFonts();
+		Layout();
+		InvalidateRect(hw, 0, false);
 		return 0;
 
 	case WM_DESTROY:

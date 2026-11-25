@@ -20,6 +20,7 @@ public:
 	~WinDrawD2D();
 
 	bool Init(HWND hwnd, uint w, uint h, GUID* g, int mag);
+	void SetViewRect(const RECT* r);	// M88gn
 	bool Resize(uint width, uint height);
 	bool Cleanup();
 	void SetPalette(PALETTEENTRY* pal, int index, int nentries);
@@ -54,6 +55,8 @@ private:
 	int		m_nBitmapW;
 	int		m_nBitmapH;
 	int		m_nMag;
-	bool	m_bFit;		// 親のウィンドウいっぱいに、縦横比を保って拡大する (全画面)
+	bool	m_bFit;
+	RECT m_view;			// ドックモードで置く四角 (m_hasview のとき。M88gn)
+	bool m_hasview;		// 親のウィンドウいっぱいに、縦横比を保って拡大する (全画面)
 	int		bpl;
 };

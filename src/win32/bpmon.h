@@ -26,6 +26,8 @@ public:
 
 	// io: I/O ポートのブレークポイントの窓にする (M88gn)。そうでなければメモリ・実行の窓
 	bool Init(WinCore*, bool io = false);
+	// 右クリックの Show in Code / Memory で使う窓 (M88gn)
+	void SetMonitors(class CodeMonitor* c, class MemoryMonitor* m) { codemon = c; memmon = m; }
 
 private:
 	void UpdateText();
@@ -35,6 +37,7 @@ private:
 	// E/R/W/Enabled 列のトグル、それ以外の列なら編集ダイアログを開く
 	void OnClick(POINT p, bool dblclick);
 	// col は 'E'/'R'/'W'/'e'(Enabled) のいずれか
+	void ShowRowMenu(HWND hdlg, POINT p);	// 右クリックのメニュー (M88gn)
 	void ToggleAttr(int index, int col);
 	void DeleteSelected();
 	// index < 0 なら追加ダイアログ、それ以外は index 番目の編集ダイアログ
@@ -49,6 +52,8 @@ private:
 
 	WinCore* core;
 	bool iomode;
+	class CodeMonitor* codemon;
+	class MemoryMonitor* memmon;
 	std::vector<int> view;		// 行 → bplist の番号
 	int cursor;			// 選択中の行(bplist のインデックス。-1 = 未選択)
 	int editindex;		// 編集ダイアログの対象(-1 = 追加モード)

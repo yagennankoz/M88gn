@@ -9,6 +9,7 @@
 #include "pc88/pc88.h"
 #include "memmon.h"
 #include "misc.h"
+#include "labeledit.h"
 #include "device_i.h"
 #include "pc88/memory.h"
 
@@ -37,6 +38,7 @@ bool MemViewMonitor::Init(LPCTSTR tmpl, PC88* pc88, const char* inisection,
 	bus = mv.GetBus();
 	mem1 = pc88->GetMem1();
 	autobank = true;			// 既定は CPU に合わせる (M88gn)
+	jumpaddr = -1, jumplen = 1;
 	
 	a0 = MemoryViewer::mainram;
 	a6 = MemoryViewer::n88rom;
@@ -215,6 +217,76 @@ bool MemViewMonitor::AutoBank()
 	return true;
 }
 
+// ---------------------------------------------------------------------------
+//	番地をそのバンクで見せる (M88gn)。今そのバンクを出していなければ、その番地の所のバンクを切り替える
+//	(Auto は外す)。サブ CPU・バンクの指定が無い (Any) なら ShowAddressCpu と同じ
+//
+void MemViewMonitor::ShowAddressIn(uint addr, bool sub, int bank, uint len, HINSTANCE hinst, HWND parent)
+{
+	addr &= 0xffff;
+	if (sub || bank < 0 || bank == 0xff)
+	{
+		ShowAddressCpu(addr, sub, hinst, parent);
+		SetJumpMark(addr, len);
+		Update();
+		return;
+	}
+	if (!IsOpen())
+		Show(hinst, parent, true);
+	if (a0 == MemoryViewer::sub)
+		a0 = MemoryViewer::mainram;
+	if (ShownBankAt(addr) != bank)
+	{
+		MemoryViewer::Type t = MemoryViewer::Type(bank);
+		autobank = false;
+		switch (t)
+		{
+		case MemoryViewer::n88rom:
+			a0 = t;
+			if (addr >= 0x6000 && addr < 0x8000)
+				a6 = t;
+			break;
+		case MemoryViewer::nrom: case MemoryViewer::n80rom:
+		case MemoryViewer::eram0: case MemoryViewer::eram1:
+		case MemoryViewer::eram2: case MemoryViewer::eram3:
+			a0 = t;
+			break;
+		case MemoryViewer::n80srrom:
+			a0 = t, a6 = t;
+			break;
+		case MemoryViewer::n88e0: case MemoryViewer::n88e1:
+		case MemoryViewer::n88e2: case MemoryViewer::n88e3:
+			a0 = MemoryViewer::n88rom, a6 = t;
+			break;
+		case MemoryViewer::n80sr1:
+			a0 = MemoryViewer::n80srrom, a6 = t;
+			break;
+		case MemoryViewer::gvram0: case MemoryViewer::gvram1: case MemoryViewer::gvram2:
+			ac = t;
+			break;
+		case MemoryViewer::tvram:
+			ac = MemoryViewer::mainram, af = t;
+			break;
+		case MemoryViewer::mainram:
+			if (addr < 0x8000)
+				a0 = t;
+			else if (addr >= 0xc000)
+			{
+				ac = t;
+				if (addr >= 0xf000)
+					af = t;
+			}
+			break;
+		default:
+			break;
+		}
+		mv.SelectBank(a0, GetShown6(), MemoryViewer::mainram, ac, af);
+	}
+	SetJumpMark(addr, len);
+	JumpTo(addr);
+	Update();
+}
+
 // 6000-7FFF に実際に出しているバンク (M88gn)。a6 は 0000 が N88 のとき (N88 / E0-E3) と
 // N80SR のとき (N80SR / その 8000-9FFF) だけ効き、それ以外は 0000 と同じ
 MemoryViewer::Type MemViewMonitor::GetShown6()
@@ -224,6 +296,24 @@ MemoryViewer::Type MemViewMonitor::GetShown6()
 	if (a0 == MemoryViewer::n80srrom)
 		return a6 == MemoryViewer::n80sr1 ? MemoryViewer::n80sr1 : MemoryViewer::n80srrom;
 	return a0;
+}
+
+int MemViewMonitor::ShownBankAt(uint addr)
+{
+	if (a0 == MemoryViewer::sub)
+		return -1;
+	addr &= 0xffff;
+	if (addr < 0x6000)
+		return a0;
+	if (addr < 0x8000)
+		return GetShown6();
+	if (addr < 0xc000)
+		return MemoryViewer::mainram;
+	if (ac == MemoryViewer::gvram0 || ac == MemoryViewer::gvram1 || ac == MemoryViewer::gvram2)
+		return ac;
+	if (addr < 0xf000)
+		return MemoryViewer::mainram;
+	return af;
 }
 
 // ---------------------------------------------------------------------------
@@ -269,7 +359,7 @@ void MemViewMonitor::GotoAddress()
 
 BOOL MemViewMonitor::GotoDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 {
-	char buf[16];
+	char buf[64];
 	switch (msg)
 	{
 	case WM_INITDIALOG:
@@ -281,12 +371,12 @@ BOOL MemViewMonitor::GotoDlgProc(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 		{
 			switch (LOWORD(wp))
 			{
-				char* dum;
 			case IDOK:
 				GetDlgItemText(hdlg, IDC_ADDR_GOTO_EDIT, buf, sizeof(buf));
-				if (isxdigit((unsigned char) buf[0]))
+				uint addr;
+				if (ParseAddrInput(buf, &addr))		// 16 進かラベルの名前 (M88gn)
 				{
-					uint addr = strtoul(buf, &dum, 16) & 0xffff;
+					SetJumpMark(addr);
 					JumpTo(addr);
 					Update();
 				}

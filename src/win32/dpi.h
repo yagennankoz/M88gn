@@ -33,6 +33,8 @@ namespace Dpi
 	// その DPI のメニュー・ステータスバーなどの字 (SystemParametersInfo はいつも主モニターの DPI の値を返すため)。
 	// SystemParametersInfoForDpi は Unicode 版の構造体しか受けないので、W 版で返す
 	void GetNonClientMetrics(NONCLIENTMETRICSW* ncm, UINT dpi);
+	// その DPI の GetSystemMetrics (M88gn。DPI 非対応なら DPI は使わない)
+	int GetSystemMetrics(int index, UINT dpi);
 
 	// 囲んだ間だけ、このスレッドが作る・動かす窓を DPI 非対応として扱う
 	class UnawareScope

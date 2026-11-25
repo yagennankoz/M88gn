@@ -35,6 +35,8 @@ public:
 	void SetMasterVolume(int db);			// 全体の音量 (dB。-40 以下で消音)
 	void SetNoMaster(ISoundSource* src);	// この音源には全体の音量を掛けない (つないだ後に呼ぶ)
 	bool SetRate(uint rate, int bufsize);
+	// 合成した音を受け取る関数 (M88gn。録画。エミュレーションのスレッドから、合成のレートの 32bit ステレオ)
+	void SetCapture(void (*cb)(void* ctx, const int32* s, int samples, int rate), void* ctx) { capturecb = cb; capturectx = ctx; }
 
 	void IOCALL UpdateCounter(uint);
 	
@@ -82,6 +84,8 @@ private:
 	uint mixthreshold;
 	void MixAll(int32* dest, int nsamples);
 	int mastergain;						// 全体の音量 (4096 = 0dB)
+	void (*capturecb)(void* ctx, const int32* s, int samples, int rate);
+	void* capturectx;
 
 	bool enabled;
 	

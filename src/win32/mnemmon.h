@@ -15,6 +15,10 @@
 namespace PC8801
 {
 
+// 命令のバイト (code、4 バイト読める所) が、ニーモニック表 (Zilog の公式の命令) の命令で、長さが size か (M88gn)。
+// アセンブラに通せる形で保存するときに、そのまま書いてよい命令かを決める
+bool IsOfficialInstruction(const uint8* code, int size);
+
 class MnemonicMonitor : public WinMonitor
 {
 public:

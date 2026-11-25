@@ -8,12 +8,13 @@
 
 #include "types.h"
 #include "pc88/tapemgr.h"
+#include "dockclient.h"
 #include <string>
 #include <vector>
 
 class WinCore;
 
-class TapeWindow
+class TapeWindow : public DockClient
 {
 public:
 	TapeWindow();
@@ -27,6 +28,13 @@ public:
 	// 位置と大きさ (物理ピクセル。w = 0 なら既定)
 	void SetPlacement(int x, int y, int w, int h);
 	void GetPlacement(int* x, int* y, int* w, int* h);
+
+	// DockClient (ペインに入れる。M88gn)
+	HWND DockWindow() { return hwnd; }
+	const char* DockSection() { return "TapeWindow"; }
+	void DockFloatRect(RECT* r);
+	bool DockIsOpen() { return hwnd != 0; }
+	void DockOpen(HINSTANCE, HWND) { Show(true); }
 
 private:
 	enum

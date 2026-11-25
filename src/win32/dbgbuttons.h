@@ -25,6 +25,12 @@ public:
 	void Layout();								// 1 段に収まらなければ Pause の前で折り返す
 	bool Message(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);	// 窓の処理から。処理したら true
 	static bool IsButton(uint id);
+	HMENU Menu();				// 窓のメニュー (ドックしても覚えておいたもの。M88gn)
+	// メニューバーの地を描く (M88gn。自分で描くほかの項目のため。テーマが無ければシステムの色)
+	static void PaintBarBack(HWND hwnd, HDC dc, const RECT& r, bool active);
+	// ペインの開閉ボタンの絵 (M88gn。本体のタイトルの段)。r は絵の四角 (16x16 の格子で描く)、
+	// side は DockHost::Side、shown はペインを開いているか
+	static void DrawPaneIcon(HDC dc, const RECT& r, int side, bool shown, COLORREF color);
 
 private:
 	void SetOwnerDraw();
@@ -43,6 +49,28 @@ private:
 	uint tipid;					// マウスが載っている項目 (0: 無し)
 	bool tipshown;
 	bool tiptracking;			// TrackMouseEvent で WM_NCMOUSELEAVE を待っている
+	HMENU menu;					// 窓のメニュー (M88gn)
+};
+
+// メニューバーの Addr の欄 (M88gn。コード・メモリの窓で、マウスの下の番地を出す)。
+// 自分で描く項目にして幅を一定にし (右寄せ、ボタンの左)、変わったらその欄だけ描き直す
+class AddrBarItem
+{
+public:
+	AddrBarItem();
+	~AddrBarItem();
+	void Setup(HWND hwnd, UINT id);		// 窓を開くたびに (ボタンの Attach の後)
+	void SetText(const char* text);		// 変わったときだけ、その欄を描き直す
+	bool Message(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);	// 測る・描く。処理したら true (DWLP_MSGRESULT に TRUE を)
+
+private:
+	HFONT Font();
+	void Paint(HDC dc, const RECT& r, bool active);
+	HWND hwnd;
+	UINT id;
+	char text[64];
+	HFONT font;
+	UINT fontdpi;
 };
 
 }

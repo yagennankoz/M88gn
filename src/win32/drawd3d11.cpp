@@ -8,6 +8,7 @@
 #include <math.h>
 #include "drawd3d11.h"
 #include "misc.h"
+#include "videorec.h"
 
 // シェーダー (ビルドのときに fxc で作る。drawd3d11_vs.hlsl / drawd3d11_ps.hlsl)
 #include "drawd3d11_vs.h"
@@ -37,6 +38,8 @@ WinDrawD3D11::WinDrawD3D11()
 	width = srcw, height = srch;
 	mag = 1;
 	fit = false;
+	hasview = false;
+	SetRectEmpty(&viewrect);
 	bufw = bufh = 0;
 	image = 0;
 	memset(palette, 0, sizeof(palette));
@@ -45,6 +48,9 @@ WinDrawD3D11::WinDrawD3D11()
 	needrender = false;
 	lines = 400;
 	crtscan = 0;
+	rectex = 0, recrtv = 0, recstaging = 0;
+	recw = rech = 0;
+	lastbs = 1;
 	crtmask = 0;
 	crtsharp = 1;
 	crtbright = 1;
@@ -264,6 +270,7 @@ void WinDrawD3D11::ReleaseDevice()
 {
 	if (context)
 		context->ClearState();
+	ReleaseRecordTarget();
 	SafeRelease(&cb);
 	SafeRelease(&sampler);
 	for (int i = 0; i < 2; i++)
@@ -289,22 +296,35 @@ void WinDrawD3D11::ReleaseDevice()
 // ---------------------------------------------------------------------------
 //	大きさを変える (width, height は倍率を掛けた後の大きさ)
 //
+void WinDrawD3D11::SetViewRect(const RECT* r)
+{
+	hasview = r != 0;
+	if (r)
+		viewrect = *r;
+}
+
 bool WinDrawD3D11::Resize(uint w, uint h)
 {
 	width = w, height = h;
 	status |= Draw::shouldrefresh;
 
-	// 描く窓の大きさ (全画面なら親の窓のクライアント領域いっぱい)
-	int cw = width, ch = height;
+	// 描く窓の大きさ (全画面なら親の窓のクライアント領域いっぱい、ドックモードなら指定の四角)
+	int cw = width, ch = height, cx = 0, cy = 0;
 	if (fit)
 	{
 		RECT pr;
-		GetClientRect(hwndparent, &pr);
+		if (hasview)
+			pr = viewrect;
+		else
+			GetClientRect(hwndparent, &pr);
+		cx = pr.left, cy = pr.top;
 		cw = pr.right - pr.left;
 		ch = pr.bottom - pr.top;
 	}
+	else if (hasview)
+		cx = viewrect.left, cy = viewrect.top;	// 窓の表示: 左上だけ (タイトルの段の下。M88gn)
 	cw = Max(1, cw), ch = Max(1, ch);
-	SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, cw, ch, SWP_SHOWWINDOW);
+	SetWindowPos(hwnd, HWND_BOTTOM, cx, cy, cw, ch, SWP_SHOWWINDOW);
 
 	if (swapchain && (uint(cw) != bufw || uint(ch) != bufh))
 	{
@@ -374,6 +394,8 @@ void WinDrawD3D11::DrawScreen(const RECT& _rect, bool refresh)
 		if (fabsf(lumnow - (eff < 1 ? eff : 1)) > 0.0005f)
 			needrender = true;
 	}
+	if (videorecorder.IsWaitingFirstFrame())
+		needrender = true;		// 録画を始めた: 最初の絵を作る (M88gn)
 	if (!valid && !palchanged && !needrender)
 		return;
 	needrender = false;
@@ -396,7 +418,7 @@ void WinDrawD3D11::DrawScreen(const RECT& _rect, bool refresh)
 	Render();
 }
 
-void WinDrawD3D11::Render()
+void WinDrawD3D11::Render(int mode)
 {
 	// 描く範囲: ウィンドウなら倍率どおり、全画面なら縦横比を保っていっぱいに
 	// 90°・270° に回すときは、出力の上で縦横が入れ替わる (ow, oh)。dw, dh は回す前の絵の大きさ
@@ -411,6 +433,12 @@ void WinDrawD3D11::Render()
 			oh = float(bufh), ow = float(bufh * sw / sh);
 		dx = float(int((bufw - ow) / 2));
 		dy = float(int((bufh - oh) / 2));
+	}
+	if (mode)
+	{
+		// 録画: 録画の大きさいっぱいに
+		dx = dy = 0;
+		ow = float(recw), oh = float(rech);
 	}
 	float dw = side ? oh : ow, dh = side ? ow : oh;
 
@@ -428,22 +456,22 @@ void WinDrawD3D11::Render()
 	static const float brightexp[3] = { 0.35f, 0.7f, 1.0f };
 	static const float glowamount[4] = { 0, 0.1f, 0.2f, 0.35f };
 	// プラズマディスプレイ (crtbreath の bit5): 走査線・マスク・伸び縮みは使わず、ぼけはハレーションに使う
-	bool plasma = (crtbreath & 0x20) != 0;
-	float hscan = plasma ? 0 : hardscan[Limit(crtscan, 3, 0)];
+	bool plasma = mode != 2 && (crtbreath & 0x20) != 0;
+	float hscan = (plasma || mode == 2) ? 0 : hardscan[Limit(crtscan, 3, 0)];
 	// マスク: 0 なし 1 アパーチャグリル (円筒の画面) 2 シャドウマスク 3 スロットマスク 4 アパーチャグリル (FD、平らな画面)。
 	// 4 の模様は 1 と同じ (mpat)
-	int mtype = plasma ? 0 : Limit(crtmask, 4, 0);
+	int mtype = (plasma || mode == 2) ? 0 : Limit(crtmask, 4, 0);
 	int mpat = mtype == 4 ? 1 : mtype;
 	int sharp = Limit(crtsharp, 2, 0);
-	float gamount = glowamount[Limit(crtglow, 3, 0)];
+	float gamount = mode == 2 ? 0 : glowamount[Limit(crtglow, 3, 0)];
 	// ブラウン管の周辺 (crtbreath の bit14-13・bit16-15。プラズマでは使わない)
 	//	周辺減光: 四隅で 10%・25%・40% 暗い。ビームがマスクに斜めに当たることと、周辺ほど厚いガラスのため。
 	//	  アパーチャグリルはすき間が縦につながっていて画面も縦に平らなので、縦の効きを弱くする (左右が暗い)
 	//	周辺のぼけ: 偏向で焦点がずれ、ビームの点が中心からの距離の 2 乗で大きくなる。四隅で 1.3・1.6・2 倍
 	static const float vigamount[4] = { 0, 0.1f, 0.25f, 0.4f };
 	static const float blurgrow[4] = { 0, 0.3f, 0.6f, 1.0f };
-	float vig = plasma ? 0 : vigamount[(crtbreath >> 13) & 3];
-	float cblur = plasma ? 0 : blurgrow[(crtbreath >> 15) & 3];
+	float vig = (plasma || mode == 2) ? 0 : vigamount[(crtbreath >> 13) & 3];
+	float cblur = (plasma || mode == 2) ? 0 : blurgrow[(crtbreath >> 15) & 3];
 	bool filter = plasma || hscan < 0 || mtype > 0 || gamount > 0 || vig > 0 || cblur > 0;
 	float mdark = 0.5f, mlight = 1.5f;
 	float mean = 1;
@@ -468,7 +496,7 @@ void WinDrawD3D11::Render()
 	// マスクが無いので明るく、ビームも太めなので、メニューの段階のまま、明るさ 1.2 倍、横のにじみを強く (指数 0.6 倍)、
 	// 丸いぼけの量 1.5 倍・広さ 1.3 倍にする
 	static const float phosphor[4][3] = { { 0, 0, 0 }, { 0.25f, 1.0f, 0.35f }, { 0.92f, 0.96f, 1.0f }, { 1.0f, 0.66f, 0.1f } };
-	int mono = (crtbreath >> 8) & 15;
+	int mono = mode == 2 ? 0 : (crtbreath >> 8) & 15;
 	bool digital = mono == 4;		// デジタル RGB (bit11-8 = 4): パレットの色の R・G・B を、0～7 の最上位ビット (4 以上) で点く・消えるに
 	if (mono > 3)
 		mono = 0;
@@ -484,7 +512,10 @@ void WinDrawD3D11::Render()
 	// 横 0.8・縦 0.6。シェーダーが出力の画素ごとに元の位置を逆算する (外周ほど大きく動く。画面の形はマスクで決める)
 	// アパーチャグリルの横のワイヤーの影: 太さ 0.09mm を、14 インチの画面の高さ 180mm として出力のピクセルに直す
 	// 伸び縮みの元の明るさは、フィルターで出す明るさ (走査線・マスクで落ちる分 × 明るさの補正、ぼけの足し分)
-	float bs = BreathScale(filter ? mean * bright * (1 + gamount) : 1);
+	// 録画は画面に描いたときと同じ倍率 (BreathScale は時間で追いかけるので、1 フレームに 1 回だけ)。フィルター無しは 1
+	float bs = mode == 0 ? BreathScale(filter ? mean * bright * (1 + gamount) : 1) : mode == 1 ? lastbs : 1.0f;
+	if (mode == 0)
+		lastbs = bs;
 	float wire = (mpat == 1) ? 0.09f * dh / 180.0f : 0;
 
 
@@ -508,13 +539,17 @@ void WinDrawD3D11::Render()
 	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	context->VSSetShader(vs, 0, 0);
 	context->PSSetConstantBuffers(0, 1, &cb);
-	if (filter && gamount > 0)
+	if (filter && gamount > 0 && mode == 0)		// 録画 (フィルター込み) は画面に描いたときのぼけの絵を使う
 		RenderGlow(cbdata);
 
 	context->UpdateSubresource(cb, 0, 0, cbdata, 0, 0);
 	static const float black[4] = { 0, 0, 0, 1 };
-	context->OMSetRenderTargets(1, &rtv, 0);
-	context->ClearRenderTargetView(rtv, black);
+	// 窓の中で、PC-8801 の画面の外 (縦横の比を保って広げた余り) は濃い灰色 (M88gn。どこまでが画面か分かるように)。
+	// 全画面 (hasview でない) と録画は黒のまま
+	static const float margin[4] = { 0x30 / 255.0f, 0x30 / 255.0f, 0x30 / 255.0f, 1 };
+	ID3D11RenderTargetView* target = mode ? recrtv : rtv;
+	context->OMSetRenderTargets(1, &target, 0);
+	context->ClearRenderTargetView(target, (mode == 0 && hasview) ? margin : black);
 	D3D11_VIEWPORT vp = { dx, dy, ow, oh, 0, 1 };
 	context->RSSetViewports(1, &vp);
 	context->PSSetShader(ps, 0, 0);
@@ -524,6 +559,8 @@ void WinDrawD3D11::Render()
 	context->Draw(3, 0);
 	ID3D11ShaderResourceView* none[3] = { 0, 0, 0 };
 	context->PSSetShaderResources(0, 3, none);		// 次にぼけの絵へ描くときのために外す
+	if (mode)
+		return;
 
 	// 垂直同期を待たない。描画はエミュレーションのスレッドで呼ばれるので、待つと 1 フレームの時間を超え、
 	// 次のフレームの描画が飛ばされて 30fps で頭打ちになる。フリップモデルなら、DWM が次の垂直同期で
@@ -531,6 +568,76 @@ void WinDrawD3D11::Render()
 	HRESULT hr = swapchain->Present(0, 0);
 	if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET)
 		devicelost = true;
+	if (videorecorder.IsActive())
+		RecordFrame(ow, oh);
+}
+
+// ---------------------------------------------------------------------------
+//	録画 (M88gn): 録画の大きさの絵に描き、CPU が読める所へ写して録画に渡す。
+//	大きさは録画を始めたときに決める (フィルター込みは画面に出している大きさ、フィルター無しは 2 倍)
+//
+void WinDrawD3D11::RecordFrame(float ow, float oh)
+{
+	if (videorecorder.IsWaitingFirstFrame())
+	{
+		int w, h;
+		if (videorecorder.GetMode() == VideoRecorder::raw)
+		{
+			bool side = (rotation & 1) != 0;
+			w = (side ? srch : srcw) * 2, h = (side ? srcw : srch) * 2;
+		}
+		else
+			w = int(ow), h = int(oh);
+		if (!videorecorder.Open(w, h))
+			return;
+	}
+	int w = videorecorder.Width(), h = videorecorder.Height();
+	if ((w != recw || h != rech || !recrtv) && !CreateRecordTarget(w, h))
+		return;
+	Render(videorecorder.GetMode() == VideoRecorder::raw ? 2 : 1);
+	context->CopyResource(recstaging, rectex);
+	D3D11_MAPPED_SUBRESOURCE m;
+	if (SUCCEEDED(context->Map(recstaging, 0, D3D11_MAP_READ, 0, &m)))
+	{
+		videorecorder.SetFrame(m.pData, int(m.RowPitch));
+		context->Unmap(recstaging, 0);
+	}
+}
+
+bool WinDrawD3D11::CreateRecordTarget(int w, int h)
+{
+	ReleaseRecordTarget();
+	D3D11_TEXTURE2D_DESC td;
+	memset(&td, 0, sizeof(td));
+	td.Width = w, td.Height = h;
+	td.MipLevels = 1, td.ArraySize = 1;
+	td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	td.SampleDesc.Count = 1;
+	td.Usage = D3D11_USAGE_DEFAULT;
+	td.BindFlags = D3D11_BIND_RENDER_TARGET;
+	if (FAILED(device->CreateTexture2D(&td, 0, &rectex)) || FAILED(device->CreateRenderTargetView(rectex, 0, &recrtv)))
+	{
+		ReleaseRecordTarget();
+		return false;
+	}
+	td.Usage = D3D11_USAGE_STAGING;
+	td.BindFlags = 0;
+	td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	if (FAILED(device->CreateTexture2D(&td, 0, &recstaging)))
+	{
+		ReleaseRecordTarget();
+		return false;
+	}
+	recw = w, rech = h;
+	return true;
+}
+
+void WinDrawD3D11::ReleaseRecordTarget()
+{
+	SafeRelease(&recstaging);
+	SafeRelease(&recrtv);
+	SafeRelease(&rectex);
+	recw = rech = 0;
 }
 
 // ---------------------------------------------------------------------------

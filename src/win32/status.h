@@ -30,6 +30,14 @@ public:
 	void Update();
 	void SetStopped(bool s);		// デバッガで止まっている間は地の色を変える
 	UINT_PTR GetTimerID() { return timerid; }
+	// 今出している知らせ (無ければ空) とランプ (M88gn。ステータスの窓に出す)。
+	// lamps: [0] = ドライブ 1、[1] = ドライブ 2 (bit0 = 灯っている、bit1 = 2HD)、[2] = サブシステムを待っている (bit0)
+	void GetText(char* out, int size);
+	void GetLamps(int lamps[3]);
+	bool IsShowFDStat() { return showfdstat; }
+	// 速さ (fps と動作周波数。M88gn。ステータスバーのランプの左の欄と、ステータスの窓に出す)
+	void SetPerf(const char* text);
+	void GetPerf(char* out, int size);
 
 	HWND GetHWnd() { return hwnd; }
 	void Layout();					// 親の窓の下の端に置き直す (親の大きさが変わったとき)
@@ -65,11 +73,15 @@ private:
 
 	void Clean();
 	void DrawLamps(HDC hdc, int left, int cy);
+	static LRESULT CALLBACK BarProc(HWND, UINT, WPARAM, LPARAM);
+	void PaintBar(HDC hdc);		// ステータスバー全体を描く (テーマの色。M88gn)
+	WNDPROC barproc;
 	void DrawMenuStatus(HDC hdc, const RECT& r);
 	static LRESULT CALLBACK OverlayProc(HWND, UINT, WPARAM, LPARAM);
 	void PaintOverlay(HDC hdc, const RECT& r);
 	bool LampsLit();
 	int LampWidth() { return Scale(showfdstat ? 80 : 64); }
+	int PerfWidth();
 	
 	HWND hwnd;
 	HWND hwndparent;
@@ -93,6 +105,8 @@ private:
 	int currentpriority;
 
 	char buf[128];
+	char perftext[64];			// 速さ (M88gn)
+	char shown[128];			// 今出している知らせ (GetText 用。M88gn)
 	bool menumode;				// 全画面でメニューバーに出している
 	HFONT menufont;
 	char menutext[128];			// メニューバーに出す知らせ (重ねて出すときも)

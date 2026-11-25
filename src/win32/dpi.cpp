@@ -19,6 +19,8 @@ static PFSetThreadDpiAwarenessContext pSetThreadDpiAwarenessContext = 0;
 static PFGetDpiForWindow pGetDpiForWindow = 0;
 static PFAdjustWindowRectExForDpi pAdjustWindowRectExForDpi = 0;
 static PFSystemParametersInfoForDpi pSystemParametersInfoForDpi = 0;
+typedef int (WINAPI* PFGetSystemMetricsForDpi)(int, UINT);
+static PFGetSystemMetricsForDpi pGetSystemMetricsForDpi = 0;
 static bool aware = false;
 
 bool Dpi::Init()
@@ -30,6 +32,7 @@ bool Dpi::Init()
 	pGetDpiForWindow = (PFGetDpiForWindow) GetProcAddress(user32, "GetDpiForWindow");
 	pAdjustWindowRectExForDpi = (PFAdjustWindowRectExForDpi) GetProcAddress(user32, "AdjustWindowRectExForDpi");
 	pSystemParametersInfoForDpi = (PFSystemParametersInfoForDpi) GetProcAddress(user32, "SystemParametersInfoForDpi");
+	pGetSystemMetricsForDpi = (PFGetSystemMetricsForDpi) GetProcAddress(user32, "GetSystemMetricsForDpi");
 	if (!pSetThreadDpiAwarenessContext || !pGetDpiForWindow || !pAdjustWindowRectExForDpi)
 		return false;
 	// Per Monitor v2 ‚ªŽg‚¦‚È‚¢ Windows (1703 ‚æ‚è‘O) ‚Å‚Í 0 ‚ª•Ô‚é
@@ -107,4 +110,11 @@ Dpi::UnawareScope::~UnawareScope()
 {
 	if (prev)
 		pSetThreadDpiAwarenessContext(prev);
+}
+
+int Dpi::GetSystemMetrics(int index, UINT dpi)
+{
+	if (aware && pGetSystemMetricsForDpi && dpi)
+		return pGetSystemMetricsForDpi(index, dpi);
+	return ::GetSystemMetrics(index);
 }

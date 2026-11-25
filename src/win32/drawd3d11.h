@@ -29,6 +29,7 @@ public:
 	~WinDrawD3D11();
 
 	bool Init(HWND hwnd, uint w, uint h, GUID* g, int mag);
+	void SetViewRect(const RECT* r);	// M88gn
 	bool Resize(uint width, uint height);
 	bool Cleanup();
 	void SetPalette(PALETTEENTRY* pal, int index, int nentries);
@@ -45,7 +46,10 @@ private:
 	bool CreateDevice();
 	bool CreateTarget();
 	void ReleaseDevice();
-	void Render();
+	void Render(int mode = 0);		// 0: 画面 1: 録画 (フィルター込み) 2: 録画 (フィルター無し)
+	void RecordFrame(float ow, float oh);	// 録画中なら、録画の絵を描いて渡す (M88gn)
+	bool CreateRecordTarget(int w, int h);
+	void ReleaseRecordTarget();
 	void RenderGlow(const float* cbdata);
 	float MeasureLuminance();
 	float BreathScale(float gain);
@@ -54,7 +58,9 @@ private:
 	HWND hwnd;						// 描く子の窓
 	uint width, height;				// 描く大きさ (倍率を掛けた後。全画面なら親の窓に合わせる)
 	int mag;						// 倍率 (全画面なら 1)
-	bool fit;						// 全画面: 親の窓いっぱいに、縦横比を保って拡大する
+	bool fit;
+	RECT viewrect;			// ドックモードで置く四角 (hasview のとき。M88gn)
+	bool hasview;						// 全画面: 親の窓いっぱいに、縦横比を保って拡大する
 	uint bufw, bufh;				// スワップチェーンの大きさ
 
 	uint8* image;					// エミュレータが描く絵 (パレット番号、640x400)
@@ -95,4 +101,10 @@ private:
 	ID3D11ShaderResourceView* glowsrv[2];
 	ID3D11RenderTargetView* glowrtv[2];
 	ID3D11SamplerState* sampler;	// ぼけの絵を拡大する (双線形)
+	// 録画 (M88gn): 録画の大きさの描き先と、読み戻す所
+	ID3D11Texture2D* rectex;
+	ID3D11RenderTargetView* recrtv;
+	ID3D11Texture2D* recstaging;
+	int recw, rech;
+	float lastbs;					// 画面に描いたときの伸び縮みの倍率 (録画で同じものを使う)
 };
